@@ -1,0 +1,18 @@
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# PlatformIO build output
+build/
+
+# IDE files
+.vscode/
+.vscode/*.code-workspace
+
+# Generated/dependency files
+libdeps/
+.venv/
+
+# System files
+.DS_Store
+Thumbs.db
