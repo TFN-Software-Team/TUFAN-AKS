@@ -43,6 +43,8 @@ void vTask_HMI_Display(void* pvParameters) {
     }
 }
 
+
+// Main application entry point
 extern "C" void app_main() {
     sensorDataQueue = xQueueCreate(10, sizeof(uint32_t));
     if (sensorDataQueue == nullptr) {
