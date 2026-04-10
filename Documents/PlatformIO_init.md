@@ -88,6 +88,17 @@ platformio device monitor -e esp32dev --baud 115200
 - If upload fails, verify the correct USB port and board connection.
 - If monitor output is blank, check `monitor_speed = 115200` and board power.
 
+### Known Build Errors & Python Version Conflicts
+If you are using a bleeding-edge Linux distro (like Arch or CachyOS) or have Python 3.13+, you might encounter a `ModuleNotFoundError: No module named 'idf_component_manager'` or a PyO3 Rust compilation failure during the first build.
+
+**Fix:** Force PlatformIO to use a stable Python version (like 3.11 or 3.12).
+1. Install Python 3.11 on your system.
+2. Delete the broken virtual environment: `rm -rf ~/.platformio/penv` and `rm -rf .pio/`
+3. Recreate it manually: `python3.11 -m venv ~/.platformio/penv`
+4. Install PIO: `~/.platformio/penv/bin/pip install -U platformio`
+5. Re-run: `platformio run -e esp32dev`
+
+
 ## Beginner Workflow
 1. Open the existing project folder in VS Code.
 2. Inspect `platformio.ini` and `include/SystemConfig.h`.
