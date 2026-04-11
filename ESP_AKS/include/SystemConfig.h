@@ -16,15 +16,18 @@
 
 // --- Nextion HMI (UART) ---
 #define HMI_UART_NUM UART_NUM_1
-#define HMI_TX_PIN GPIO_NUM_17
-#define HMI_RX_PIN GPIO_NUM_16
+// Not: J8 konnektöründe screen_TX'in ekranın mı yoksa ESP'nin mi TX'i olduğuna göre
+// aşağıdaki 32 ve 33 yer değiştirebilir, ancak donanım pinleri 32 ve 33'tür.
+#define HMI_TX_PIN GPIO_NUM_33  // Şemadaki screen_RX (ESP TX -> Ekran RX)
+#define HMI_RX_PIN GPIO_NUM_32  // Şemadaki screen_TX (Ekran TX -> ESP RX)
 
-// --- LoRa E32-433T30D (UART) ---
-// NOT SPI — E32 uses UART interface
+// --- LoRa E32-433T30D (UART & Kontrol) ---
 #define LORA_UART_NUM UART_NUM_2
-#define LORA_TX_PIN GPIO_NUM_14   // LR_TXD on schematic
-#define LORA_RX_PIN GPIO_NUM_13   // LR_RXD on schematic
-#define LORA_AUX_PIN GPIO_NUM_12  // AUX: module busy indicator
+#define LORA_TX_PIN GPIO_NUM_16   // ESP TX -> Şemadaki LR_RXD (IO16)
+#define LORA_RX_PIN GPIO_NUM_17   // ESP RX <- Şemadaki LR_TXD (IO17)
+#define LORA_AUX_PIN GPIO_NUM_35  // Şemada AUX IO35'e bağlı (Giriş)
+#define LORA_M0_PIN GPIO_NUM_25   // Şemadaki MO (IO25)
+#define LORA_M1_PIN GPIO_NUM_26   // Şemadaki M1 (IO26)
 #define LORA_UART_BAUD 9600       // E32 default baud
 
 // --- MCP23S17 I/O Expander (SPI) → Relays ---
