@@ -149,8 +149,8 @@ static void handleEmergencyStop() {
     // RelayManager::instance().setOutput(CONTACTOR_MAIN, false);
     // RelayManager::instance().setOutput(CONTACTOR_PRE, false);
 
-    ESP_LOGE(TAG, "EMERGENCY STOP active");
-    // Do not auto-recover — require physical reset or explicit RESET event
+    RelayManager::instance().allOff();  // ← bunu ekle
+    ESP_LOGE(TAG, "EMERGENCY STOP — all relays de-energized");
 }
 
 static void handleFault() {
