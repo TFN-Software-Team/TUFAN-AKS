@@ -13,10 +13,12 @@ class RelayManager {
     static RelayManager& instance();
 
     bool begin();
-
     void setRelay(uint8_t channel, bool state);
-    void allOn();   // Close all positive contactors
-    void allOff();  // Open all positive contactors — SAFETY
+    void allOn();   // Close all 10 positive contactors
+    void allOff();  // Open all — SAFETY
+
+    // Read back current relay state for diagnostics
+    bool getRelayState(uint8_t channel) const;
 
    private:
     RelayManager() = default;
