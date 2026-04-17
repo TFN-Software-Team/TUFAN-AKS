@@ -5,11 +5,6 @@
 #include "freertos/queue.h"
 
 static constexpr const char* TAG = "VCU_LOGIC";
-
-// ---------------------------------------------------------------------------
-// Pre-charge timeout — adjust once hardware is decided
-// ---------------------------------------------------------------------------
-static constexpr uint32_t PRE_CHARGE_TIMEOUT_MS = 3000;
 static constexpr uint32_t TASK_PERIOD_MS = 20;
 
 namespace VcuLogic {
@@ -19,20 +14,19 @@ namespace VcuLogic {
 // ---------------------------------------------------------------------------
 static VcuState s_state = VcuState::INIT;
 static QueueHandle_t s_eventQueue = nullptr;
-static uint32_t s_stateTimer = 0;  // ms spent in current state
+static uint32_t s_stateTimer = 0;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
 // ---------------------------------------------------------------------------
-static void handleInit();
+static void transitionTo(VcuState next);
+static bool pollEvent(VcuEvent& out);
+
 static void handleIdle();
-static void handlePreCharge();
 static void handleReady();
 static void handleDrive();
 static void handleEmergencyStop();
 static void handleFault();
-static void transitionTo(VcuState next);
-static bool pollEvent(VcuEvent& out);
 
 // ---------------------------------------------------------------------------
 // Public
@@ -41,16 +35,21 @@ void init() {
     s_eventQueue = xQueueCreate(8, sizeof(VcuEvent));
     if (s_eventQueue == nullptr) {
         ESP_LOGE(TAG, "Failed to create event queue");
+        return;
     }
+
+    // Safety first — ensure all relays are off at startup
+    RelayManager::instance().allOff();
+
     transitionTo(VcuState::IDLE);
 }
 
 void run() {
     s_stateTimer += TASK_PERIOD_MS;
 
-    // Emergency stop has highest priority — check regardless of state
     VcuEvent event = VcuEvent::NONE;
     if (pollEvent(event)) {
+        // High priority events — handled regardless of current state
         if (event == VcuEvent::EMERGENCY_STOP) {
             transitionTo(VcuState::EMERGENCY_STOP);
             return;
@@ -63,17 +62,28 @@ void run() {
             transitionTo(VcuState::IDLE);
             return;
         }
+
+        // State-specific event handling
+        switch (s_state) {
+            case VcuState::IDLE:
+                if (event == VcuEvent::START_REQUEST)
+                    transitionTo(VcuState::READY);
+                break;
+
+            case VcuState::READY:
+                if (event == VcuEvent::DRIVE_ENABLE)
+                    transitionTo(VcuState::DRIVE);
+                break;
+
+            default:
+                break;
+        }
     }
 
+    // Periodic state logic
     switch (s_state) {
-        case VcuState::INIT:
-            handleInit();
-            break;
         case VcuState::IDLE:
             handleIdle();
-            break;
-        case VcuState::PRE_CHARGE:
-            handlePreCharge();
             break;
         case VcuState::READY:
             handleReady();
@@ -87,13 +97,14 @@ void run() {
         case VcuState::FAULT:
             handleFault();
             break;
+        default:
+            break;
     }
 }
 
 void postEvent(VcuEvent event) {
     if (s_eventQueue == nullptr)
         return;
-    // Non-blocking — if queue is full, event is dropped (logged below)
     if (xQueueSend(s_eventQueue, &event, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Event queue full, dropped event %d",
                  static_cast<int>(event));
@@ -107,59 +118,45 @@ VcuState getState() {
 // ---------------------------------------------------------------------------
 // State handlers
 // ---------------------------------------------------------------------------
-static void handleInit() {
-    // Shouldn't stay here — init() moves us to IDLE immediately
-    transitionTo(VcuState::IDLE);
-}
-
 static void handleIdle() {
-    VcuEvent event = VcuEvent::NONE;
-    // Event already consumed above — check again for START_REQUEST
-    // (pollEvent is called once per run(), so we use the already-polled event)
-    // In IDLE, we wait for a start request to begin pre-charge
-    // Nothing to do actively — system is safe, all contactors open
-}
-
-static void handlePreCharge() {
-    // TODO: Replace timer with actual voltage threshold check
-    // e.g. if (readBusVoltage() >= PACK_VOLTAGE * 0.95f) → PRE_CHARGE_DONE
-
-    if (s_stateTimer >= PRE_CHARGE_TIMEOUT_MS) {
-        ESP_LOGI(TAG, "Pre-charge complete (timer-based placeholder)");
-        postEvent(VcuEvent::PRE_CHARGE_DONE);
-    }
-
-    // TODO: Add voltage runaway detection here
-    // if (busVoltageRising() == false after 1s) → FAULT
+    // All relays off — safe resting state
+    // Waiting for START_REQUEST from LoRa/UKS
 }
 
 static void handleReady() {
-    // HV bus is live — waiting for drive enable
-    // TODO: Monitor bus voltage, temperature (when sensors are wired)
+    // Close all positive contactors on entry (runs once via stateTimer guard)
+    if (s_stateTimer <= TASK_PERIOD_MS) {
+        RelayManager::instance().allOn();
+        ESP_LOGI(TAG, "All contactors closed — system READY");
+    }
+    // TODO: Monitor bus voltage / system health once sensors are wired
 }
 
 static void handleDrive() {
-    // Active driving state
-    // TODO: Forward torque requests from CAN task to motor controller
-    // TODO: Monitor current limits, thermal limits
+    // Contactors remain closed during drive
+    // TODO: Monitor current limits and thermal limits when sensors are ready
 }
 
 static void handleEmergencyStop() {
-    // TODO: Open all contactors via RelayManager
-    // RelayManager::instance().setOutput(CONTACTOR_MAIN, false);
-    // RelayManager::instance().setOutput(CONTACTOR_PRE, false);
+    // Immediately de-energize everything
+    RelayManager::instance().allOff();
 
-    RelayManager::instance().allOff();  // ← bunu ekle
-    ESP_LOGE(TAG, "EMERGENCY STOP — all relays de-energized");
+    // Log once per second to avoid flooding
+    static uint32_t lastLog = 0;
+    if (s_stateTimer - lastLog >= 1000) {
+        ESP_LOGE(TAG, "EMERGENCY STOP active — all relays off");
+        lastLog = s_stateTimer;
+    }
+    // Recovery only via physical reset or explicit RESET event
 }
 
 static void handleFault() {
-    // Safe state — all outputs should already be de-energized
-    // Log once per second to avoid flooding
-    static uint32_t lastLogTimer = 0;
-    if (s_stateTimer - lastLogTimer >= 1000) {
-        ESP_LOGE(TAG, "System in FAULT state. Send RESET event to recover.");
-        lastLogTimer = s_stateTimer;
+    RelayManager::instance().allOff();
+
+    static uint32_t lastLog = 0;
+    if (s_stateTimer - lastLog >= 1000) {
+        ESP_LOGE(TAG, "FAULT state — send RESET event to recover");
+        lastLog = s_stateTimer;
     }
 }
 

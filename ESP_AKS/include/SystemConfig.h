@@ -10,14 +10,20 @@
 #include "driver/spi_master.h"
 #include "driver/uart.h"
 
+// --- CAN Message IDs ---
+#define CAN_ID_TORQUE_CMD 0x100    // AKS → Motor Driver
+#define CAN_ID_MOTOR_STATUS 0x200  // Motor Driver → AKS
+#define CAN_ID_BMS_STATUS 0x300    // BMS → AKS
+
 // --- CAN (TJA1050 transceiver) ---
 #define CAN_TX_PIN GPIO_NUM_5
 #define CAN_RX_PIN GPIO_NUM_4
 
 // --- Nextion HMI (UART) ---
 #define HMI_UART_NUM UART_NUM_1
-// Not: J8 konnektöründe screen_TX'in ekranın mı yoksa ESP'nin mi TX'i olduğuna göre
-// aşağıdaki 32 ve 33 yer değiştirebilir, ancak donanım pinleri 32 ve 33'tür.
+// Not: J8 konnektöründe screen_TX'in ekranın mı yoksa ESP'nin mi TX'i olduğuna
+// göre aşağıdaki 32 ve 33 yer değiştirebilir, ancak donanım pinleri 32 ve
+// 33'tür.
 #define HMI_TX_PIN GPIO_NUM_33  // Şemadaki screen_RX (ESP TX -> Ekran RX)
 #define HMI_RX_PIN GPIO_NUM_32  // Şemadaki screen_TX (Ekran TX -> ESP RX)
 
@@ -38,11 +44,19 @@
 #define RELAY_SPI_CS GPIO_NUM_15
 
 // --- MCP23S17 Relay Channel Assignments ---
-// OUT0–OUT9 available, assign as hardware is finalized
-#define RELAY_CH_PRE_CHARGE 0  // TODO: confirm with hardware team
-#define RELAY_CH_MAIN_POS 1    // TODO: confirm
-#define RELAY_CH_MAIN_NEG 2    // TODO: confirm
-// OUT3–OUT9 reserved for future use
+// --- Relay Channel Assignments (all positive contactors) ---
+#define RELAY_CH_POS_0 0
+#define RELAY_CH_POS_1 1
+#define RELAY_CH_POS_2 2
+#define RELAY_CH_POS_3 3
+#define RELAY_CH_POS_4 4
+#define RELAY_CH_POS_5 5
+#define RELAY_CH_POS_6 6
+#define RELAY_CH_POS_7 7
+#define RELAY_CH_POS_8 8
+#define RELAY_CH_POS_9 9
+
+#define RELAY_TOTAL_CHANNELS 10
 
 // --- UKS Emergency Stop Command (LoRa packet ID) ---
 #define UKS_CMD_EMERGENCY_STOP 0xA1

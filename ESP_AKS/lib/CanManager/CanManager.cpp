@@ -1,4 +1,5 @@
 #include "CanManager.h"
+#include "SystemConfig.h"
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -38,7 +39,7 @@ bool CanManager::sendTorqueCommand(uint16_t torqueValue) {
     }
 
     twai_message_t message;
-    message.identifier = 0x100;
+    message.identifier = CAN_ID_TORQUE_CMD;
     message.data_length_code = 2;
     message.data[0] = static_cast<uint8_t>(torqueValue >> 8);
     message.data[1] = static_cast<uint8_t>(torqueValue & 0xFF);

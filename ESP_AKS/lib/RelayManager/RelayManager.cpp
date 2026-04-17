@@ -72,6 +72,16 @@ void RelayManager::allOff() {
     ESP_LOGW(TAG, "All relays de-energized");
 }
 
+void RelayManager::allOn() {
+    if (!s_initialized)
+        return;
+
+    s_relayState = 0x03FF;  // bits 0-9 all set → all 10 contactors closed
+    writeRegister(MCP23S17_OLATA, s_relayState & 0xFF);
+    writeRegister(MCP23S17_OLATB, (s_relayState >> 8) & 0xFF);
+    ESP_LOGI(TAG, "All contactors closed");
+}
+
 void RelayManager::writeRegister(uint8_t reg, uint8_t value) {
     uint8_t tx[3] = {MCP23S17_ADDR, reg, value};
     spi_transaction_t t = {};

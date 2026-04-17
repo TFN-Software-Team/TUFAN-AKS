@@ -85,7 +85,7 @@ void vTask_LoRa_UKS(void* pvParameters) {
 
 // Main application entry point
 extern "C" void app_main() {
-    sensorDataQueue = xQueueCreate(10, sizeof(uint32_t));
+    sensorDataQueue = xQueueCreate(10, sizeof(uint16_t));
     if (sensorDataQueue == nullptr) {
         ESP_LOGE(TAG, "Failed to create sensorDataQueue");
         return;
