@@ -2,12 +2,19 @@
 .pioenvs/
 .piolibdeps/
 
+# cache files
+.cache/
+
 # PlatformIO build output
 build/
+cmake-build-*/
+compile_commands.json
 
 # IDE files
 .vscode/
 .vscode/*.code-workspace
+.idea/
+*.swp
 
 # Generated/dependency files
 libdeps/
