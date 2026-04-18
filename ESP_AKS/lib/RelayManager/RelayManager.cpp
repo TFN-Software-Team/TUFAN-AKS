@@ -39,11 +39,18 @@ bool RelayManager::begin() {
         return false;
     }
 
-    // All pins as output
+    // CRITICAL: Write OLAT registers BEFORE setting pins as output.
+    // MCP23S17 defaults OLAT to 0x00 (LOW).  In our active-low hardware
+    // LOW = relay ON, so we must set 0xFF (HIGH = relay OFF) first to
+    // prevent all relays firing the instant IODIR switches to output.
+    writeRegister(MCP23S17_OLATA, 0xFF);
+    writeRegister(MCP23S17_OLATB, 0xFF);
+
+    // Now safe to set all pins as output
     writeRegister(MCP23S17_IODIRA, 0x00);
     writeRegister(MCP23S17_IODIRB, 0x00);
 
-    allOff();
+    s_relayState = 0;
     s_initialized = true;
     ESP_LOGI(TAG, "RelayManager initialized — all relays OFF");
     return true;
@@ -61,8 +68,10 @@ void RelayManager::setRelay(uint8_t channel, bool state) {
     else
         s_relayState &= ~(1u << channel);
 
-    writeRegister(MCP23S17_OLATA, s_relayState & 0xFF);
-    writeRegister(MCP23S17_OLATB, (s_relayState >> 8) & 0xFF);
+    // Hardware is active-low: invert logical state before writing
+    uint16_t hw = ~s_relayState;
+    writeRegister(MCP23S17_OLATA, hw & 0xFF);
+    writeRegister(MCP23S17_OLATB, (hw >> 8) & 0xFF);
 
     ESP_LOGD(TAG, "Relay %d → %s (state=0x%03X)", channel, state ? "ON" : "OFF",
              s_relayState);
@@ -74,15 +83,18 @@ void RelayManager::allOn() {
         return;
     }
     s_relayState = (1u << RELAY_TOTAL_CHANNELS) - 1;  // bits 0-9 set
-    writeRegister(MCP23S17_OLATA, s_relayState & 0xFF);
-    writeRegister(MCP23S17_OLATB, (s_relayState >> 8) & 0xFF);
+    // Active-low: all relays ON = all used pins LOW
+    uint16_t hw = ~s_relayState;
+    writeRegister(MCP23S17_OLATA, hw & 0xFF);
+    writeRegister(MCP23S17_OLATB, (hw >> 8) & 0xFF);
     ESP_LOGI(TAG, "All %d contactors closed", RELAY_TOTAL_CHANNELS);
 }
 
 void RelayManager::allOff() {
     s_relayState = 0;
-    writeRegister(MCP23S17_OLATA, 0x00);
-    writeRegister(MCP23S17_OLATB, 0x00);
+    // Active-low: all relays OFF = all pins HIGH
+    writeRegister(MCP23S17_OLATA, 0xFF);
+    writeRegister(MCP23S17_OLATB, 0xFF);
     ESP_LOGW(TAG, "All relays de-energized");
 }
 
