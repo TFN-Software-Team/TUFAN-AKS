@@ -4,6 +4,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#include "DisplayHMI.h"
 #include "CanManager.h"
 #include "RelayManager.h"
 #include "SystemConfig.h"
@@ -98,10 +99,47 @@ void vTask_HMI_Display(void *pvParameters) {
 
   uint32_t lastStackLog = 0;
 
+  DisplayHMI HMI_display;
+  if (!HMI_display.begin()) {
+    ESP_LOGE(TAG, "DisplayHMI init failed — HMI task terminating");
+    esp_task_wdt_delete(nullptr);
+    vTaskDelete(nullptr);
+    return;
+  }
+
+  uint16_t HMI_currentSpeed = 0;
+  uint8_t HMI_currentBattery = 100;
+  uint8_t HMI_incomingCommand = 0;
+
   while (true) {
     esp_task_wdt_reset();
 
-    // TODO: Update display from sensorDataQueue and state information
+    if (sensorDataQueue != nullptr) {
+        xQueueReceive(sensorDataQueue, &HMI_currentSpeed, 0);
+    }
+
+    HMI_display.updateScreen(HMI_currentSpeed, HMI_currentBattery);
+
+    if (HMI_display.readTouchCommand(HMI_incomingCommand)) {
+        switch (HMI_incomingCommand) {
+            case 1:
+                ESP_LOGI(TAG, "HMI command: START request");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::START_REQUEST);
+                break;
+            case 2:
+                ESP_LOGI(TAG, "HMI command: RESET request");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::RESET);
+                break;
+            case 3:
+                ESP_LOGE(TAG, "HMI command: EMERGENCY STOP triggered");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::EMERGENCY_STOP);
+                break;
+            default:
+                ESP_LOGW(TAG, "Unknown HMI command received: %d", HMI_incomingCommand);
+                break;
+        }
+    }
+
     logStackUsage("HMI_Task", lastStackLog);
     vTaskDelay(pdMS_TO_TICKS(100)); // 10Hz refresh
   }
