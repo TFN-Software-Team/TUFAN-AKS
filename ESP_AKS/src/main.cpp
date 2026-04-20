@@ -100,7 +100,12 @@ void vTask_HMI_Display(void *pvParameters) {
   uint32_t lastStackLog = 0;
 
   DisplayHMI HMI_display;
-  HMI_display.begin();
+  if (!HMI_display.begin()) {
+    ESP_LOGE(TAG, "DisplayHMI init failed — HMI task terminating");
+    esp_task_wdt_delete(nullptr);
+    vTaskDelete(nullptr);
+    return;
+  }
 
   uint16_t HMI_currentSpeed = 0;
   uint8_t HMI_currentBattery = 100;
