@@ -11,7 +11,7 @@ cmake-build-*/
 compile_commands.json
 
 # IDE files
-.vscode/
+.vscode
 .vscode/*.code-workspace
 .idea/
 *.swp
@@ -27,3 +27,6 @@ Thumbs.db
 
 # workspace files
 TUFAN-AKS.code-workspace
+
+#cache files
+.cache/
