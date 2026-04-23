@@ -58,7 +58,9 @@ void run() {
             transitionTo(VcuState::FAULT);
             return;
         }
-        if (event == VcuEvent::RESET && s_state == VcuState::FAULT) {
+        if (event == VcuEvent::RESET &&
+            (s_state == VcuState::FAULT ||
+             s_state == VcuState::EMERGENCY_STOP)) {
             transitionTo(VcuState::IDLE);
             return;
         }

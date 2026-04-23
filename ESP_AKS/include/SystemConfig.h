@@ -13,7 +13,9 @@
 // --- CAN Message IDs ---
 #define CAN_ID_TORQUE_CMD 0x100    // AKS → Motor Driver
 #define CAN_ID_MOTOR_STATUS 0x200  // Motor Driver → AKS
-#define CAN_ID_BMS_STATUS 0x300    // BMS → AKS
+#define CAN_ID_BMS_STATUS 0x300    // Legacy BMS → AKS
+#define CAN_ID_BMS_CONFIG 0xE000   // Lithium Balance BMS config frame
+#define CAN_ID_BMS_LIVE 0xE001     // Lithium Balance BMS live frame
 
 // --- CAN (TJA1050 transceiver) ---
 #define CAN_TX_PIN GPIO_NUM_5
@@ -35,6 +37,7 @@
 #define LORA_M0_PIN GPIO_NUM_25   // Şemadaki MO (IO25)
 #define LORA_M1_PIN GPIO_NUM_26   // Şemadaki M1 (IO26)
 #define LORA_UART_BAUD 9600       // E32 default baud
+#define LORA_TX_PERIOD_MS 200     // 5 Hz telemetry uplink
 
 // --- MCP23S17 I/O Expander (SPI) → Relays ---
 #define RELAY_SPI_HOST SPI2_HOST

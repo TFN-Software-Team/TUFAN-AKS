@@ -8,6 +8,7 @@
 #include "CanManager.h"
 #include "RelayManager.h"
 #include "SystemConfig.h"
+#include "Telemetry.h"
 #include "VcuLogic.h"
 
 static constexpr const char *TAG = "APP_MAIN";
@@ -15,7 +16,20 @@ static constexpr const char *TAG = "APP_MAIN";
 // Stack high-water-mark logging interval (ticks)
 static constexpr uint32_t STACK_LOG_INTERVAL_MS = 30000;
 
-QueueHandle_t sensorDataQueue = nullptr;
+QueueHandle_t TEL_sensorDataQueue = nullptr;
+
+static void CAN_handleEvent(CAN_Event CAN_event, void* CAN_context) {
+  (void)CAN_context;
+
+  switch (CAN_event) {
+  case CAN_Event::FAULT_DETECTED:
+    ESP_LOGE(TAG, "CAN fault event received");
+    VcuLogic::postEvent(VcuLogic::VcuEvent::FAULT_DETECTED);
+    break;
+  default:
+    break;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helper: log stack high-water-mark periodically
@@ -36,6 +50,7 @@ void vTask_CAN_Comm(void *pvParameters) {
   esp_task_wdt_add(nullptr);
 
   CanManager can(CAN_TX_PIN, CAN_RX_PIN);
+  can.setEventCallback(CAN_handleEvent, nullptr);
 
   if (!can.begin()) {
     ESP_LOGE(TAG, "Failed to initialize CAN bus");
@@ -44,7 +59,7 @@ void vTask_CAN_Comm(void *pvParameters) {
     return;
   }
 
-  uint16_t torqueCmd = 0;
+  uint16_t CAN_torqueCmd = 0;
   uint32_t lastStackLog = 0;
 
   while (true) {
@@ -56,16 +71,16 @@ void vTask_CAN_Comm(void *pvParameters) {
     // 2. Send torque command if in DRIVE state
     if (VcuLogic::getState() == VcuLogic::VcuState::DRIVE) {
       // TODO: Get actual torque value from control logic
-      can.sendTorqueCommand(torqueCmd);
+      can.sendTorqueCommand(CAN_torqueCmd);
     } else {
       // Not in drive — send zero torque for safety
       can.sendTorqueCommand(0);
     }
 
-    // 3. Push motor status to HMI queue
-    if (sensorDataQueue != nullptr) {
-      MotorStatus status = can.getMotorStatus();
-      xQueueOverwrite(sensorDataQueue, &status.rpm);
+    // 3. Push the latest telemetry snapshot to the shared queue
+    if (TEL_sensorDataQueue != nullptr) {
+      const TelemetryData TEL_data = can.getTelemetryData();
+      xQueueOverwrite(TEL_sensorDataQueue, &TEL_data);
     }
 
     logStackUsage("CAN_Task", lastStackLog);
@@ -114,8 +129,12 @@ void vTask_HMI_Display(void *pvParameters) {
   while (true) {
     esp_task_wdt_reset();
 
-    if (sensorDataQueue != nullptr) {
-        xQueueReceive(sensorDataQueue, &HMI_currentSpeed, 0);
+    if (TEL_sensorDataQueue != nullptr) {
+        TelemetryData TEL_data = {};
+        if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
+            HMI_currentSpeed = TEL_data.TEL_motorRpm;
+            HMI_currentBattery = TEL_data.TEL_bmsSoc;
+        }
     }
 
     HMI_display.updateScreen(HMI_currentSpeed, HMI_currentBattery);
@@ -151,29 +170,34 @@ void vTask_HMI_Display(void *pvParameters) {
 void vTask_LoRa_UKS(void *pvParameters) {
   esp_task_wdt_add(nullptr);
 
+  Telemetry LO_telemetry;
+
   // UART init for E32
-  uart_config_t uart_cfg = {
+  uart_config_t LO_uartConfig = {
       .baud_rate = LORA_UART_BAUD,
       .data_bits = UART_DATA_8_BITS,
       .parity = UART_PARITY_DISABLE,
       .stop_bits = UART_STOP_BITS_1,
       .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
   };
-  uart_param_config(LORA_UART_NUM, &uart_cfg);
+  uart_param_config(LORA_UART_NUM, &LO_uartConfig);
   uart_set_pin(LORA_UART_NUM, LORA_TX_PIN, LORA_RX_PIN, UART_PIN_NO_CHANGE,
                UART_PIN_NO_CHANGE);
   uart_driver_install(LORA_UART_NUM, 256, 0, 0, nullptr, 0);
+  LO_telemetry.begin();
 
-  uint8_t buf[4];
+  uint8_t LO_rxBuffer[4];
   uint32_t lastStackLog = 0;
+  TickType_t LO_lastTelemetryTick = 0;
 
   while (true) {
     esp_task_wdt_reset();
 
-    int len =
-        uart_read_bytes(LORA_UART_NUM, buf, sizeof(buf), pdMS_TO_TICKS(100));
-    if (len > 0) {
-      switch (buf[0]) {
+    int LO_rxLength = uart_read_bytes(LORA_UART_NUM, LO_rxBuffer,
+                                      sizeof(LO_rxBuffer),
+                                      pdMS_TO_TICKS(100));
+    if (LO_rxLength > 0) {
+      switch (LO_rxBuffer[0]) {
       case UKS_CMD_EMERGENCY_STOP:
         VcuLogic::postEvent(VcuLogic::VcuEvent::EMERGENCY_STOP);
         break;
@@ -188,7 +212,20 @@ void vTask_LoRa_UKS(void *pvParameters) {
       }
     }
 
+    const TickType_t LO_nowTick = xTaskGetTickCount();
+    if ((LO_nowTick - LO_lastTelemetryTick) >=
+        pdMS_TO_TICKS(LORA_TX_PERIOD_MS)) {
+      if (TEL_sensorDataQueue != nullptr) {
+        TelemetryData TEL_data = {};
+        if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
+          LO_telemetry.sendStatus(TEL_data);
+          LO_lastTelemetryTick = LO_nowTick;
+        }
+      }
+    }
+
     logStackUsage("LoRa_Task", lastStackLog);
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 
@@ -208,9 +245,9 @@ extern "C" void app_main() {
   VcuLogic::init();
 
   // 3. Create sensor data queue for inter-task communication
-  sensorDataQueue = xQueueCreate(1, sizeof(uint16_t));
-  if (sensorDataQueue == nullptr) {
-    ESP_LOGE(TAG, "Failed to create sensorDataQueue");
+  TEL_sensorDataQueue = xQueueCreate(1, sizeof(TelemetryData));
+  if (TEL_sensorDataQueue == nullptr) {
+    ESP_LOGE(TAG, "Failed to create TEL_sensorDataQueue");
     return;
   }
 
