@@ -26,4 +26,5 @@ class Telemetry {
 
    private:
     bool TEL_isInitialized;
+    uint32_t TEL_sequenceCounter;
 };

@@ -48,6 +48,7 @@
 #define LORA_MODE_NORMAL_M0_LEVEL 0
 #define LORA_MODE_NORMAL_M1_LEVEL 0
 #define LORA_AUX_READY_LEVEL 1
+#define LORA_PROTOCOL_VERSION 1
 // Planned startup mode for E32:
 // M0 = 0, M1 = 0 -> normal transparent UART mode.
 // AUX should be used as a readiness gate before TX once the GPIO init

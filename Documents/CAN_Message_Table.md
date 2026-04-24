@@ -13,6 +13,11 @@ Direction: `AKS -> Motor Driver`
 | 0 | Torque MSB | `uint8_t` | raw | High byte of torque command |
 | 1 | Torque LSB | `uint8_t` | raw | Low byte of torque command |
 
+Notes:
+
+- The CAN task transmits torque at the control loop rate.
+- When VCU state is not `DRIVE`, torque is forced to `0` for safety.
+
 ### `0x200` Motor Status
 
 Direction: `Motor Driver -> AKS`
@@ -24,6 +29,11 @@ Direction: `Motor Driver -> AKS`
 | 2 | Torque Feedback MSB | `uint8_t` | raw | High byte of signed torque feedback |
 | 3 | Torque Feedback LSB | `uint8_t` | raw | Low byte of signed torque feedback |
 | 4 | Error Flags | `uint8_t` | bitfield | Motor driver fault / warning flags |
+
+Freshness rule:
+
+- If no valid `0x200` frame is received for `500 ms`, AKS marks motor data invalid.
+- A post-reception motor timeout is treated as a critical safety condition outside `IDLE`.
 
 ## Lithium Balance BMS Frames
 
@@ -52,6 +62,11 @@ Direction: `BMS -> AKS`
 | 3 | Temperature | `uint8_t` | `value - 100` | BMS temperature in degree Celsius |
 | 4 | Reserved | `uint8_t` | raw | Reverse-engineered frame byte, currently unused by AKS |
 | 5 | State of Charge | `uint8_t` | percent | Pack SOC |
+
+Safety notes:
+
+- Nonzero BMS error flags trigger `FAULT_DETECTED`.
+- Warning and critical threshold checks are also evaluated in `VcuLogic` using the latest telemetry snapshot.
 
 ## Legacy / Reserved
 
