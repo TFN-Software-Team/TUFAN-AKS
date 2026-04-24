@@ -7,6 +7,7 @@ struct TelemetryData {
     int16_t TEL_motorTorqueFeedback;
     uint8_t TEL_motorErrorFlags;
     bool TEL_motorDataValid;
+    bool TEL_motorTimeoutActive;
 
     uint8_t TEL_bmsSoc;
     int16_t TEL_bmsCurrentDeciA;

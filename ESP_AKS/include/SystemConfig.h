@@ -47,6 +47,7 @@
 #define LORA_RX_TIMEOUT_MS 20
 #define LORA_MODE_NORMAL_M0_LEVEL 0
 #define LORA_MODE_NORMAL_M1_LEVEL 0
+#define LORA_AUX_READY_LEVEL 1
 // Planned startup mode for E32:
 // M0 = 0, M1 = 0 -> normal transparent UART mode.
 // AUX should be used as a readiness gate before TX once the GPIO init
@@ -94,6 +95,7 @@
 // 1. Zero torque request
 // 2. Short hold time for motor torque decay
 // 3. Contactor opening
+#define VCU_CONTACTOR_OPEN_DELAY_MS 20
 
 // --- Phase 2 Safety Thresholds ---
 // Warning levels should eventually trigger derating.
@@ -112,5 +114,8 @@
 // Task watchdog timing is still using the ESP-IDF default configuration.
 // The shorter LoRa RX timeout below improves scheduling margin, but the global
 // watchdog timeout should still be reviewed once final task runtimes stabilize.
+
+// --- CAN Freshness Thresholds ---
+#define CAN_MOTOR_STATUS_TIMEOUT_MS 500
 
 #endif  // SYSTEM_CONFIG_H

@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 
 static constexpr const char* TAG = "VCU_LOGIC";
 static constexpr uint32_t TASK_PERIOD_MS = 20;
@@ -18,6 +19,7 @@ static QueueHandle_t s_eventQueue = nullptr;
 static uint32_t s_stateTimer = 0;
 static TelemetryData s_TEL_latestData = {};
 static bool s_VCU_warningLogged = false;
+static SemaphoreHandle_t s_TEL_dataMutex = nullptr;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
@@ -27,6 +29,7 @@ static bool pollEvent(VcuEvent& out);
 static bool isResetInterlockSatisfied();
 static bool hasWarningCondition();
 static bool hasCriticalCondition();
+static TelemetryData getTelemetrySnapshot();
 static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA);
 static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA);
 
@@ -43,6 +46,12 @@ void init() {
     s_eventQueue = xQueueCreate(8, sizeof(VcuEvent));
     if (s_eventQueue == nullptr) {
         ESP_LOGE(TAG, "Failed to create event queue");
+        return;
+    }
+
+    s_TEL_dataMutex = xSemaphoreCreateMutex();
+    if (s_TEL_dataMutex == nullptr) {
+        ESP_LOGE(TAG, "Failed to create telemetry mutex");
         return;
     }
 
@@ -147,7 +156,12 @@ VcuState getState() {
 }
 
 void setTelemetryData(const TelemetryData& TEL_data) {
+    if (s_TEL_dataMutex == nullptr)
+        return;
+
+    xSemaphoreTake(s_TEL_dataMutex, portMAX_DELAY);
     s_TEL_latestData = TEL_data;
+    xSemaphoreGive(s_TEL_dataMutex);
 }
 
 // ---------------------------------------------------------------------------
@@ -175,10 +189,16 @@ static void handleDrive() {
 }
 
 static void handleEmergencyStop() {
-    // Phase 1.3 note:
-    // contactors are still opened immediately. Replace this with a coordinated
-    // zero-torque -> hold -> open sequence once torque shutdown handoff exists.
-    RelayManager::instance().allOff();
+    if (s_stateTimer <= TASK_PERIOD_MS) {
+        ESP_LOGW(TAG, "EMERGENCY STOP: zero torque phase started");
+    }
+
+    // The CAN task sends zero torque as soon as state != DRIVE.
+    // Hold the contactors closed briefly so the zero-torque command can be
+    // transmitted before opening the positive contactor bank.
+    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+        RelayManager::instance().allOff();
+    }
 
     // Log once per second to avoid flooding
     static uint32_t lastLog = 0;
@@ -190,10 +210,13 @@ static void handleEmergencyStop() {
 }
 
 static void handleFault() {
-    // Phase 1.3 note:
-    // apply the same coordinated shutdown sequence here when the motor torque
-    // decay timing is defined.
-    RelayManager::instance().allOff();
+    if (s_stateTimer <= TASK_PERIOD_MS) {
+        ESP_LOGW(TAG, "FAULT: zero torque phase started");
+    }
+
+    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+        RelayManager::instance().allOff();
+    }
 
     static uint32_t lastLog = 0;
     if (s_stateTimer - lastLog >= 1000) {
@@ -218,9 +241,21 @@ static bool pollEvent(VcuEvent& out) {
     return xQueueReceive(s_eventQueue, &out, 0) == pdTRUE;
 }
 
+static TelemetryData getTelemetrySnapshot() {
+    if (s_TEL_dataMutex == nullptr)
+        return s_TEL_latestData;
+
+    TelemetryData VCU_dataCopy = {};
+    xSemaphoreTake(s_TEL_dataMutex, portMAX_DELAY);
+    VCU_dataCopy = s_TEL_latestData;
+    xSemaphoreGive(s_TEL_dataMutex);
+    return VCU_dataCopy;
+}
+
 static bool isResetInterlockSatisfied() {
-    if (s_TEL_latestData.TEL_motorErrorFlags != 0 ||
-        s_TEL_latestData.TEL_bmsErrorFlags != 0)
+    const TelemetryData VCU_data = getTelemetrySnapshot();
+
+    if (VCU_data.TEL_motorErrorFlags != 0 || VCU_data.TEL_bmsErrorFlags != 0)
         return false;
 
     if (hasCriticalCondition())
@@ -230,31 +265,37 @@ static bool isResetInterlockSatisfied() {
 }
 
 static bool hasWarningCondition() {
-    if (!s_TEL_latestData.TEL_bmsDataValid)
+    const TelemetryData VCU_data = getTelemetrySnapshot();
+
+    if (!VCU_data.TEL_bmsDataValid)
         return false;
 
-    return s_TEL_latestData.TEL_bmsTemperatureC >= BMS_WARN_MAX_TEMP_C ||
-           s_TEL_latestData.TEL_bmsPackVoltageDeciV <=
+    return VCU_data.TEL_bmsTemperatureC >= BMS_WARN_MAX_TEMP_C ||
+           VCU_data.TEL_bmsPackVoltageDeciV <=
                BMS_WARN_MIN_PACK_VOLTAGE_DECI_V ||
-           s_TEL_latestData.TEL_bmsPackVoltageDeciV >=
+           VCU_data.TEL_bmsPackVoltageDeciV >=
                BMS_WARN_MAX_PACK_VOLTAGE_DECI_V ||
-           isCurrentWarning(s_TEL_latestData.TEL_bmsCurrentDeciA);
+           isCurrentWarning(VCU_data.TEL_bmsCurrentDeciA);
 }
 
 static bool hasCriticalCondition() {
-    if (s_TEL_latestData.TEL_motorErrorFlags != 0 ||
-        s_TEL_latestData.TEL_bmsErrorFlags != 0)
+    const TelemetryData VCU_data = getTelemetrySnapshot();
+
+    if (VCU_data.TEL_motorErrorFlags != 0 || VCU_data.TEL_bmsErrorFlags != 0)
         return true;
 
-    if (!s_TEL_latestData.TEL_bmsDataValid)
+    if (VCU_data.TEL_motorTimeoutActive && s_state != VcuState::IDLE)
+        return true;
+
+    if (!VCU_data.TEL_bmsDataValid)
         return false;
 
-    return s_TEL_latestData.TEL_bmsTemperatureC >= BMS_CRITICAL_MAX_TEMP_C ||
-           s_TEL_latestData.TEL_bmsPackVoltageDeciV <=
+    return VCU_data.TEL_bmsTemperatureC >= BMS_CRITICAL_MAX_TEMP_C ||
+           VCU_data.TEL_bmsPackVoltageDeciV <=
                BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V ||
-           s_TEL_latestData.TEL_bmsPackVoltageDeciV >=
+           VCU_data.TEL_bmsPackVoltageDeciV >=
                BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V ||
-           isCurrentCritical(s_TEL_latestData.TEL_bmsCurrentDeciA);
+           isCurrentCritical(VCU_data.TEL_bmsCurrentDeciA);
 }
 
 static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA) {

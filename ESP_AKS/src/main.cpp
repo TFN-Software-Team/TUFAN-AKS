@@ -1,3 +1,4 @@
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
@@ -185,12 +186,31 @@ void vTask_LoRa_UKS(void *pvParameters) {
   esp_task_wdt_add(nullptr);
 
   Telemetry LO_telemetry;
+  int LO_auxLevel = 0;
 
-  // Planned E32 startup sequence:
-  // 1. Drive M0/M1 to the normal-mode levels from SystemConfig.h.
-  // 2. Configure AUX as input and wait for ready before TX.
-  // 3. Keep UART traffic in transparent mode unless configuration mode is
-  //    explicitly needed later.
+  gpio_config_t LO_modePinsConfig = {};
+  LO_modePinsConfig.pin_bit_mask =
+      (1ULL << LORA_M0_PIN) | (1ULL << LORA_M1_PIN);
+  LO_modePinsConfig.mode = GPIO_MODE_OUTPUT;
+  LO_modePinsConfig.pull_up_en = GPIO_PULLUP_DISABLE;
+  LO_modePinsConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  LO_modePinsConfig.intr_type = GPIO_INTR_DISABLE;
+  ESP_ERROR_CHECK(gpio_config(&LO_modePinsConfig));
+
+  gpio_config_t LO_auxPinConfig = {};
+  LO_auxPinConfig.pin_bit_mask = (1ULL << LORA_AUX_PIN);
+  LO_auxPinConfig.mode = GPIO_MODE_INPUT;
+  LO_auxPinConfig.pull_up_en = GPIO_PULLUP_DISABLE;
+  LO_auxPinConfig.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  LO_auxPinConfig.intr_type = GPIO_INTR_DISABLE;
+  ESP_ERROR_CHECK(gpio_config(&LO_auxPinConfig));
+
+  gpio_set_level(LORA_M0_PIN, LORA_MODE_NORMAL_M0_LEVEL);
+  gpio_set_level(LORA_M1_PIN, LORA_MODE_NORMAL_M1_LEVEL);
+
+  LO_auxLevel = gpio_get_level(LORA_AUX_PIN);
+  ESP_LOGI(TAG, "LoRa mode configured: M0=%d M1=%d AUX=%d",
+           LORA_MODE_NORMAL_M0_LEVEL, LORA_MODE_NORMAL_M1_LEVEL, LO_auxLevel);
 
   // UART init for E32
   uart_config_t LO_uartConfig = {
@@ -209,6 +229,7 @@ void vTask_LoRa_UKS(void *pvParameters) {
   uint8_t LO_rxBuffer[4];
   uint32_t lastStackLog = 0;
   TickType_t LO_lastTelemetryTick = 0;
+  bool LO_auxNotReadyLogged = false;
 
   while (true) {
     esp_task_wdt_reset();
@@ -242,8 +263,16 @@ void vTask_LoRa_UKS(void *pvParameters) {
       if (TEL_sensorDataQueue != nullptr) {
         TelemetryData TEL_data = {};
         if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
-          LO_telemetry.sendStatus(TEL_data);
-          LO_lastTelemetryTick = LO_nowTick;
+          if (gpio_get_level(LORA_AUX_PIN) == LORA_AUX_READY_LEVEL) {
+            LO_telemetry.sendStatus(TEL_data);
+            LO_lastTelemetryTick = LO_nowTick;
+            LO_auxNotReadyLogged = false;
+          } else {
+            if (!LO_auxNotReadyLogged) {
+              ESP_LOGW(TAG, "LoRa AUX not ready, telemetry TX skipped");
+              LO_auxNotReadyLogged = true;
+            }
+          }
         }
       }
     }

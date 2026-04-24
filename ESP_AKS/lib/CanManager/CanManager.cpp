@@ -105,6 +105,8 @@ void CanManager::processRxMessages() {
                 break;
         }
     }
+
+    updateMotorStatusValidity();
 }
 
 MotorStatus CanManager::getMotorStatus() const {
@@ -149,11 +151,15 @@ void CanManager::handleMotorStatus(const twai_message_t& msg) {
     s_motorStatus.torqueFeedback = (msg.data[2] << 8) | msg.data[3];
     s_motorStatus.errorFlags = (msg.data_length_code >= 5) ? msg.data[4] : 0;
     s_motorStatus.isValid = true;
+    CAN_lastMotorStatusTick = xTaskGetTickCount();
+    CAN_hasSeenMotorStatus = true;
+    CAN_motorTimeoutLogged = false;
 
     s_telemetryData.TEL_motorRpm = s_motorStatus.rpm;
     s_telemetryData.TEL_motorTorqueFeedback = s_motorStatus.torqueFeedback;
     s_telemetryData.TEL_motorErrorFlags = s_motorStatus.errorFlags;
     s_telemetryData.TEL_motorDataValid = s_motorStatus.isValid;
+    s_telemetryData.TEL_motorTimeoutActive = false;
 
     xSemaphoreGive(s_mutex);
 
@@ -233,6 +239,33 @@ void CanManager::handleBmsLive(const twai_message_t& msg) {
 
     ESP_LOGD(TAG, "BMS live: current=%d deciA, temp=%d C, soc=%u%%",
              CAN_bmsCurrentDeciA, CAN_bmsTemperatureC, CAN_bmsSoc);
+}
+
+void CanManager::updateMotorStatusValidity() {
+    if (s_mutex == nullptr)
+        return;
+
+    const TickType_t CAN_nowTick = xTaskGetTickCount();
+    bool CAN_shouldLogTimeout = false;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+
+    if (CAN_hasSeenMotorStatus && s_motorStatus.isValid &&
+        (CAN_nowTick - CAN_lastMotorStatusTick) >=
+            pdMS_TO_TICKS(CAN_MOTOR_STATUS_TIMEOUT_MS)) {
+        s_motorStatus.isValid = false;
+        s_telemetryData.TEL_motorDataValid = false;
+        s_telemetryData.TEL_motorTimeoutActive = true;
+        CAN_shouldLogTimeout = !CAN_motorTimeoutLogged;
+        CAN_motorTimeoutLogged = true;
+    }
+
+    xSemaphoreGive(s_mutex);
+
+    if (CAN_shouldLogTimeout) {
+        ESP_LOGW(TAG, "Motor status timeout after %d ms",
+                 CAN_MOTOR_STATUS_TIMEOUT_MS);
+    }
 }
 
 void CanManager::notifyFaultIfNeeded(uint8_t CAN_previousFlags,

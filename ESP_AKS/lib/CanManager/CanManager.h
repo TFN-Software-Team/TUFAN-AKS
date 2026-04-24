@@ -44,6 +44,7 @@ class CanManager {
     void handleMotorStatus(const twai_message_t& msg);
     void handleBmsConfig(const twai_message_t& msg);
     void handleBmsLive(const twai_message_t& msg);
+    void updateMotorStatusValidity();
     void notifyFaultIfNeeded(uint8_t CAN_previousFlags, uint8_t CAN_currentFlags,
                              const char* CAN_faultSource);
 
@@ -55,6 +56,9 @@ class CanManager {
     MotorStatus s_motorStatus = {};
     TelemetryData s_telemetryData = {};
     mutable SemaphoreHandle_t s_mutex = nullptr;
+    TickType_t CAN_lastMotorStatusTick = 0;
+    bool CAN_hasSeenMotorStatus = false;
+    bool CAN_motorTimeoutLogged = false;
     CAN_EventCallback CAN_eventCallback = nullptr;
     void* CAN_eventContext = nullptr;
 };
