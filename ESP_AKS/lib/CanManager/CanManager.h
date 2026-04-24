@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "Telemetry.h"
 #include "driver/gpio.h"
 #include "driver/twai.h"
 #include "freertos/FreeRTOS.h"
@@ -15,11 +16,19 @@ struct MotorStatus {
     bool isValid;            // True if data received recently
 };
 
+enum class CAN_Event : uint8_t {
+    NONE = 0,
+    FAULT_DETECTED = 1,
+};
+
+using CAN_EventCallback = void (*)(CAN_Event CAN_event, void* CAN_context);
+
 class CanManager {
    public:
     CanManager(gpio_num_t tx_pin, gpio_num_t rx_pin);
 
     bool begin();
+    void setEventCallback(CAN_EventCallback CAN_callback, void* CAN_context);
 
     // Send torque command to motor driver (CAN ID: 0x100)
     bool sendTorqueCommand(uint16_t torqueValue);
@@ -29,9 +38,15 @@ class CanManager {
 
     // Thread-safe read of latest motor status
     MotorStatus getMotorStatus() const;
+    TelemetryData getTelemetryData() const;
 
    private:
     void handleMotorStatus(const twai_message_t& msg);
+    void handleBmsConfig(const twai_message_t& msg);
+    void handleBmsLive(const twai_message_t& msg);
+    void updateMotorStatusValidity();
+    void notifyFaultIfNeeded(uint8_t CAN_previousFlags, uint8_t CAN_currentFlags,
+                             const char* CAN_faultSource);
 
     twai_general_config_t g_config;
     twai_timing_config_t t_config;
@@ -39,5 +54,11 @@ class CanManager {
     bool isInitialized = false;
 
     MotorStatus s_motorStatus = {};
+    TelemetryData s_telemetryData = {};
     mutable SemaphoreHandle_t s_mutex = nullptr;
+    TickType_t CAN_lastMotorStatusTick = 0;
+    bool CAN_hasSeenMotorStatus = false;
+    bool CAN_motorTimeoutLogged = false;
+    CAN_EventCallback CAN_eventCallback = nullptr;
+    void* CAN_eventContext = nullptr;
 };

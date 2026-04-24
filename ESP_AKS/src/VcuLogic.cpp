@@ -1,8 +1,10 @@
 #include "VcuLogic.h"
+#include "SystemConfig.h"
 #include "RelayManager.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 
 static constexpr const char* TAG = "VCU_LOGIC";
 static constexpr uint32_t TASK_PERIOD_MS = 20;
@@ -15,12 +17,21 @@ namespace VcuLogic {
 static VcuState s_state = VcuState::INIT;
 static QueueHandle_t s_eventQueue = nullptr;
 static uint32_t s_stateTimer = 0;
+static TelemetryData s_TEL_latestData = {};
+static bool s_VCU_warningLogged = false;
+static SemaphoreHandle_t s_TEL_dataMutex = nullptr;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
 // ---------------------------------------------------------------------------
 static void transitionTo(VcuState next);
 static bool pollEvent(VcuEvent& out);
+static bool isResetInterlockSatisfied();
+static bool hasWarningCondition();
+static bool hasCriticalCondition();
+static TelemetryData getTelemetrySnapshot();
+static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA);
+static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA);
 
 static void handleIdle();
 static void handleReady();
@@ -38,6 +49,12 @@ void init() {
         return;
     }
 
+    s_TEL_dataMutex = xSemaphoreCreateMutex();
+    if (s_TEL_dataMutex == nullptr) {
+        ESP_LOGE(TAG, "Failed to create telemetry mutex");
+        return;
+    }
+
     // Safety first — ensure all relays are off at startup
     RelayManager::instance().allOff();
 
@@ -46,6 +63,23 @@ void init() {
 
 void run() {
     s_stateTimer += TASK_PERIOD_MS;
+
+    if ((s_state == VcuState::IDLE || s_state == VcuState::READY ||
+         s_state == VcuState::DRIVE) &&
+        hasCriticalCondition()) {
+        ESP_LOGE(TAG, "Critical safety threshold exceeded, entering FAULT");
+        transitionTo(VcuState::FAULT);
+        return;
+    }
+
+    if (hasWarningCondition()) {
+        if (!s_VCU_warningLogged) {
+            ESP_LOGW(TAG, "Warning threshold active, derating policy pending");
+            s_VCU_warningLogged = true;
+        }
+    } else {
+        s_VCU_warningLogged = false;
+    }
 
     VcuEvent event = VcuEvent::NONE;
     if (pollEvent(event)) {
@@ -58,7 +92,13 @@ void run() {
             transitionTo(VcuState::FAULT);
             return;
         }
-        if (event == VcuEvent::RESET && s_state == VcuState::FAULT) {
+        if (event == VcuEvent::RESET &&
+            (s_state == VcuState::FAULT ||
+             s_state == VcuState::EMERGENCY_STOP)) {
+            if (!isResetInterlockSatisfied()) {
+                ESP_LOGW(TAG, "RESET rejected: safety interlock still active");
+                return;
+            }
             transitionTo(VcuState::IDLE);
             return;
         }
@@ -115,6 +155,15 @@ VcuState getState() {
     return s_state;
 }
 
+void setTelemetryData(const TelemetryData& TEL_data) {
+    if (s_TEL_dataMutex == nullptr)
+        return;
+
+    xSemaphoreTake(s_TEL_dataMutex, portMAX_DELAY);
+    s_TEL_latestData = TEL_data;
+    xSemaphoreGive(s_TEL_dataMutex);
+}
+
 // ---------------------------------------------------------------------------
 // State handlers
 // ---------------------------------------------------------------------------
@@ -129,17 +178,27 @@ static void handleReady() {
         RelayManager::instance().allOn();
         ESP_LOGI(TAG, "All contactors closed — system READY");
     }
-    // TODO: Monitor bus voltage / system health once sensors are wired
+    // DRIVE is entered only after an explicit DRIVE_ENABLE command.
+    // Future interlocks should be added here before propulsion is allowed.
 }
 
 static void handleDrive() {
     // Contactors remain closed during drive
-    // TODO: Monitor current limits and thermal limits when sensors are ready
+    // Torque output is still held at zero in the CAN task until the Phase 1.2
+    // input-to-torque model is implemented.
 }
 
 static void handleEmergencyStop() {
-    // Immediately de-energize everything
-    RelayManager::instance().allOff();
+    if (s_stateTimer <= TASK_PERIOD_MS) {
+        ESP_LOGW(TAG, "EMERGENCY STOP: zero torque phase started");
+    }
+
+    // The CAN task sends zero torque as soon as state != DRIVE.
+    // Hold the contactors closed briefly so the zero-torque command can be
+    // transmitted before opening the positive contactor bank.
+    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+        RelayManager::instance().allOff();
+    }
 
     // Log once per second to avoid flooding
     static uint32_t lastLog = 0;
@@ -151,7 +210,13 @@ static void handleEmergencyStop() {
 }
 
 static void handleFault() {
-    RelayManager::instance().allOff();
+    if (s_stateTimer <= TASK_PERIOD_MS) {
+        ESP_LOGW(TAG, "FAULT: zero torque phase started");
+    }
+
+    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+        RelayManager::instance().allOff();
+    }
 
     static uint32_t lastLog = 0;
     if (s_stateTimer - lastLog >= 1000) {
@@ -174,6 +239,73 @@ static bool pollEvent(VcuEvent& out) {
     if (s_eventQueue == nullptr)
         return false;
     return xQueueReceive(s_eventQueue, &out, 0) == pdTRUE;
+}
+
+static TelemetryData getTelemetrySnapshot() {
+    if (s_TEL_dataMutex == nullptr)
+        return s_TEL_latestData;
+
+    TelemetryData VCU_dataCopy = {};
+    xSemaphoreTake(s_TEL_dataMutex, portMAX_DELAY);
+    VCU_dataCopy = s_TEL_latestData;
+    xSemaphoreGive(s_TEL_dataMutex);
+    return VCU_dataCopy;
+}
+
+static bool isResetInterlockSatisfied() {
+    const TelemetryData VCU_data = getTelemetrySnapshot();
+
+    if (VCU_data.TEL_motorErrorFlags != 0 || VCU_data.TEL_bmsErrorFlags != 0)
+        return false;
+
+    if (hasCriticalCondition())
+        return false;
+
+    return true;
+}
+
+static bool hasWarningCondition() {
+    const TelemetryData VCU_data = getTelemetrySnapshot();
+
+    if (!VCU_data.TEL_bmsDataValid)
+        return false;
+
+    return VCU_data.TEL_bmsTemperatureC >= BMS_WARN_MAX_TEMP_C ||
+           VCU_data.TEL_bmsPackVoltageDeciV <=
+               BMS_WARN_MIN_PACK_VOLTAGE_DECI_V ||
+           VCU_data.TEL_bmsPackVoltageDeciV >=
+               BMS_WARN_MAX_PACK_VOLTAGE_DECI_V ||
+           isCurrentWarning(VCU_data.TEL_bmsCurrentDeciA);
+}
+
+static bool hasCriticalCondition() {
+    const TelemetryData VCU_data = getTelemetrySnapshot();
+
+    if (VCU_data.TEL_motorErrorFlags != 0 || VCU_data.TEL_bmsErrorFlags != 0)
+        return true;
+
+    if (VCU_data.TEL_motorTimeoutActive && s_state != VcuState::IDLE)
+        return true;
+
+    if (!VCU_data.TEL_bmsDataValid)
+        return false;
+
+    return VCU_data.TEL_bmsTemperatureC >= BMS_CRITICAL_MAX_TEMP_C ||
+           VCU_data.TEL_bmsPackVoltageDeciV <=
+               BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V ||
+           VCU_data.TEL_bmsPackVoltageDeciV >=
+               BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V ||
+           isCurrentCritical(VCU_data.TEL_bmsCurrentDeciA);
+}
+
+static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA) {
+    return TEL_bmsCurrentDeciA >= BMS_CRITICAL_MAX_CHARGE_CURRENT_DECI_A ||
+           TEL_bmsCurrentDeciA <= -BMS_CRITICAL_MAX_DISCHARGE_CURRENT_DECI_A;
+}
+
+static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA) {
+    return TEL_bmsCurrentDeciA >= BMS_WARN_MAX_CHARGE_CURRENT_DECI_A ||
+           TEL_bmsCurrentDeciA <= -BMS_WARN_MAX_DISCHARGE_CURRENT_DECI_A;
 }
 
 }  // namespace VcuLogic
