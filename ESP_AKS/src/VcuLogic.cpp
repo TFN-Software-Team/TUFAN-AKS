@@ -1,4 +1,5 @@
 #include "VcuLogic.h"
+#include "SystemConfig.h"
 #include "RelayManager.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -15,12 +16,19 @@ namespace VcuLogic {
 static VcuState s_state = VcuState::INIT;
 static QueueHandle_t s_eventQueue = nullptr;
 static uint32_t s_stateTimer = 0;
+static TelemetryData s_TEL_latestData = {};
+static bool s_VCU_warningLogged = false;
 
 // ---------------------------------------------------------------------------
 // Forward declarations
 // ---------------------------------------------------------------------------
 static void transitionTo(VcuState next);
 static bool pollEvent(VcuEvent& out);
+static bool isResetInterlockSatisfied();
+static bool hasWarningCondition();
+static bool hasCriticalCondition();
+static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA);
+static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA);
 
 static void handleIdle();
 static void handleReady();
@@ -47,6 +55,23 @@ void init() {
 void run() {
     s_stateTimer += TASK_PERIOD_MS;
 
+    if ((s_state == VcuState::IDLE || s_state == VcuState::READY ||
+         s_state == VcuState::DRIVE) &&
+        hasCriticalCondition()) {
+        ESP_LOGE(TAG, "Critical safety threshold exceeded, entering FAULT");
+        transitionTo(VcuState::FAULT);
+        return;
+    }
+
+    if (hasWarningCondition()) {
+        if (!s_VCU_warningLogged) {
+            ESP_LOGW(TAG, "Warning threshold active, derating policy pending");
+            s_VCU_warningLogged = true;
+        }
+    } else {
+        s_VCU_warningLogged = false;
+    }
+
     VcuEvent event = VcuEvent::NONE;
     if (pollEvent(event)) {
         // High priority events — handled regardless of current state
@@ -61,6 +86,10 @@ void run() {
         if (event == VcuEvent::RESET &&
             (s_state == VcuState::FAULT ||
              s_state == VcuState::EMERGENCY_STOP)) {
+            if (!isResetInterlockSatisfied()) {
+                ESP_LOGW(TAG, "RESET rejected: safety interlock still active");
+                return;
+            }
             transitionTo(VcuState::IDLE);
             return;
         }
@@ -115,6 +144,10 @@ void postEvent(VcuEvent event) {
 
 VcuState getState() {
     return s_state;
+}
+
+void setTelemetryData(const TelemetryData& TEL_data) {
+    s_TEL_latestData = TEL_data;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +216,55 @@ static bool pollEvent(VcuEvent& out) {
     if (s_eventQueue == nullptr)
         return false;
     return xQueueReceive(s_eventQueue, &out, 0) == pdTRUE;
+}
+
+static bool isResetInterlockSatisfied() {
+    if (s_TEL_latestData.TEL_motorErrorFlags != 0 ||
+        s_TEL_latestData.TEL_bmsErrorFlags != 0)
+        return false;
+
+    if (hasCriticalCondition())
+        return false;
+
+    return true;
+}
+
+static bool hasWarningCondition() {
+    if (!s_TEL_latestData.TEL_bmsDataValid)
+        return false;
+
+    return s_TEL_latestData.TEL_bmsTemperatureC >= BMS_WARN_MAX_TEMP_C ||
+           s_TEL_latestData.TEL_bmsPackVoltageDeciV <=
+               BMS_WARN_MIN_PACK_VOLTAGE_DECI_V ||
+           s_TEL_latestData.TEL_bmsPackVoltageDeciV >=
+               BMS_WARN_MAX_PACK_VOLTAGE_DECI_V ||
+           isCurrentWarning(s_TEL_latestData.TEL_bmsCurrentDeciA);
+}
+
+static bool hasCriticalCondition() {
+    if (s_TEL_latestData.TEL_motorErrorFlags != 0 ||
+        s_TEL_latestData.TEL_bmsErrorFlags != 0)
+        return true;
+
+    if (!s_TEL_latestData.TEL_bmsDataValid)
+        return false;
+
+    return s_TEL_latestData.TEL_bmsTemperatureC >= BMS_CRITICAL_MAX_TEMP_C ||
+           s_TEL_latestData.TEL_bmsPackVoltageDeciV <=
+               BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V ||
+           s_TEL_latestData.TEL_bmsPackVoltageDeciV >=
+               BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V ||
+           isCurrentCritical(s_TEL_latestData.TEL_bmsCurrentDeciA);
+}
+
+static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA) {
+    return TEL_bmsCurrentDeciA >= BMS_CRITICAL_MAX_CHARGE_CURRENT_DECI_A ||
+           TEL_bmsCurrentDeciA <= -BMS_CRITICAL_MAX_DISCHARGE_CURRENT_DECI_A;
+}
+
+static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA) {
+    return TEL_bmsCurrentDeciA >= BMS_WARN_MAX_CHARGE_CURRENT_DECI_A ||
+           TEL_bmsCurrentDeciA <= -BMS_WARN_MAX_DISCHARGE_CURRENT_DECI_A;
 }
 
 }  // namespace VcuLogic

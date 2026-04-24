@@ -102,6 +102,13 @@ void vTask_VCU_Logic(void *pvParameters) {
   while (true) {
     esp_task_wdt_reset();
 
+    if (TEL_sensorDataQueue != nullptr) {
+      TelemetryData TEL_data = {};
+      if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
+        VcuLogic::setTelemetryData(TEL_data);
+      }
+    }
+
     VcuLogic::run();
 
     logStackUsage("VCU_Task", lastStackLog);
@@ -208,7 +215,7 @@ void vTask_LoRa_UKS(void *pvParameters) {
 
     int LO_rxLength = uart_read_bytes(LORA_UART_NUM, LO_rxBuffer,
                                       sizeof(LO_rxBuffer),
-                                      pdMS_TO_TICKS(100));
+                                      pdMS_TO_TICKS(LORA_RX_TIMEOUT_MS));
     if (LO_rxLength > 0) {
       switch (LO_rxBuffer[0]) {
       case UKS_CMD_EMERGENCY_STOP:

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "Telemetry.h"
 
 namespace VcuLogic {
 
@@ -25,5 +26,6 @@ void init();
 void run();
 void postEvent(VcuEvent event);
 VcuState getState();
+void setTelemetryData(const TelemetryData& TEL_data);
 
 }  // namespace VcuLogic

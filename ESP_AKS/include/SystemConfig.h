@@ -44,6 +44,7 @@
 #define LORA_M1_PIN GPIO_NUM_26   // Şemadaki M1 (IO26)
 #define LORA_UART_BAUD 9600       // E32 default baud
 #define LORA_TX_PERIOD_MS 200     // 5 Hz telemetry uplink
+#define LORA_RX_TIMEOUT_MS 20
 #define LORA_MODE_NORMAL_M0_LEVEL 0
 #define LORA_MODE_NORMAL_M1_LEVEL 0
 // Planned startup mode for E32:
@@ -93,5 +94,23 @@
 // 1. Zero torque request
 // 2. Short hold time for motor torque decay
 // 3. Contactor opening
+
+// --- Phase 2 Safety Thresholds ---
+// Warning levels should eventually trigger derating.
+// Critical levels should force a transition to FAULT.
+#define BMS_WARN_MAX_TEMP_C 50
+#define BMS_CRITICAL_MAX_TEMP_C 60
+#define BMS_WARN_MAX_CHARGE_CURRENT_DECI_A 300
+#define BMS_CRITICAL_MAX_CHARGE_CURRENT_DECI_A 400
+#define BMS_WARN_MAX_DISCHARGE_CURRENT_DECI_A 800
+#define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_DECI_A 1000
+#define BMS_WARN_MIN_PACK_VOLTAGE_DECI_V 480
+#define BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V 440
+#define BMS_WARN_MAX_PACK_VOLTAGE_DECI_V 680
+#define BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V 700
+
+// Task watchdog timing is still using the ESP-IDF default configuration.
+// The shorter LoRa RX timeout below improves scheduling margin, but the global
+// watchdog timeout should still be reviewed once final task runtimes stabilize.
 
 #endif  // SYSTEM_CONFIG_H
