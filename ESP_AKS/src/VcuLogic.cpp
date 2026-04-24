@@ -131,16 +131,20 @@ static void handleReady() {
         RelayManager::instance().allOn();
         ESP_LOGI(TAG, "All contactors closed — system READY");
     }
-    // TODO: Monitor bus voltage / system health once sensors are wired
+    // DRIVE is entered only after an explicit DRIVE_ENABLE command.
+    // Future interlocks should be added here before propulsion is allowed.
 }
 
 static void handleDrive() {
     // Contactors remain closed during drive
-    // TODO: Monitor current limits and thermal limits when sensors are ready
+    // Torque output is still held at zero in the CAN task until the Phase 1.2
+    // input-to-torque model is implemented.
 }
 
 static void handleEmergencyStop() {
-    // Immediately de-energize everything
+    // Phase 1.3 note:
+    // contactors are still opened immediately. Replace this with a coordinated
+    // zero-torque -> hold -> open sequence once torque shutdown handoff exists.
     RelayManager::instance().allOff();
 
     // Log once per second to avoid flooding
@@ -153,6 +157,9 @@ static void handleEmergencyStop() {
 }
 
 static void handleFault() {
+    // Phase 1.3 note:
+    // apply the same coordinated shutdown sequence here when the motor torque
+    // decay timing is defined.
     RelayManager::instance().allOff();
 
     static uint32_t lastLog = 0;

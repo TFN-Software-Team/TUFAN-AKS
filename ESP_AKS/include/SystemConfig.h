@@ -29,6 +29,12 @@
 #define HMI_TX_PIN GPIO_NUM_33  // Şemadaki screen_RX (ESP TX -> Ekran RX)
 #define HMI_RX_PIN GPIO_NUM_32  // Şemadaki screen_TX (Ekran TX -> ESP RX)
 
+// --- HMI Command IDs ---
+#define HMI_CMD_START 1
+#define HMI_CMD_RESET 2
+#define HMI_CMD_EMERGENCY_STOP 3
+#define HMI_CMD_DRIVE_ENABLE 4
+
 // --- LoRa E32-433T30D (UART & Kontrol) ---
 #define LORA_UART_NUM UART_NUM_2
 #define LORA_TX_PIN GPIO_NUM_16   // ESP TX -> Şemadaki LR_RXD (IO16)
@@ -75,5 +81,17 @@
 #define UKS_CMD_EMERGENCY_STOP 0xA1
 #define UKS_CMD_START 0xA2
 #define UKS_CMD_STOP 0xA3
+#define UKS_CMD_DRIVE_ENABLE 0xA4
+
+// --- Phase 1 Planning Notes ---
+// Torque command generation is intentionally held at zero until the pedal /
+// brake input model is finalized. READY -> DRIVE enable is now command-driven,
+// but propulsion stays inhibited until the torque mapping rules are defined.
+//
+// Contactor opening is still immediate in FAULT / EMERGENCY_STOP. The future
+// safe shutdown sequence should coordinate:
+// 1. Zero torque request
+// 2. Short hold time for motor torque decay
+// 3. Contactor opening
 
 #endif  // SYSTEM_CONFIG_H

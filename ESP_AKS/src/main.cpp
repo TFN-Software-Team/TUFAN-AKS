@@ -59,6 +59,9 @@ void vTask_CAN_Comm(void *pvParameters) {
     return;
   }
 
+  // Phase 1.2 placeholder:
+  // keep propulsion torque at zero until the pedal / brake conversion model
+  // is defined and validated with vehicle controls.
   uint16_t CAN_torqueCmd = 0;
   uint32_t lastStackLog = 0;
 
@@ -141,17 +144,21 @@ void vTask_HMI_Display(void *pvParameters) {
 
     if (HMI_display.readTouchCommand(HMI_incomingCommand)) {
         switch (HMI_incomingCommand) {
-            case 1:
+            case HMI_CMD_START:
                 ESP_LOGI(TAG, "HMI command: START request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::START_REQUEST);
                 break;
-            case 2:
+            case HMI_CMD_RESET:
                 ESP_LOGI(TAG, "HMI command: RESET request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::RESET);
                 break;
-            case 3:
+            case HMI_CMD_EMERGENCY_STOP:
                 ESP_LOGE(TAG, "HMI command: EMERGENCY STOP triggered");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::EMERGENCY_STOP);
+                break;
+            case HMI_CMD_DRIVE_ENABLE:
+                ESP_LOGI(TAG, "HMI command: DRIVE ENABLE request");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::DRIVE_ENABLE);
                 break;
             default:
                 ESP_LOGW(TAG, "Unknown HMI command received: %d", HMI_incomingCommand);
@@ -212,6 +219,10 @@ void vTask_LoRa_UKS(void *pvParameters) {
         break;
       case UKS_CMD_STOP:
         VcuLogic::postEvent(VcuLogic::VcuEvent::RESET);
+        break;
+      case UKS_CMD_DRIVE_ENABLE:
+        ESP_LOGI(TAG, "LoRa command: DRIVE ENABLE request");
+        VcuLogic::postEvent(VcuLogic::VcuEvent::DRIVE_ENABLE);
         break;
       default:
         break;
