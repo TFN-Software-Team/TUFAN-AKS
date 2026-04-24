@@ -38,6 +38,12 @@
 #define LORA_M1_PIN GPIO_NUM_26   // Şemadaki M1 (IO26)
 #define LORA_UART_BAUD 9600       // E32 default baud
 #define LORA_TX_PERIOD_MS 200     // 5 Hz telemetry uplink
+#define LORA_MODE_NORMAL_M0_LEVEL 0
+#define LORA_MODE_NORMAL_M1_LEVEL 0
+// Planned startup mode for E32:
+// M0 = 0, M1 = 0 -> normal transparent UART mode.
+// AUX should be used as a readiness gate before TX once the GPIO init
+// sequence is added in the LoRa task startup path.
 
 // --- MCP23S17 I/O Expander (SPI) → Relays ---
 #define RELAY_SPI_HOST SPI2_HOST
@@ -47,17 +53,21 @@
 #define RELAY_SPI_CS GPIO_NUM_15
 
 // --- MCP23S17 Relay Channel Assignments ---
-// --- Relay Channel Assignments (all positive contactors) ---
-#define RELAY_CH_POS_0 0
-#define RELAY_CH_POS_1 1
-#define RELAY_CH_POS_2 2
-#define RELAY_CH_POS_3 3
-#define RELAY_CH_POS_4 4
-#define RELAY_CH_POS_5 5
-#define RELAY_CH_POS_6 6
-#define RELAY_CH_POS_7 7
-#define RELAY_CH_POS_8 8
-#define RELAY_CH_POS_9 9
+// All relay outputs are active-low and currently reserved for the positive
+// contactor bank. The software mapping is stable, but the final harness /
+// physical load assignment for each channel still needs hardware validation.
+// Keep this table synchronized with the wiring document before replacing the
+// placeholder descriptions below.
+#define RELAY_CH_POS_0 0  // Positive contactor output 0 (physical load TBD)
+#define RELAY_CH_POS_1 1  // Positive contactor output 1 (physical load TBD)
+#define RELAY_CH_POS_2 2  // Positive contactor output 2 (physical load TBD)
+#define RELAY_CH_POS_3 3  // Positive contactor output 3 (physical load TBD)
+#define RELAY_CH_POS_4 4  // Positive contactor output 4 (physical load TBD)
+#define RELAY_CH_POS_5 5  // Positive contactor output 5 (physical load TBD)
+#define RELAY_CH_POS_6 6  // Positive contactor output 6 (physical load TBD)
+#define RELAY_CH_POS_7 7  // Positive contactor output 7 (physical load TBD)
+#define RELAY_CH_POS_8 8  // Positive contactor output 8 (physical load TBD)
+#define RELAY_CH_POS_9 9  // Positive contactor output 9 (physical load TBD)
 
 #define RELAY_TOTAL_CHANNELS 10
 

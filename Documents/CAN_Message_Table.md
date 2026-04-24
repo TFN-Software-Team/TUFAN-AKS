@@ -1,82 +1,62 @@
-# TUFAN-AKS — CAN Message Table
+# CAN Message Table
 
-**Bus Speed:** 500 kbps  
-**Byte Order:** Big-endian (MSB first)
+This table documents the CAN frames currently implemented or reserved by the AKS firmware.
 
----
+## Motor Driver Frames
 
-## 0x100 — Torque Command
+### `0x100` Torque Command
 
-| Field | Direction | AKS → Motor Driver |
-|-------|-----------|---------------------|
-| **Period** | | 10 ms (100 Hz) |
-| **DLC** | | 2 bytes |
+Direction: `AKS -> Motor Driver`
 
-| Byte | Signal | Type | Unit | Range | Description |
-|------|--------|------|------|-------|-------------|
-| 0 | TORQUE_CMD_H | uint8 | — | — | Torque command high byte |
-| 1 | TORQUE_CMD_L | uint8 | — | — | Torque command low byte |
+| Byte | Field | Type | Scale | Description |
+| --- | --- | --- | --- | --- |
+| 0 | Torque MSB | `uint8_t` | raw | High byte of torque command |
+| 1 | Torque LSB | `uint8_t` | raw | Low byte of torque command |
 
-**Torque value** = `(Byte[0] << 8) | Byte[1]`
+### `0x200` Motor Status
 
-> **Note:** When VCU state ≠ DRIVE, AKS sends torque = 0 for safety.
+Direction: `Motor Driver -> AKS`
 
----
+| Byte | Field | Type | Scale | Description |
+| --- | --- | --- | --- | --- |
+| 0 | RPM MSB | `uint8_t` | raw | High byte of motor RPM |
+| 1 | RPM LSB | `uint8_t` | raw | Low byte of motor RPM |
+| 2 | Torque Feedback MSB | `uint8_t` | raw | High byte of signed torque feedback |
+| 3 | Torque Feedback LSB | `uint8_t` | raw | Low byte of signed torque feedback |
+| 4 | Error Flags | `uint8_t` | bitfield | Motor driver fault / warning flags |
 
-## 0x200 — Motor Status
+## Lithium Balance BMS Frames
 
-| Field | Direction | Motor Driver → AKS |
-|-------|-----------|---------------------|
-| **Period** | | TBD (set by motor driver) |
-| **DLC** | | 5 bytes (minimum 4) |
+### `0xE000` Config
 
-| Byte | Signal | Type | Unit | Range | Description |
-|------|--------|------|------|-------|-------------|
-| 0 | RPM_H | uint8 | — | — | Motor RPM high byte |
-| 1 | RPM_L | uint8 | — | — | Motor RPM low byte |
-| 2 | TORQUE_FB_H | int8 | — | — | Torque feedback high byte |
-| 3 | TORQUE_FB_L | int8 | — | — | Torque feedback low byte |
-| 4 | ERROR_FLAGS | uint8 | — | 0x00–0xFF | Motor driver error flags |
+Direction: `BMS -> AKS`
 
-**RPM** = `(Byte[0] << 8) | Byte[1]`  
-**Torque feedback** = `(int16_t)((Byte[2] << 8) | Byte[3])`  
-**Error flags** = `Byte[4]` — any non-zero value triggers `FAULT_DETECTED` event in VCU.
+| Byte | Field | Type | Scale | Description |
+| --- | --- | --- | --- | --- |
+| 0 | Reserved | `uint8_t` | raw | Reverse-engineered frame byte, currently unused by AKS |
+| 1 | Reserved | `uint8_t` | raw | Reverse-engineered frame byte, currently unused by AKS |
+| 2 | Pack Voltage MSB | `uint8_t` | x0.1 V | High byte of pack voltage |
+| 3 | Pack Voltage LSB | `uint8_t` | x0.1 V | Low byte of pack voltage |
+| 4 | Average Cell Voltage MSB | `uint8_t` | x1 mV | High byte of average cell voltage |
+| 5 | Average Cell Voltage LSB | `uint8_t` | x1 mV | Low byte of average cell voltage |
 
-> [!WARNING]
-> **TODO:** Byte layout is a placeholder. Confirm exact format with motor driver team before first CAN test.
+### `0xE001` Live
 
-### Error Flag Bits (Placeholder)
+Direction: `BMS -> AKS`
 
-| Bit | Flag | Description |
-|-----|------|-------------|
-| 0 | OVER_TEMP | Motor over-temperature |
-| 1 | OVER_CURRENT | Phase current limit exceeded |
-| 2 | OVER_VOLTAGE | DC bus over-voltage |
-| 3 | UNDER_VOLTAGE | DC bus under-voltage |
-| 4 | ENCODER_FAULT | Encoder signal lost |
-| 5–7 | RESERVED | — |
+| Byte | Field | Type | Scale | Description |
+| --- | --- | --- | --- | --- |
+| 0 | Error Flags | `uint8_t` | bitfield | Current firmware assumption for BMS fault flags |
+| 1 | Current | `int8_t` | x0.1 A | Signed pack current |
+| 2 | Reserved | `uint8_t` | raw | Reverse-engineered frame byte, currently unused by AKS |
+| 3 | Temperature | `uint8_t` | `value - 100` | BMS temperature in degree Celsius |
+| 4 | Reserved | `uint8_t` | raw | Reverse-engineered frame byte, currently unused by AKS |
+| 5 | State of Charge | `uint8_t` | percent | Pack SOC |
 
-> **TODO:** Confirm error flag definitions with motor driver team.
+## Legacy / Reserved
 
----
+### `0x300` Legacy BMS Status
 
-## 0x300 — BMS Status
+Direction: `BMS -> AKS`
 
-| Field | Direction | BMS → AKS |
-|-------|-----------|-----------|
-| **Period** | | Set by BMS |
-| **DLC** | | Variable |
-
-> **OUT OF SCOPE** — This message is received and **ignored** by AKS.  
-> BMS integration is not in this team's scope.  
-> See `CanManager::processRxMessages()` — logged at `ESP_LOGD` level only.
-
----
-
-## CAN ID Summary
-
-```
-0x100  AKS → Motor Driver    Torque Command      10 ms
-0x200  Motor Driver → AKS    Motor Status         TBD
-0x300  BMS → AKS             BMS Status           IGNORED
-```
+Status: reserved for backward compatibility logging only. The current firmware does not parse payload fields from this frame.

@@ -172,6 +172,12 @@ void vTask_LoRa_UKS(void *pvParameters) {
 
   Telemetry LO_telemetry;
 
+  // Planned E32 startup sequence:
+  // 1. Drive M0/M1 to the normal-mode levels from SystemConfig.h.
+  // 2. Configure AUX as input and wait for ready before TX.
+  // 3. Keep UART traffic in transparent mode unless configuration mode is
+  //    explicitly needed later.
+
   // UART init for E32
   uart_config_t LO_uartConfig = {
       .baud_rate = LORA_UART_BAUD,
