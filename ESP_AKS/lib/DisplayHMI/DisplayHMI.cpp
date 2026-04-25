@@ -5,10 +5,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstdio>
+#include <cstring>
 
 static constexpr const char *TAG = "DisplayHMI";
 
-DisplayHMI::DisplayHMI() : HMI_isInitialized(false) {}
+DisplayHMI::DisplayHMI()
+    : HMI_isInitialized(false),
+      HMI_hasCachedScreen(false),
+      HMI_lastScreenData({}) {}
 
 bool DisplayHMI::begin() {
     if (HMI_isInitialized) return true;
@@ -68,18 +72,131 @@ void DisplayHMI::HMI_drainRxBuffer() {
     }
 }
 
-void DisplayHMI::updateScreen(uint16_t HMI_speed, uint8_t HMI_battery) {
+void DisplayHMI::HMI_sendNumericIfChanged(const char* HMI_component,
+                                          int32_t HMI_value,
+                                          int32_t HMI_lastValue,
+                                          bool HMI_force) {
+    if (!HMI_force && HMI_value == HMI_lastValue)
+        return;
+
+    char HMI_command[48];
+    const int HMI_commandLen = snprintf(HMI_command, sizeof(HMI_command),
+                                        "%s.val=%ld", HMI_component,
+                                        static_cast<long>(HMI_value));
+    if (HMI_commandLen <= 0)
+        return;
+
+    uart_write_bytes(HMI_UART_NUM, HMI_command, HMI_commandLen);
+    HMI_sendEndBytes();
+}
+
+void DisplayHMI::HMI_sendTextIfChanged(const char* HMI_component,
+                                       const char* HMI_value,
+                                       const char* HMI_lastValue,
+                                       bool HMI_force) {
+    if (!HMI_force && std::strcmp(HMI_value, HMI_lastValue) == 0)
+        return;
+
+    char HMI_command[64];
+    const int HMI_commandLen = snprintf(HMI_command, sizeof(HMI_command),
+                                        "%s.txt=\"%s\"", HMI_component,
+                                        HMI_value);
+    if (HMI_commandLen <= 0)
+        return;
+
+    uart_write_bytes(HMI_UART_NUM, HMI_command, HMI_commandLen);
+    HMI_sendEndBytes();
+}
+
+const char* DisplayHMI::HMI_getStateText(HMI_VcuState HMI_state) const {
+    switch (HMI_state) {
+        case HMI_VcuState::INIT:
+            return "INIT";
+        case HMI_VcuState::IDLE:
+            return "IDLE";
+        case HMI_VcuState::READY:
+            return "READY";
+        case HMI_VcuState::DRIVE:
+            return "DRIVE";
+        case HMI_VcuState::EMERGENCY_STOP:
+            return "ESTOP";
+        case HMI_VcuState::FAULT:
+            return "FAULT";
+        default:
+            return "UNK";
+    }
+}
+
+void DisplayHMI::HMI_formatErrorText(uint8_t HMI_errorFlags,
+                                     char* HMI_output,
+                                     size_t HMI_outputSize) const {
+    if (HMI_outputSize == 0)
+        return;
+    snprintf(HMI_output, HMI_outputSize, "0x%02X", HMI_errorFlags);
+}
+
+const char* DisplayHMI::HMI_getValidityText(bool HMI_dataValid,
+                                            bool HMI_timeoutActive) const {
+    if (HMI_timeoutActive)
+        return "TIMEOUT";
+    return HMI_dataValid ? "VALID" : "INVALID";
+}
+
+const char* DisplayHMI::HMI_getContactorText(bool HMI_contactorClosed) const {
+    return HMI_contactorClosed ? "CLOSED" : "OPEN";
+}
+
+void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
     if (!HMI_isInitialized) return;
 
-    char HMI_speedCmd[32];
-    int HMI_speedLen = snprintf(HMI_speedCmd, sizeof(HMI_speedCmd), "speed.val=%u", HMI_speed);
-    uart_write_bytes(HMI_UART_NUM, HMI_speedCmd, HMI_speedLen);
-    HMI_sendEndBytes();
+    const bool HMI_forceRefresh = !HMI_hasCachedScreen;
+    char HMI_currentErrorText[16];
+    char HMI_lastErrorText[16];
 
-    char HMI_batCmd[32];
-    int HMI_batLen = snprintf(HMI_batCmd, sizeof(HMI_batCmd), "bat.val=%u", HMI_battery);
-    uart_write_bytes(HMI_UART_NUM, HMI_batCmd, HMI_batLen);
-    HMI_sendEndBytes();
+    HMI_formatErrorText(HMI_data.HMI_motorErrorFlags, HMI_currentErrorText,
+                        sizeof(HMI_currentErrorText));
+    HMI_formatErrorText(HMI_lastScreenData.HMI_motorErrorFlags,
+                        HMI_lastErrorText, sizeof(HMI_lastErrorText));
+
+    HMI_sendNumericIfChanged("speed", HMI_data.HMI_currentSpeed,
+                             HMI_lastScreenData.HMI_currentSpeed,
+                             HMI_forceRefresh);
+    HMI_sendNumericIfChanged("bat", HMI_data.HMI_currentBattery,
+                             HMI_lastScreenData.HMI_currentBattery,
+                             HMI_forceRefresh);
+    HMI_sendNumericIfChanged("rpm", HMI_data.HMI_motorRpm,
+                             HMI_lastScreenData.HMI_motorRpm,
+                             HMI_forceRefresh);
+    HMI_sendNumericIfChanged("torque", HMI_data.HMI_motorTorqueFeedback,
+                             HMI_lastScreenData.HMI_motorTorqueFeedback,
+                             HMI_forceRefresh);
+    HMI_sendNumericIfChanged("temp", HMI_data.HMI_bmsTemperatureC,
+                             HMI_lastScreenData.HMI_bmsTemperatureC,
+                             HMI_forceRefresh);
+    HMI_sendNumericIfChanged("packv", HMI_data.HMI_bmsPackVoltageDeciV,
+                             HMI_lastScreenData.HMI_bmsPackVoltageDeciV,
+                             HMI_forceRefresh);
+
+    HMI_sendTextIfChanged("state", HMI_getStateText(HMI_data.HMI_vcuState),
+                          HMI_getStateText(HMI_lastScreenData.HMI_vcuState),
+                          HMI_forceRefresh);
+    HMI_sendTextIfChanged("motorErr", HMI_currentErrorText, HMI_lastErrorText,
+                          HMI_forceRefresh);
+    HMI_sendTextIfChanged("valid",
+                          HMI_getValidityText(HMI_data.HMI_motorDataValid,
+                                              HMI_data.HMI_motorTimeoutActive),
+                          HMI_getValidityText(
+                              HMI_lastScreenData.HMI_motorDataValid,
+                              HMI_lastScreenData.HMI_motorTimeoutActive),
+                          HMI_forceRefresh);
+    HMI_sendTextIfChanged("contactor",
+                          HMI_getContactorText(HMI_data.HMI_contactorClosed),
+                          HMI_getContactorText(
+                              HMI_lastScreenData.HMI_contactorClosed),
+                          HMI_forceRefresh);
+
+    HMI_lastScreenData = HMI_data;
+    HMI_hasCachedScreen = true;
 }
 
 bool DisplayHMI::readTouchCommand(uint8_t& HMI_command) {
