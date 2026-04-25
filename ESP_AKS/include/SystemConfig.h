@@ -101,16 +101,16 @@
 // --- Phase 2 Safety Thresholds ---
 // Warning levels should eventually trigger derating.
 // Critical levels should force a transition to FAULT.
-#define BMS_WARN_MAX_TEMP_C 50
-#define BMS_CRITICAL_MAX_TEMP_C 60
-#define BMS_WARN_MAX_CHARGE_CURRENT_DECI_A 300
-#define BMS_CRITICAL_MAX_CHARGE_CURRENT_DECI_A 400
-#define BMS_WARN_MAX_DISCHARGE_CURRENT_DECI_A 800
-#define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_DECI_A 1000
-#define BMS_WARN_MIN_PACK_VOLTAGE_DECI_V 480
-#define BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V 440
-#define BMS_WARN_MAX_PACK_VOLTAGE_DECI_V 680
-#define BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V 700
+#define BMS_WARN_MAX_TEMP_C 55
+#define BMS_CRITICAL_MAX_TEMP_C 70
+#define BMS_WARN_MAX_CHARGE_CURRENT_DECI_A 9
+#define BMS_CRITICAL_MAX_CHARGE_CURRENT_DECI_A 10
+#define BMS_WARN_MAX_DISCHARGE_CURRENT_DECI_A 90
+#define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_DECI_A 150
+#define BMS_WARN_MIN_PACK_VOLTAGE_DECI_V 74
+#define BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V 70
+#define BMS_WARN_MAX_PACK_VOLTAGE_DECI_V 85
+#define BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V 87
 
 // Task watchdog timing is still using the ESP-IDF default configuration.
 // The shorter LoRa RX timeout below improves scheduling margin, but the global

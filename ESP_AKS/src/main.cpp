@@ -19,6 +19,35 @@ static constexpr uint32_t STACK_LOG_INTERVAL_MS = 30000;
 
 QueueHandle_t TEL_sensorDataQueue = nullptr;
 
+static HMI_VcuState HMI_mapVcuState(VcuLogic::VcuState HMI_state) {
+  switch (HMI_state) {
+  case VcuLogic::VcuState::INIT:
+    return HMI_VcuState::INIT;
+  case VcuLogic::VcuState::IDLE:
+    return HMI_VcuState::IDLE;
+  case VcuLogic::VcuState::READY:
+    return HMI_VcuState::READY;
+  case VcuLogic::VcuState::DRIVE:
+    return HMI_VcuState::DRIVE;
+  case VcuLogic::VcuState::EMERGENCY_STOP:
+    return HMI_VcuState::EMERGENCY_STOP;
+  case VcuLogic::VcuState::FAULT:
+    return HMI_VcuState::FAULT;
+  default:
+    return HMI_VcuState::FAULT;
+  }
+}
+
+static bool HMI_areAllContactorsClosed() {
+  for (uint8_t REL_channel = 0; REL_channel < RELAY_TOTAL_CHANNELS;
+       ++REL_channel) {
+    if (!RelayManager::instance().getRelayState(REL_channel)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static void CAN_handleEvent(CAN_Event CAN_event, void* CAN_context) {
   (void)CAN_context;
 
@@ -133,22 +162,36 @@ void vTask_HMI_Display(void *pvParameters) {
     return;
   }
 
-  uint16_t HMI_currentSpeed = 0;
-  uint8_t HMI_currentBattery = 100;
   uint8_t HMI_incomingCommand = 0;
 
   while (true) {
     esp_task_wdt_reset();
 
+    HMI_DisplayData HMI_screenData = {};
+
     if (TEL_sensorDataQueue != nullptr) {
         TelemetryData TEL_data = {};
         if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
-            HMI_currentSpeed = TEL_data.TEL_motorRpm;
-            HMI_currentBattery = TEL_data.TEL_bmsSoc;
+            HMI_screenData.HMI_currentSpeed = TEL_data.TEL_motorRpm;
+            HMI_screenData.HMI_currentBattery = TEL_data.TEL_bmsSoc;
+            HMI_screenData.HMI_motorRpm = TEL_data.TEL_motorRpm;
+            HMI_screenData.HMI_motorTorqueFeedback =
+                TEL_data.TEL_motorTorqueFeedback;
+            HMI_screenData.HMI_motorErrorFlags = TEL_data.TEL_motorErrorFlags;
+            HMI_screenData.HMI_motorDataValid = TEL_data.TEL_motorDataValid;
+            HMI_screenData.HMI_motorTimeoutActive =
+                TEL_data.TEL_motorTimeoutActive;
+            HMI_screenData.HMI_bmsTemperatureC =
+                TEL_data.TEL_bmsTemperatureC;
+            HMI_screenData.HMI_bmsPackVoltageDeciV =
+                TEL_data.TEL_bmsPackVoltageDeciV;
         }
     }
 
-    HMI_display.updateScreen(HMI_currentSpeed, HMI_currentBattery);
+    HMI_screenData.HMI_vcuState = HMI_mapVcuState(VcuLogic::getState());
+    HMI_screenData.HMI_contactorClosed = HMI_areAllContactorsClosed();
+
+    HMI_display.updateScreen(HMI_screenData);
 
     if (HMI_display.readTouchCommand(HMI_incomingCommand)) {
         switch (HMI_incomingCommand) {
