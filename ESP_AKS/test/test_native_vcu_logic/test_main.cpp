@@ -61,6 +61,23 @@ extern void test_reset_interlock_critical_current_blocks(void);
 extern void test_reset_interlock_motor_timeout_in_fault_blocks(void);
 extern void test_reset_interlock_warning_level_passes(void);
 
+// Faz 2 — state machine geçişleri
+extern void test_init_transitions_to_idle_and_calls_allOff(void);
+extern void test_idle_to_ready_on_start_request(void);
+extern void test_ready_to_drive_on_drive_enable(void);
+extern void test_idle_to_emergency_stop(void);
+extern void test_drive_to_emergency_stop(void);
+extern void test_idle_to_fault_on_fault_event(void);
+extern void test_ready_to_fault_on_fault_event(void);
+extern void test_ready_to_fault_on_critical_telemetry(void);
+extern void test_drive_to_fault_on_critical_current(void);
+extern void test_fault_to_idle_on_reset_when_clean(void);
+extern void test_emergency_stop_to_idle_on_reset_when_clean(void);
+extern void test_fault_stays_on_reset_when_motor_error(void);
+extern void test_idle_reset_is_noop(void);
+extern void test_idle_with_motor_timeout_stays_idle(void);
+extern void test_emergency_stop_opens_contactors_after_delay(void);
+
 // Faz 0 sanity
 static void test_smoke_arithmetic(void) {
     TEST_ASSERT_EQUAL_INT(2, 1 + 1);
@@ -129,6 +146,23 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_reset_interlock_critical_current_blocks);
     RUN_TEST(test_reset_interlock_motor_timeout_in_fault_blocks);
     RUN_TEST(test_reset_interlock_warning_level_passes);
+
+    // Faz 2 — state machine
+    RUN_TEST(test_init_transitions_to_idle_and_calls_allOff);
+    RUN_TEST(test_idle_to_ready_on_start_request);
+    RUN_TEST(test_ready_to_drive_on_drive_enable);
+    RUN_TEST(test_idle_to_emergency_stop);
+    RUN_TEST(test_drive_to_emergency_stop);
+    RUN_TEST(test_idle_to_fault_on_fault_event);
+    RUN_TEST(test_ready_to_fault_on_fault_event);
+    RUN_TEST(test_ready_to_fault_on_critical_telemetry);
+    RUN_TEST(test_drive_to_fault_on_critical_current);
+    RUN_TEST(test_fault_to_idle_on_reset_when_clean);
+    RUN_TEST(test_emergency_stop_to_idle_on_reset_when_clean);
+    RUN_TEST(test_fault_stays_on_reset_when_motor_error);
+    RUN_TEST(test_idle_reset_is_noop);
+    RUN_TEST(test_idle_with_motor_timeout_stays_idle);
+    RUN_TEST(test_emergency_stop_opens_contactors_after_delay);
 
     return UNITY_END();
 }

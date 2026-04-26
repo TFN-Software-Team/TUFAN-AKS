@@ -90,4 +90,11 @@ void postEvent(VcuEvent event);
 VcuState getState();
 void setTelemetryData(const TelemetryData& TEL_data);
 
+#ifdef VCU_LOGIC_TESTABLE
+// Yalnız native test build'inde aktif. Tüm modül-içi state'i (durum, timer,
+// son telemetri, queue) sıfırlar; setUp() içinde çağrılarak testler arası
+// izolasyon sağlanır. Üretim build'inde tanımlı değildir.
+void resetForTest();
+#endif
+
 }  // namespace VcuLogic

@@ -2,15 +2,11 @@
 #include <cstddef>
 #include <cstdint>
 
-enum class HMI_VcuState : uint8_t {
-    INIT = 0,
-    IDLE = 1,
-    READY = 2,
-    DRIVE = 3,
-    EMERGENCY_STOP = 4,
-    FAULT = 5
-};
+#include "HMIHelpers.h"
 
+// HMI_VcuState ve saf metin/komut helper'ları HMIHelpers.h'ye taşındı; bu
+// header geriye uyumluluk için onu yeniden expose eder. DisplayHMI sınıfı
+// yalnızca init / cache / RX state'ini yönetir.
 struct HMI_DisplayData {
     uint16_t HMI_currentSpeed;
     uint8_t HMI_currentBattery;
@@ -31,21 +27,7 @@ class DisplayHMI {
     bool HMI_hasCachedScreen;
     HMI_DisplayData HMI_lastScreenData;
 
-    void HMI_sendEndBytes();
     void HMI_drainRxBuffer();
-    void HMI_sendNumericIfChanged(const char* HMI_component, int32_t HMI_value,
-                                  int32_t HMI_lastValue, bool HMI_force);
-    void HMI_sendTextIfChanged(const char* HMI_component,
-                               const char* HMI_value,
-                               const char* HMI_lastValue,
-                               bool HMI_force);
-    const char* HMI_getStateText(HMI_VcuState HMI_state) const;
-    void HMI_formatErrorText(uint8_t HMI_errorFlags,
-                             char* HMI_output,
-                             size_t HMI_outputSize) const;
-    const char* HMI_getValidityText(bool HMI_dataValid,
-                                    bool HMI_timeoutActive) const;
-    const char* HMI_getContactorText(bool HMI_contactorClosed) const;
 
    public:
     DisplayHMI();

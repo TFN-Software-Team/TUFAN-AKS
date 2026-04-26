@@ -262,4 +262,21 @@ static bool hasCriticalCondition() {
     return hasCriticalCondition(getTelemetrySnapshot(), s_state);
 }
 
+#ifdef VCU_LOGIC_TESTABLE
+void resetForTest() {
+    s_state = VcuState::INIT;
+    s_stateTimer = 0;
+    s_TEL_latestData = {};
+    s_VCU_warningLogged = false;
+
+    // Olay queue'sunu boşalt — kalıntı event'lerin sonraki teste sızmaması için.
+    if (s_eventQueue != nullptr) {
+        VcuEvent drained = VcuEvent::NONE;
+        while (xQueueReceive(s_eventQueue, &drained, 0) == pdTRUE) {
+            // discard
+        }
+    }
+}
+#endif
+
 }  // namespace VcuLogic
