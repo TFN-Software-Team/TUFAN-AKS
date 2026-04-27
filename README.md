@@ -66,11 +66,11 @@ All ten relay channels are currently treated as positive contactor outputs. The 
 
 Based on current git history, the repository contributors are:
 
-- Seqat
+- Sedat Ali Zevit - Seqat
 - incubation-0
 - Mesalt-f4
 - Order
-- Sedat Ali Zevit
+- Nisa Köken - NisaKoken
 
 ## Development Rules
 
