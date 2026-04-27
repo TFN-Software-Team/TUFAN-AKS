@@ -20,6 +20,13 @@ class RelayManager {
     // Read back current relay state for diagnostics
     bool getRelayState(uint8_t channel) const;
 
+#ifdef NATIVE_BUILD
+    // Yalnız native test build'inde aktif. Singleton'ın iç state'ini
+    // sıfırlar (relayState, init flag, SPI handle). Production build'inde
+    // tanımlı değildir.
+    void resetForTest();
+#endif
+
    private:
     RelayManager() = default;
     void writeRegister(uint8_t reg, uint8_t value);

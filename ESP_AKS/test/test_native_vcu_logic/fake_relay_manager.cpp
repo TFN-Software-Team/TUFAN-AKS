@@ -53,3 +53,9 @@ bool RelayManager::getRelayState(uint8_t channel) const {
 void RelayManager::writeRegister(uint8_t /*reg*/, uint8_t /*value*/) {
     // no-op
 }
+
+void RelayManager::resetForTest() {
+    s_relayState = 0;
+    s_initialized = false;
+    s_spiDev = nullptr;
+}
