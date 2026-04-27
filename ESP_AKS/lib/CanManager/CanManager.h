@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "CanParse.h"
 #include "Telemetry.h"
 #include "driver/gpio.h"
 #include "driver/twai.h"
@@ -8,13 +9,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
-// Motor status received from motor driver via CAN
-struct MotorStatus {
-    uint16_t rpm;            // Motor RPM
-    int16_t torqueFeedback;  // Actual torque feedback
-    uint8_t errorFlags;      // Motor driver error flags
-    bool isValid;            // True if data received recently
-};
+// MotorStatus struct'ı CanParse.h içinde tanımlı (saf parser'larla paylaşılır).
 
 enum class CAN_Event : uint8_t {
     NONE = 0,

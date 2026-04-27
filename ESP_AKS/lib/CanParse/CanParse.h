@@ -1,0 +1,48 @@
+#pragma once
+//
+// Saf CAN payload parser'ları — donanım, mutex ve global state bağımlılığı
+// yoktur. Bayt dizisini struct'a dönüştürürler. CanManager'ın handleXxx
+// metodları bu fonksiyonları çağırır; native testler aynı fonksiyonları
+// doğrudan çağırarak DLC kontrolü, big-endian dönüşüm, signed cast ve
+// sıcaklık ofseti gibi mantığı izole eder.
+//
+#include <cstdint>
+#include "Telemetry.h"
+#include "driver/twai.h"
+#include "freertos/FreeRTOS.h"
+
+// Motor sürücüsünden CAN üzerinden gelen anlık motor durumu.
+struct MotorStatus {
+    uint16_t rpm;
+    int16_t  torqueFeedback;
+    uint8_t  errorFlags;
+    bool     isValid;
+};
+
+namespace CanParse {
+
+// Motor status frame (CAN ID 0x200). DLC ≥ 4 olmalı; aksi halde false döner ve
+// `out` değiştirilmez. DLC ≥ 5 ise data[4] errorFlags olarak alınır, aksi
+// halde 0. Başarıda `out.isValid = true` set edilir.
+bool parseMotorStatus(const twai_message_t& msg, MotorStatus& out);
+
+// BMS config frame (CAN ID 0xE000). DLC ≥ 6.
+// Yazılan alanlar: TEL_bmsPackVoltageDeciV, TEL_bmsAverageCellVoltageMv,
+// TEL_bmsDataValid (=true). Diğer TelemetryData alanlarına dokunulmaz.
+bool parseBmsConfig(const twai_message_t& msg, TelemetryData& out);
+
+// BMS live frame (CAN ID 0xE001). DLC ≥ 6.
+// Yazılan alanlar: TEL_bmsErrorFlags, TEL_bmsCurrentDeciA (int8_t cast),
+// TEL_bmsTemperatureC (data[3] - 100 ofset), TEL_bmsSoc, TEL_bmsDataValid.
+bool parseBmsLive(const twai_message_t& msg, TelemetryData& out);
+
+// Motor status timeout: en az bir paket görülmüş AND son veri valid AND
+// (now - lastTick) >= timeoutTicks. Diğer durumlarda false.
+// TickType_t unsigned olduğundan wraparound doğal aritmetikle desteklenir.
+bool isMotorStatusTimedOut(bool hasSeen,
+                           bool lastValid,
+                           TickType_t now,
+                           TickType_t lastTick,
+                           TickType_t timeoutTicks);
+
+}  // namespace CanParse

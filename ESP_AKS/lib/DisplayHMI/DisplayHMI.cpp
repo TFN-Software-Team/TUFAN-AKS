@@ -60,90 +60,11 @@ bool DisplayHMI::begin() {
     return true;
 }
 
-void DisplayHMI::HMI_sendEndBytes() {
-    const uint8_t HMI_endBytes[3] = {0xFF, 0xFF, 0xFF};
-    uart_write_bytes(HMI_UART_NUM, (const char*)HMI_endBytes, 3);
-}
-
 void DisplayHMI::HMI_drainRxBuffer() {
     uint8_t HMI_drainBuf[32];
     while (uart_read_bytes(HMI_UART_NUM, HMI_drainBuf, sizeof(HMI_drainBuf), 0) > 0) {
         // Nextion acknowledge/error yanıtlarını temizle
     }
-}
-
-void DisplayHMI::HMI_sendNumericIfChanged(const char* HMI_component,
-                                          int32_t HMI_value,
-                                          int32_t HMI_lastValue,
-                                          bool HMI_force) {
-    if (!HMI_force && HMI_value == HMI_lastValue)
-        return;
-
-    char HMI_command[48];
-    const int HMI_commandLen = snprintf(HMI_command, sizeof(HMI_command),
-                                        "%s.val=%ld", HMI_component,
-                                        static_cast<long>(HMI_value));
-    if (HMI_commandLen <= 0)
-        return;
-
-    uart_write_bytes(HMI_UART_NUM, HMI_command, HMI_commandLen);
-    HMI_sendEndBytes();
-}
-
-void DisplayHMI::HMI_sendTextIfChanged(const char* HMI_component,
-                                       const char* HMI_value,
-                                       const char* HMI_lastValue,
-                                       bool HMI_force) {
-    if (!HMI_force && std::strcmp(HMI_value, HMI_lastValue) == 0)
-        return;
-
-    char HMI_command[64];
-    const int HMI_commandLen = snprintf(HMI_command, sizeof(HMI_command),
-                                        "%s.txt=\"%s\"", HMI_component,
-                                        HMI_value);
-    if (HMI_commandLen <= 0)
-        return;
-
-    uart_write_bytes(HMI_UART_NUM, HMI_command, HMI_commandLen);
-    HMI_sendEndBytes();
-}
-
-const char* DisplayHMI::HMI_getStateText(HMI_VcuState HMI_state) const {
-    switch (HMI_state) {
-        case HMI_VcuState::INIT:
-            return "INIT";
-        case HMI_VcuState::IDLE:
-            return "IDLE";
-        case HMI_VcuState::READY:
-            return "READY";
-        case HMI_VcuState::DRIVE:
-            return "DRIVE";
-        case HMI_VcuState::EMERGENCY_STOP:
-            return "ESTOP";
-        case HMI_VcuState::FAULT:
-            return "FAULT";
-        default:
-            return "UNK";
-    }
-}
-
-void DisplayHMI::HMI_formatErrorText(uint8_t HMI_errorFlags,
-                                     char* HMI_output,
-                                     size_t HMI_outputSize) const {
-    if (HMI_outputSize == 0)
-        return;
-    snprintf(HMI_output, HMI_outputSize, "0x%02X", HMI_errorFlags);
-}
-
-const char* DisplayHMI::HMI_getValidityText(bool HMI_dataValid,
-                                            bool HMI_timeoutActive) const {
-    if (HMI_timeoutActive)
-        return "TIMEOUT";
-    return HMI_dataValid ? "VALID" : "INVALID";
-}
-
-const char* DisplayHMI::HMI_getContactorText(bool HMI_contactorClosed) const {
-    return HMI_contactorClosed ? "CLOSED" : "OPEN";
 }
 
 void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {

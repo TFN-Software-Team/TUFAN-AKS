@@ -104,6 +104,14 @@ bool RelayManager::getRelayState(uint8_t channel) const {
     return (s_relayState >> channel) & 0x01;
 }
 
+#ifdef NATIVE_BUILD
+void RelayManager::resetForTest() {
+    s_relayState = 0;
+    s_initialized = false;
+    s_spiDev = nullptr;
+}
+#endif
+
 void RelayManager::writeRegister(uint8_t reg, uint8_t value) {
     if (s_spiDev == nullptr)
         return;

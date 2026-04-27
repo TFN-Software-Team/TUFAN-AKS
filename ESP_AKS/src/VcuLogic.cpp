@@ -30,8 +30,6 @@ static bool isResetInterlockSatisfied();
 static bool hasWarningCondition();
 static bool hasCriticalCondition();
 static TelemetryData getTelemetrySnapshot();
-static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA);
-static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA);
 
 static void handleIdle();
 static void handleReady();
@@ -253,59 +251,32 @@ static TelemetryData getTelemetrySnapshot() {
 }
 
 static bool isResetInterlockSatisfied() {
-    const TelemetryData VCU_data = getTelemetrySnapshot();
-
-    if (VCU_data.TEL_motorErrorFlags != 0 || VCU_data.TEL_bmsErrorFlags != 0)
-        return false;
-
-    if (hasCriticalCondition())
-        return false;
-
-    return true;
+    return isResetInterlockSatisfied(getTelemetrySnapshot(), s_state);
 }
 
 static bool hasWarningCondition() {
-    const TelemetryData VCU_data = getTelemetrySnapshot();
-
-    if (!VCU_data.TEL_bmsDataValid)
-        return false;
-
-    return VCU_data.TEL_bmsTemperatureC >= BMS_WARN_MAX_TEMP_C ||
-           VCU_data.TEL_bmsPackVoltageDeciV <=
-               BMS_WARN_MIN_PACK_VOLTAGE_DECI_V ||
-           VCU_data.TEL_bmsPackVoltageDeciV >=
-               BMS_WARN_MAX_PACK_VOLTAGE_DECI_V ||
-           isCurrentWarning(VCU_data.TEL_bmsCurrentDeciA);
+    return hasWarningCondition(getTelemetrySnapshot());
 }
 
 static bool hasCriticalCondition() {
-    const TelemetryData VCU_data = getTelemetrySnapshot();
-
-    if (VCU_data.TEL_motorErrorFlags != 0 || VCU_data.TEL_bmsErrorFlags != 0)
-        return true;
-
-    if (VCU_data.TEL_motorTimeoutActive && s_state != VcuState::IDLE)
-        return true;
-
-    if (!VCU_data.TEL_bmsDataValid)
-        return false;
-
-    return VCU_data.TEL_bmsTemperatureC >= BMS_CRITICAL_MAX_TEMP_C ||
-           VCU_data.TEL_bmsPackVoltageDeciV <=
-               BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V ||
-           VCU_data.TEL_bmsPackVoltageDeciV >=
-               BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V ||
-           isCurrentCritical(VCU_data.TEL_bmsCurrentDeciA);
+    return hasCriticalCondition(getTelemetrySnapshot(), s_state);
 }
 
-static bool isCurrentCritical(int16_t TEL_bmsCurrentDeciA) {
-    return TEL_bmsCurrentDeciA >= BMS_CRITICAL_MAX_CHARGE_CURRENT_DECI_A ||
-           TEL_bmsCurrentDeciA <= -BMS_CRITICAL_MAX_DISCHARGE_CURRENT_DECI_A;
-}
+#ifdef VCU_LOGIC_TESTABLE
+void resetForTest() {
+    s_state = VcuState::INIT;
+    s_stateTimer = 0;
+    s_TEL_latestData = {};
+    s_VCU_warningLogged = false;
 
-static bool isCurrentWarning(int16_t TEL_bmsCurrentDeciA) {
-    return TEL_bmsCurrentDeciA >= BMS_WARN_MAX_CHARGE_CURRENT_DECI_A ||
-           TEL_bmsCurrentDeciA <= -BMS_WARN_MAX_DISCHARGE_CURRENT_DECI_A;
+    // Olay queue'sunu boşalt — kalıntı event'lerin sonraki teste sızmaması için.
+    if (s_eventQueue != nullptr) {
+        VcuEvent drained = VcuEvent::NONE;
+        while (xQueueReceive(s_eventQueue, &drained, 0) == pdTRUE) {
+            // discard
+        }
+    }
 }
+#endif
 
 }  // namespace VcuLogic
