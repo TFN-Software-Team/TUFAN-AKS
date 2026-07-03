@@ -526,7 +526,7 @@ void vTask_LoRa_UKS(void *pvParameters) {
 // ---------------------------------------------------------------------------
 // Main application entry point
 // ---------------------------------------------------------------------------
-#ifndef E22_DIAGNOSTIC_MODE
+#if !defined(E22_DIAGNOSTIC_MODE) && !defined(MOTOR_DISCOVERY_MODE)
 extern "C" void app_main() {
   // --- Hardware initialization (before any tasks) ---
 
