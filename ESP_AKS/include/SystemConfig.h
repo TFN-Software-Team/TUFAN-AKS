@@ -285,9 +285,9 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // surekli DOWN->UP flapping yapiyordu, bkz. LoRa_Link_Analysis.md). 9 sn,
 // gozlenen ~5-6 sn'lik araliga rahat marj birakir. Bu deger 2026-07-20
 // air-rate/TX-period kalibrasyonunda (bkz. LORA_TX_PERIOD_MS) BILINCLI
-// olarak DEGISTIRILMEDI — asagidaki G10 notundaki sifir-marj bulgusu
-// (canli+1 replay tikin tamamini isgal edebilir) bu sabitin de yeniden
-// gozden gecirilmesini gerektirebilir; ekip karari BEKLIYOR.
+// olarak DEGISTIRILMEDI — G10-b EKIP KARARI (2026-07-20, secenek a) ile
+// kabul edildi; 9000 ms degeri koruniyor — saha gozlemi (2+ ardisik
+// atlanmis tick) aksini gosterirse yeniden acilir.
 #define LINK_TIMEOUT_MS        9000U
 
 // Boot anindan itibaren bu sure icinde HIC heartbeat gelmediyse link DOWN

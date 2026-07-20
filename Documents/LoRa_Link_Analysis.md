@@ -277,10 +277,10 @@ before assuming the margin is real in the field.
 **Constants changed by the 2026-07-20 revision:** `LORA_TX_PERIOD_MS`
 (`500 -> 1000`) and `TEL_LINK_TIMEOUT_MS` (`2000 -> 4000`), recalibrated
 together in the same commit set to preserve the `4x` margin ratio.
-**Constant intentionally left unchanged:** `LINK_TIMEOUT_MS=9000` — this
-prompt's scope explicitly excluded it, but the zero-margin air-rate finding
-above means it may also warrant a future review; not done here, flagged in
-`SystemConfig.h` next to its definition instead. This section's analysis is
+**Constant intentionally left unchanged:** `LINK_TIMEOUT_MS=9000` — covered
+by the same G10-b team decision (2026-07-20, option a): accepted, `9000 ms`
+kept as-is; reopens if field observation (2+ consecutive skipped ticks)
+shows otherwise (see `SystemConfig.h` next to its definition). This section's analysis is
 protected by a drift-guard invariant (`tools/e2e/test_contract_drift.py`:
 `TEL_LINK_TIMEOUT_MS ≥ 3 × LORA_TX_PERIOD_MS`) so that if someone later
 raises `LORA_TX_PERIOD_MS` unilaterally without revisiting this margin, the
