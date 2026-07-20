@@ -9,6 +9,21 @@
 // kapsar (tur ~6-8.5 dk varsayımı).
 #define OB_CAPACITY 600
 
+// DAVRANIŞ NOTU (2026-07-20, 1 Hz TX kalibrasyonu — bkz.
+// SystemConfig.h LORA_TX_PERIOD_MS): link UP olduğunda drain hızı
+// (REPLAY_BURST_PER_TICK=1 kayıt / LORA_TX_PERIOD_MS=1000 ms → 1 kayıt/s)
+// artık offline doluş hızıyla (OFFLINE_SAMPLE_PERIOD_MS=1000 ms → 1
+// kayıt/s) AYNIDIR. Link DOWN/UP arasında çırpınan (flapping) bir
+// bağlantıda buffer NET olarak boşalamaz — her yeni kesinti eskiyi
+// tüketmeden üstüne yığar, ring en eski kayıtların üzerine yazmaya
+// başlar (~10 dk'lık OB_CAPACITY penceresi kayar, en eski veri kalıcı
+// kaybolur). Bu davranış EKİP KARARI ile bilinçli kabul edilmiştir;
+// OFFLINE_SAMPLE_PERIOD_MS ve REPLAY_BURST_PER_TICK bu kalibrasyonda
+// DEĞİŞTİRİLMEDİ (bkz. Documents/LoRa_Link_Analysis.md "Air rate
+// revision (2026-07-20)"). Saha testinde replay-drain sırasında flapping
+// tekrarını izlemek için "Recommended Field Checks" listesine madde
+// eklendi (2026-07-07 vakasının tekrarı riski).
+
 void ob_reset();
 bool ob_push(const TelemetryData& data);  // dolu ise en eskiyi düşür, true döner
 bool ob_pop(TelemetryData& out);           // boşsa false döner

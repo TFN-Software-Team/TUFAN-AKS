@@ -193,13 +193,15 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define LORA_M0_PIN GPIO_NUM_25   // Şemadaki MO (IO25)
 #define LORA_M1_PIN GPIO_NUM_26   // Şemadaki M1 (IO26)
 #define LORA_UART_BAUD 9600       // MCU↔E22 yerel seri hız (config modunda da aynı)
-// 2 Hz telemetry uplink (1 Hz'den geri döndürüldü — parkur keşfinde
-// maksimum mesafe 500 m ölçüldü, 2.4 kbps hava hızı bu mesafe için aşırı
-// tedbirdi; hava hızı 4.8 kbps'e çıkarıldı, ekip onaylı kalibrasyon).
-// Gerekçe: ~90 byte'lık bir TEL paketi 4.8 kbps'te ~190 ms havada kalır;
-// 500 ms'lik periyotta canlı doluluk ~%38 — UKS'in 1 Hz 0xB0 heartbeat'inin
-// kanala girebileceği pencere yeterli kalır.
-#define LORA_TX_PERIOD_MS 500
+// 1 Hz telemetry uplink (2 Hz'den geri alındı — 2026-07-20: saha menzil
+// testi 1.5 km'de linki güvenilmez buldu, menzil hedefi artık 500 m değil;
+// hava hızı 4.8 kbps'ten 2.4 kbps'e düşürüldü — 2026-07-17'deki 2.4->4.8
+// kbps kararının (commit c083139) geri alınması, ekip onaylı kalibrasyon).
+// Gerekçe: ~90 byte'lık bir TEL paketi 2.4 kbps'te ~380 ms havada kalır;
+// 1000 ms'lik periyotta canlı doluluk ~%38; replay burst anında (canlı + 1
+// replay) ~%76 — bkz. aşağıdaki G10 notu ve Documents/LoRa_Link_Analysis.md
+// "Air rate revision (2026-07-20)".
+#define LORA_TX_PERIOD_MS 1000
 #define LORA_RX_TIMEOUT_MS 20
 
 // G10: Serileşmiş telemetri frame'inin (CSV "TEL,...\r\n", bkz. Telemetry.cpp
@@ -281,8 +283,11 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // ZAMAN 1 Hz ulasamiyor — saha loglarinda gozlenen fiili heartbeat araligi
 // ~5-6 sn idi (eski LINK_TIMEOUT_MS=3000 bu araliktan kisa oldugu icin link
 // surekli DOWN->UP flapping yapiyordu, bkz. LoRa_Link_Analysis.md). 9 sn,
-// gozlenen ~5-6 sn'lik araliga rahat marj birakir; LORA_TX_PERIOD_MS'in
-// 500'e dusurulmesiyle birlikte heartbeat'in kanala girme sansi da artar.
+// gozlenen ~5-6 sn'lik araliga rahat marj birakir. Bu deger 2026-07-20
+// air-rate/TX-period kalibrasyonunda (bkz. LORA_TX_PERIOD_MS) BILINCLI
+// olarak DEGISTIRILMEDI — asagidaki G10 notundaki sifir-marj bulgusu
+// (canli+1 replay tikin tamamini isgal edebilir) bu sabitin de yeniden
+// gozden gecirilmesini gerektirebilir; ekip karari BEKLIYOR.
 #define LINK_TIMEOUT_MS        9000U
 
 // Boot anindan itibaren bu sure icinde HIC heartbeat gelmediyse link DOWN
@@ -313,12 +318,12 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 //     KURAL:  tepe ≤ (LORA_UART_BAUD / 10) × 0.8
 // Frame boyutu ve baud UKS sözleşmesidir — DEĞİŞTİRİLEMEZ; bütçe yalnız
 // LORA_TX_PERIOD_MS / REPLAY_BURST_PER_TICK ile ayarlanır. Mevcut değerler
-// (2 Hz, 1 replay + 1 canlı, 120 B): tepe = 2×120×1000/500 = 480 B/s ≤ 768 B/s.
+// (1 Hz, 1 replay + 1 canlı, 120 B): tepe = 2×120×1000/1000 = 240 B/s ≤ 768 B/s.
 // (Not: LORA_TX_PERIOD_MS 200'e — 5 Hz — düşürülürse tepe 1200 B/s olur ve
 //  aşağıdaki static_assert derlemeyi KIRAR; bu kasıtlı bir emniyettir. Bu
 //  bütçe, MCU<->E22 yerel UART hattının (LORA_UART_BAUD, 9600, DEĞİŞMEDİ)
-//  kapasitesini denetler — 4.8 kbps hava hızı ayrı bir darboğazdır ve bu
-//  static_assert'in kapsamında DEĞİLDİR.)
+//  kapasitesini denetler — hava hızı (şu an 2.4 kbps) ayrı bir darboğazdır ve
+//  bu static_assert'in kapsamında DEĞİLDİR — aşağıdaki not'a bkz.)
 #ifdef __cplusplus
 static_assert(
     (1u + (unsigned)REPLAY_BURST_PER_TICK) * (unsigned)LORA_TEL_FRAME_MAX_BYTES *
@@ -329,6 +334,36 @@ static_assert(
     "Frame boyutu/baud DEGISTIRME (UKS sozlesmesi); periyodu artir veya replay "
     "oranini dusur.");
 #endif
+
+// --- G10-b: 2.4 kbps HAVA HIZI bütçesi (YUKARIDAKİ static_assert'in
+// KAPSAMADIĞI ayrı darboğaz) — 2026-07-20 AÇIK BULGU, EKİP KARARIYLA KABUL
+// EDİLDİ (bkz. blok sonundaki karar notu) ---
+// SystemConfig.h'de literal bir hava-hızı sabiti YOK (hız E22Regs.h REG0
+// bit[2:0]'da E22 register'ı olarak kodlu); bu yüzden aşağıdaki türetim
+// static_assert OLARAK YAZILAMADI — yalnızca yorum bloğunda KANITLANIYOR:
+//
+//   frame_airtime_ms ≈ LORA_TEL_FRAME_MAX_BYTES × 8 bit / 2400 bit/s + ek yük
+//                     = 120 × 8 / 2400 s ≈ 400 ms + ~100 ms ek yük ≈ 500 ms
+//   kötü_durum_tik_isgali = (1 canlı + REPLAY_BURST_PER_TICK replay) × 500 ms
+//                         = 2 × 500 ms = 1000 ms
+//   1000 ms == LORA_TX_PERIOD_MS (1000 ms)  →  MARJ = 0 (SIFIR)
+//
+// Yani en kötü durumda (link UP olur olmaz replay drain + canlı aynı tikte),
+// TEK bir TX tik'i UÇUŞTA TAMAMEN DOLU olabilir — UKS'in 1 Hz 0xB0
+// heartbeat'inin ya da bir sonraki tik'in kendi AUX-busy temizliğinin
+// sığacağı pay YOKTUR. Bu, standart %20 emniyet payı (yukarıdaki G10 gibi)
+// istenirse ASLA geçemeyecek bir static_assert anlamına gelir (0 ms marj <
+// gereken pay); bu yüzden formül BİLİNÇLİ OLARAK bir static_assert'e
+// dönüştürülüp gevşetilmedi — DUR: bu bir ekip kararı gerektirir (ör.
+// REPLAY_BURST_PER_TICK'i düşürmek — KAPSAM DIŞI bu prompt'ta — ya da
+// LORA_TX_PERIOD_MS'i daha da artırmak). Bkz. Documents/LoRa_Link_Analysis.md
+// "Air rate revision (2026-07-20)" ve "UKS-side TEL Timeout Margin" bölümü.
+//
+// EKİP KARARI (2026-07-20): seçenek (a) kabul — tavan teoriktir (tipik
+// frame ~65 B → burst ~540 ms, %46 marj); AUX geri basıncı + UKS 4-tick
+// toleransı atlanan tick'i örter. Kalıcı çözüm: binary frame geçişi (bu
+// kısıt o geçişte kapanacak). REPLAY_BURST_PER_TICK ve
+// LORA_TEL_FRAME_MAX_BYTES BİLİNÇLİ OLARAK DEĞİŞTİRİLMEDİ.
 
 // --- G11: LoRa UART init retry emniyeti ---
 // uart_driver_install bu kadar denemede kurulamazsa retry döngüsü SONSUZ

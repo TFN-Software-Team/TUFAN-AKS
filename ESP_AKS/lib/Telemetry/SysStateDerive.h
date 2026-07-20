@@ -36,9 +36,10 @@
 // sonucu doğurmaz, yalnızca kozmetik bir görüntü kararsızlığıdır; (2)
 // histerezis EKLEMEK bu saf/stateless fonksiyonu STATEFUL yapardı (önceki
 // durumu bir yerde saklamak gerekir), bu da bir HİPOTEZ için gereğinden
-// fazla karmaşıklık/test yüzeyi eklerdi; (3) TX periyodu zaten 2 Hz
-// (LORA_TX_PERIOD_MS=500) — insan operatörün fark edeceği bir çırpınma
-// oranı değil. Gerçek parse (E003 teyit edilirse) veya ekip histerezis
+// fazla karmaşıklık/test yüzeyi eklerdi; (3) TX periyodu 1 Hz
+// (LORA_TX_PERIOD_MS=1000, 2026-07-20 kalibrasyonu) — bu da insan
+// operatörün fark edeceği bir çırpınma oranı üretmez. Gerçek parse (E003
+// teyit edilirse) veya ekip histerezis
 // isterse bu karar gözden geçirilebilir.
 namespace SysStateDerive {
 
