@@ -156,6 +156,128 @@ Implemented now:
   dereferencing, so other tasks querying link state during the (re)init
   window get a safe default (`false`, i.e. "not down") rather than crashing.
 
+## Pre-roll Buffer — Detection-Lag Gap Fix (2026-07-20, R2)
+
+**Field problem:** when the UKS↔AKS link drops and reconnects in the field,
+AKS's offline-buffer replay does not fully reach the monitoring station —
+TUFAN-Monitor's graph draws a straight line across the outage instead of
+showing the recovered data. Root cause, found by re-reading the actual
+`vTask_LoRa_UKS` task body and its native tests end to end (not assumed):
+
+- **Integration check (negative result — no bug here):** `UplinkScheduler`
+  *is* fully wired into `vTask_LoRa_UKS` (`src/main.cpp`, the "M1 refactor" —
+  no leftover inline link-FSM/sampling code exists). `offlineSample()` /
+  `onTxTickLinkUp()` reach real UART TX through `LoRa_txSend` with no broken
+  links in the chain, and `updateLink()`'s heartbeat clock is fed exclusively
+  by `onRxByte()` classifying real UART RX bytes against `UKS_HEARTBEAT_BYTE`
+  (`0xB0`). This was verified by reading the code, not assumed from prior
+  notes or "native tests are green" — "tested" code can still have a
+  structural gap even when every wire is connected.
+- **The actual gap — detection lag:** `updateLink()` only flips to `DOWN`
+  `LINK_TIMEOUT_MS` (9 s) *after* the last heartbeat. Until then, the task
+  believes the link is still UP and keeps attempting **live** TX every tick —
+  but if the link is actually physically down, those attempts are lost on
+  air. `offlineSample()` only runs once `isLinkDown()==true`, so **the first
+  ~9 s of every real outage was never recorded anywhere** — not buffered, not
+  replayed, and therefore never reaches Monitor. This is exactly reproduced
+  by the existing native test `test_outage_offline_sampling_then_replay_drain`
+  (Phase B only starts sampling at `now = 1000 + LINK_TIMEOUT_MS + 1`) —
+  native tests were "green" because nothing was asserting coverage of that
+  first 9 s window; they were correctly testing what *does* get buffered,
+  just not testing for the hole before it.
+
+**Fix — `lib/OfflineBuffer/PrerollBuffer.h` (`PrerollBuffer` class):** a
+second, small circular buffer that samples continuously at the same 1 Hz
+cadence as `OfflineBuffer`, **independent of link state** — it runs every TX
+tick whether the link is believed UP or DOWN. Capacity is derived at compile
+time, `PREROLL_CAPACITY = LINK_TIMEOUT_MS/1000 + 2` (currently `11`), so it
+always holds at least the full detection-lag window plus margin. On the
+`DOWN` transition (`UplinkScheduler::updateLink`), the pre-roll's contents
+are spliced onto the front of `OfflineBuffer` in chronological (FIFO) order,
+then the pre-roll buffer is cleared — this backfills the detection-lag window
+before normal offline sampling continues. The splice also seeds
+`offlineSample()`'s own throttle clock (`m_lastOfflineSampleMs = nowMs` of
+the transition) so the very next tick's offline sample is correctly throttled
+and never duplicates the last spliced timestamp.
+
+**Coverage proof (native tests, `test_native_preroll_buffer` +
+`test_native_uplink_scheduler`):** `test_short_outage_near_detection_threshold_covered_by_preroll`
+walks a full tick-by-tick timeline matching the real task's execution order
+and proves the gap between any two consecutive buffered records — including
+across the splice boundary — never exceeds `2 × LORA_TX_PERIOD_MS` (2 s),
+well inside the 9.2.h 5-second rule, even when the *official* DOWN window is
+as short as a single tick. `test_preroll_splice_overflow_drops_oldest_keeps_order`
+covers the case where `OfflineBuffer` is already near-full (e.g. from a prior
+un-drained flapping outage) when the splice happens.
+
+**Known, intentional limitation (not fixed by pre-roll, reported not
+silently accepted):** if the RF outage is genuinely shorter than
+`LINK_TIMEOUT_MS` (9 s), the heartbeat gap never crosses the timeout —
+`becameDown` never fires, the splice never runs, and the "live" TX attempts
+lost during that sub-9s window are unrecoverable. This is a structural
+consequence of a one-way, ACK-less heartbeat design (9.2.a) and is out of
+this fix's scope (`LINK_TIMEOUT_MS` is a frozen calibration constant here);
+`test_outage_shorter_than_link_timeout_is_never_detected_or_recovered` (e2e)
+and its native-side reasoning document this explicitly rather than silently
+overclaiming full coverage. Closing it would require either lowering
+`LINK_TIMEOUT_MS` (reopens the flapping risk the 2026-07-07 fix addressed) or
+adding an ACK/link-quality mechanism — both out of scope here.
+
+**Diagnostic instrumentation (`src/main.cpp`, permanent, lightweight):** new
+`OFFLINE`/`REPLAY`-tagged log lines make the bench-visible flow: `OFFLINE:
+kayit basladi (ts=..., preroll ile N onceki kayit eklendi)` on the DOWN
+transition (reporting the splice count directly), `OFFLINE: N kayit (son
+ts=...)` every 10th offline sample, `REPLAY: N kayit bekliyor [ilk..son]` on
+UP, `REPLAY: TX ts=...` per replay transmission, and `REPLAY: drenaj
+tamamlandi` when the buffer empties.
+
+**TUFAN-Monitor side:** the graph previously plotted points by *arrival*
+time (wall-clock receipt), not by the packet's own `ts_ms` — so replayed
+(backdated) points always landed at "now" on the x-axis instead of their true
+historical position, and the graph could never visually "fill in" a
+straight-line gap. Fixed in `monitor.py`: points are now inserted sorted by
+the packet's own `ts_ms` (`insert_sorted_point`), and the line is broken
+(`build_line_with_gaps`) wherever a >5 s gap has not yet been filled — as
+replay points arrive and get inserted into their correct historical slot, the
+break shrinks/disappears. The CSV log file continues to be written in
+**arrival order** (not re-sorted) — the spec (9.2.e/9.2.h) requires the
+outage-interval timestamps to be *present* in the file, not written in a
+particular order, and the timestamp column itself carries the true ordering
+for later analysis; this decision is recorded as a comment at the write site
+in `monitor.py`. `csv_logger.py`'s stdlib-only / no-`config`-import
+constraint is untouched — all changes are in `monitor.py`.
+
+### 9.2.e / 9.2.h / 9.4.b.vi Compliance Table (post-R2)
+
+| Requirement | Before R2 | After R2 |
+|---|---|---|
+| 9.2.e — outage telemetry is recorded and later delivered | First `LINK_TIMEOUT_MS` (~9 s) of every outage silently lost (never buffered) | Pre-roll backfills the detection-lag window on every detected (`≥LINK_TIMEOUT_MS`) outage; native-proven max internal gap `≤2×LORA_TX_PERIOD_MS` |
+| 9.2.h — no unfilled gap `>5 s` in the recorded timeline | Violated at the *start* of every outage (up to ~9 s gap before first offline sample) | Satisfied at outage start too, not just mid/end-outage (see coverage proof above) |
+| 9.4.b.vi — boot-time link-loss also covered | Boot-grace (`BOOT_LINK_GRACE_MS`) already covered *no-heartbeat-since-boot*, but pre-roll has little/no history to splice right after boot (nothing to backfill) | Unchanged/expected — pre-roll only has data to offer once the vehicle has been running; boot-time behavior is bounded by `BOOT_LINK_GRACE_MS` as before |
+| Monitor graph visually reflects the above | Straight-line interpolation across every gap, replay points misplaced at arrival time | Sorted-by-`ts_ms` insertion + gap-break rendering; gap visually shrinks as replay arrives |
+| Sub-`LINK_TIMEOUT_MS` RF blips | Unrecoverable (undetected) | **Still unrecoverable** — documented structural limitation, not claimed as fixed |
+
+### Bench Procedure (R2 validation)
+
+1. **Long outage (≥30 s):** power up AKS+UKS, let the link settle (heartbeat
+   flowing), then physically disconnect the LoRa antenna (or power UKS off)
+   for ≥30 s. Watch the AKS serial monitor: expect `LINK,DOWN` (~9 s after
+   the physical cut) immediately followed by an `OFFLINE: kayit basladi
+   (ts=..., preroll ile N onceki kayit eklendi)` line with `N` close to
+   `PREROLL_CAPACITY` (11), then `OFFLINE: N kayit (...)` every ~10 s while
+   still down. Reconnect; expect `REPLAY: N kayit bekliyor [ilk..son]`
+   followed by one `REPLAY: TX ts=...` line per drained record and a final
+   `REPLAY: drenaj tamamlandi`. On TUFAN-Monitor, confirm the speed graph's
+   gap (which appeared broken during the outage) fills in as replay points
+   arrive, and that the resulting CSV file contains timestamps spanning the
+   *entire* outage interval (including the pre-9s window) with no `>5000 ms`
+   gap between sorted, unique `ts_ms` values.
+2. **Short outage (`<9 s`, e.g. ~5 s):** repeat with a brief disconnect.
+   Expect **no** `LINK,DOWN`/`OFFLINE`/`REPLAY` lines at all (heartbeat gap
+   never crosses `LINK_TIMEOUT_MS`) — this is the documented, accepted
+   limitation above, not a regression; confirm it matches expectation rather
+   than treating its absence as a bug.
+
 ## Replay-Mode Budget
 
 When the link reconnects (link UP), the offline buffer begins to drain while the live stream continues. To prevent buffer overrun at the 9600 baud UART limit (`~960 bytes per 1000 ms tick`, up from `~480 bytes per 500 ms tick` now that the tick is lengthened to 1000 ms), the replay burst must be strictly limited.
