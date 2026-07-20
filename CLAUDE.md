@@ -66,12 +66,19 @@ güncellenmesi gerektiğinin sinyalidir.
 
 ## 6. Test Baselines
 
-Güncel (2026-07-20, R2 — pre-roll/tespit-gecikmesi düzeltmesi sonrası):
+Güncel (2026-07-20, R4 — `main` senkronu sonrası: hall-effect hız sensörü
+entegrasyonu `a0d65fb` + kontaktör/rol katmanı `611a237` dahil):
 
-- **AKS native** (`ESP_AKS`, `pio test -e native`): **446/446**
+- **AKS native** (`ESP_AKS`, `pio test -e native`): **451/451**
+- **AKS native_roles** (`ESP_AKS`, `pio test -e native_roles` —
+  `RELAY_ROLES_ASSIGNED=1` varyantı, `611a237` ile eklendi): **19/19**
 - **AKS e2e** (`ESP_AKS/tools/e2e`, `pytest`): **34 passed + 1 xfail**
 - **TUFAN-Monitor** (`pytest`): **57 passed**
 
 Bir değişiklik bu sayıları düşürüyorsa (yeni xfail hariç, beklenmeyen
 FAIL/ERROR varsa) **DUR** — regresyon var demektir. Sayı artışı (yeni test
 eklenmesi) normaldir; bu bölüm ilgili PR/commit ile birlikte güncellenir.
+
+<!-- Geçmiş: 2026-07-20 R2 (pre-roll/tespit-gecikmesi) sonrası 446/446 native
+     idi; R4'te main senkronuyla 451/451'e çıktı (+5 yeni test, hall-effect
+     entegrasyonu). native_roles ortamı da R4'te ilk kez eklendi. -->
