@@ -213,3 +213,237 @@ void test_outage_offline_sampling_then_replay_drain(void) {
     TEST_ASSERT_EQUAL_UINT32(firstTs, g_emitted[0].ts);  // ilk replay = ilk örnek
     TEST_ASSERT_EQUAL_INT(sampleCount + 2, livesSeen);   // her tikte 1 canlı
 }
+
+// ===========================================================================
+// R2 — Pre-roll splice testleri (ADIM 2c). PrerollBuffer'ın kendi dolaşım/
+// throttle davranışı test_native_preroll_buffer'da; burada yalnız DOWN
+// geçişiyle OfflineBuffer'a entegrasyonu (splice) test edilir.
+// ===========================================================================
+
+// (ii) DOWN geçişinde pre-roll içeriği OfflineBuffer'ın önüne, kronolojik
+// sırayla aktarılır.
+void test_preroll_splices_into_offline_buffer_on_down_with_order(void) {
+    resetEnv();
+    UplinkScheduler s = makeScheduler();
+    const uint64_t bootMs = 0;
+
+    // Link UP + 5 sn boyunca pre-roll (heartbeat her saniye tazelenir, link
+    // hiç DOWN olmaz — pre-roll link durumundan BAĞIMSIZ çalıştığını kanıtlar).
+    for (int i = 1; i <= 5; i++) {
+        const uint64_t t = (uint64_t)i * 1000u;
+        s.onRxByte(UKS_HEARTBEAT_BYTE, t);
+        s.updateLink(t, bootMs);
+        s.prerollSample(t, mkPacket((uint32_t)t));
+    }
+    TEST_ASSERT_FALSE(s.isLinkDown());
+    TEST_ASSERT_EQUAL_INT(0, ob_count());  // pre-roll OfflineBuffer'a DOKUNMADI (henüz splice yok)
+
+    // Heartbeat kesilir; LINK_TIMEOUT_MS sonra DOWN tespit edilir (tespit
+    // gecikmesi penceresi — bu sırada prerollSample() ÇAĞRILMADI, senaryo
+    // sade tutuldu; kapasite/overflow ayrı testte).
+    const uint64_t downMs = 5000u + LINK_TIMEOUT_MS + 1u;
+    UplinkScheduler::LinkTransition tr = s.updateLink(downMs, bootMs);
+    TEST_ASSERT_TRUE(tr.becameDown);
+    TEST_ASSERT_EQUAL_INT(5, tr.prerollSplicedCount);
+    TEST_ASSERT_EQUAL_INT(5, ob_count());
+
+    // Kronolojik sıra korunmuş: 1000..5000 artan ts.
+    TelemetryData out;
+    for (uint32_t expected = 1000u; expected <= 5000u; expected += 1000u) {
+        TEST_ASSERT_TRUE(ob_pop(out));
+        TEST_ASSERT_EQUAL_UINT32(expected, out.TEL_timestampMs);
+    }
+    TEST_ASSERT_EQUAL_INT(0, ob_count());
+}
+
+// (iv) Splice sırasında OfflineBuffer taşarsa (zaten neredeyse dolu bir
+// OfflineBuffer'a — ör. önceki bir flapping kesintiden kalan drenajsız
+// kayıtlar — pre-roll eklenirse) en eski OfflineBuffer kaydı düşer, sıra
+// bozulmaz (ob_push'ın var olan davranışının splice akışıyla bütünlüğü).
+void test_preroll_splice_overflow_drops_oldest_keeps_order(void) {
+    resetEnv();
+    UplinkScheduler s = makeScheduler();
+    const uint64_t bootMs = 0;
+
+    // OfflineBuffer'ı OB_CAPACITY-2'ye kadar doldur (ts 1..OB_CAPACITY-2,
+    // eskiden yeniye artan).
+    const int PRE_FILL = OB_CAPACITY - 2;
+    for (int i = 1; i <= PRE_FILL; i++) {
+        ob_push(mkPacket((uint32_t)i));
+    }
+    TEST_ASSERT_EQUAL_INT(PRE_FILL, ob_count());
+
+    // Pre-roll'a 5 YENİ (mevcut ob içeriğinden daha büyük ts'li) kayıt ekle.
+    const uint32_t prerollBase = (uint32_t)PRE_FILL + 1000u;  // kesin daha büyük
+    for (int i = 0; i < 5; i++) {
+        const uint64_t t = 100000u + (uint64_t)i * 1000u;
+        s.onRxByte(UKS_HEARTBEAT_BYTE, t);
+        s.updateLink(t, bootMs);
+        s.prerollSample(t, mkPacket(prerollBase + (uint32_t)i));
+    }
+
+    const uint64_t downMs = 100000u + 5000u + LINK_TIMEOUT_MS + 1u;
+    UplinkScheduler::LinkTransition tr = s.updateLink(downMs, bootMs);
+    TEST_ASSERT_TRUE(tr.becameDown);
+    TEST_ASSERT_EQUAL_INT(5, tr.prerollSplicedCount);
+
+    // OB_CAPACITY'yi aştı (PRE_FILL + 5 > OB_CAPACITY) → en eski (PRE_FILL+5-OB_CAPACITY)
+    // kayıt düştü, count OB_CAPACITY'de sabitlendi.
+    TEST_ASSERT_EQUAL_INT(OB_CAPACITY, ob_count());
+
+    const int dropped = PRE_FILL + 5 - OB_CAPACITY;
+    TelemetryData out;
+    uint32_t prevTs = 0;
+    uint32_t firstTs = 0;
+    bool first = true;
+    int poppedCount = 0;
+    while (ob_pop(out)) {
+        if (first) {
+            firstTs = out.TEL_timestampMs;
+        } else {
+            TEST_ASSERT_TRUE(out.TEL_timestampMs > prevTs);  // sıra bozulmadı
+        }
+        prevTs = out.TEL_timestampMs;
+        first = false;
+        poppedCount++;
+    }
+    TEST_ASSERT_EQUAL_INT(OB_CAPACITY, poppedCount);
+    // En eski kalan kayıt, düşenlerden hemen sonraki orijinal ts olmalı.
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)(dropped + 1), firstTs);
+    // Son kayıt, pre-roll'un son elemanı olmalı.
+    TEST_ASSERT_EQUAL_UINT32(prerollBase + 4u, prevTs);
+}
+
+// (iii) Kısa (fiili LINK_TIMEOUT_MS civarı) kesinti: resmi DOWN süresi çok
+// kısa olsa da (burada 1 tick), pre-roll tespit-öncesi ~LINK_TIMEOUT_MS
+// penceresini geri doldurduğu için toplam kayıt aralığında (spliced +
+// resmi offline örnek boyunca) hiçbir yerde 2*TICK'i (2 sn) aşan boşluk
+// kalmaz — 9.2.h'nin "5 sn'yi aşan boşluk olmaz" kuralı kesintinin EN
+// BAŞINDA da (yalnız sonunda değil) sağlanır. KARŞILAŞTIRMA (bkz.
+// test_outage_offline_sampling_then_replay_drain, Phase B): pre-roll OLMASA
+// bu senaryoda offlineSample() yalnızca resmi DOWN penceresinde (burada tek
+// örnek) veri toplardı — kesintinin GERÇEK başlangıcından (~LINK_TIMEOUT_MS
+// önce) o tek kayda kadar HİÇBİR veri olmazdı.
+void test_short_outage_near_detection_threshold_covered_by_preroll(void) {
+    resetEnv();
+    UplinkScheduler s = makeScheduler();
+    const uint64_t bootMs = 0;
+    const uint64_t TICK = 1000u;
+    uint64_t now = 0;
+
+    // Steady-state link UP (30 sn) — pre-roll dolaşımda, kapasiteye ulaşır.
+    for (int i = 0; i < 30; i++) {
+        now += TICK;
+        s.onRxByte(UKS_HEARTBEAT_BYTE, now);
+        s.updateLink(now, bootMs);
+        s.prerollSample(now, mkPacket((uint32_t)now));
+    }
+    TEST_ASSERT_FALSE(s.isLinkDown());
+
+    // Heartbeat kesilir; pre-roll KOŞULSUZ devam eder — gerçek main.cpp'de
+    // (ADIM 2a) her tick, link durumuna BAKILMAKSIZIN prerollSample() çağrılır.
+    // DOWN tespit edilene kadar (link_check_timeout: '>' katı — bkz.
+    // LinkMonitor.h) döngü sürer.
+    UplinkScheduler::LinkTransition trDown;
+    for (;;) {
+        now += TICK;
+        trDown = s.updateLink(now, bootMs);
+        if (trDown.becameDown) break;
+        s.prerollSample(now, mkPacket((uint32_t)now));
+    }
+    TEST_ASSERT_TRUE(trDown.becameDown);
+    TEST_ASSERT_EQUAL_INT((int)PREROLL_CAPACITY, trDown.prerollSplicedCount);
+    TEST_ASSERT_EQUAL_INT((int)PREROLL_CAPACITY, ob_count());
+    const uint64_t downMs = now;
+
+    // Aynı tick'te main.cpp sırasıyla aynı: updateLink() SONRASI prerollSample()
+    // yine çağrılır (preroll bu tick'e ait YENİ bir kayıtla sıfırdan birikmeye
+    // başlar — henüz splice edilmez, bir SONRAKİ DOWN geçişini bekler).
+    s.prerollSample(now, mkPacket((uint32_t)now));
+
+    // Resmi DOWN penceresi KISA sürer: yalnız 1 offline örnek alınır (throttle
+    // nedeniyle aynı tick'te değil, bir SONRAKİ tick'te), sonra heartbeat geri gelir.
+    now += TICK;
+    TEST_ASSERT_TRUE(s.offlineSample(now, mkPacket((uint32_t)now)));
+    const uint64_t firstOfficialOfflineTs = now;
+
+    now += TICK;
+    s.onRxByte(UKS_HEARTBEAT_BYTE, now);
+    UplinkScheduler::LinkTransition trUp = s.updateLink(now, bootMs);
+    TEST_ASSERT_TRUE(trUp.becameUp);
+    TEST_ASSERT_TRUE(trUp.hadSamples);
+    TEST_ASSERT_EQUAL_INT((int)PREROLL_CAPACITY + 1, trUp.bufferedCount);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)firstOfficialOfflineTs, trUp.lastTs);
+
+    // KANIT (9.2.h — "5 sn'yi aşan boşluk olmaz", kesintinin EN BAŞINDA da):
+    // OfflineBuffer'daki TÜM kayıtları (spliced + resmi offline örnek) FIFO
+    // sırayla dolaş; ardışık iki kayıt arasındaki ts farkı hiçbir yerde
+    // 2*TICK'i (2 sn) aşmamalı. (Spliced son kayıt ile ilk resmi offline
+    // örnek arasında TAM 2*TICK'lik bir boşluk BEKLENİR — downMs anındaki tek
+    // tick throttle nedeniyle atlanır: splice nowMs=downMs'i "son örnek anı"
+    // yapar, o yüzden offlineSample(downMs,...) hemen tekrar örnek almaz —
+    // bkz. test_preroll_splice_no_ts_duplicate_at_boundary; ilk başarılı
+    // offline örnek ancak downMs+TICK'te gelir.) 2 sn << 5 sn (9.2.h marjı).
+    //
+    // KARŞILAŞTIRMA: pre-roll OLMASAYDI (bkz.
+    // test_outage_offline_sampling_then_replay_drain, Phase B) tek kayıt
+    // firstOfficialOfflineTs'den başlardı — kesintinin GERÇEK başlangıcından
+    // (downMs'e kadar geçen ~LINK_TIMEOUT_MS) bu yana HİÇBİR veri olmazdı.
+    TelemetryData out;
+    uint32_t prevTs = 0;
+    bool first = true;
+    int count = 0;
+    while (ob_pop(out)) {
+        if (!first) {
+            const uint32_t gap = out.TEL_timestampMs - prevTs;
+            TEST_ASSERT_TRUE(gap > 0u);                  // tekrar yok
+            TEST_ASSERT_TRUE(gap <= 2u * (uint32_t)TICK);  // >5 sn boşluk yok (gerçekte <=2 sn)
+        }
+        prevTs = out.TEL_timestampMs;
+        first = false;
+        count++;
+    }
+    TEST_ASSERT_EQUAL_INT((int)PREROLL_CAPACITY + 1, count);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)firstOfficialOfflineTs, prevTs);
+}
+
+// Splice sınırında (son pre-roll kaydı ile ilk yeni offlineSample arasında)
+// ts tekrarı OLMAMALI — throttle, splice anının nowMs'ini devam ettirdiği
+// için ilk offlineSample çağrısı (aynı tick'te gelse bile) örnek almaz.
+void test_preroll_splice_no_ts_duplicate_at_boundary(void) {
+    resetEnv();
+    UplinkScheduler s = makeScheduler();
+    const uint64_t bootMs = 0;
+
+    // Boot-grace yolunu kullan (heartbeat hiç gelmesin) — sade DOWN tetikleme.
+    for (int i = 1; i <= 5; i++) {
+        const uint64_t t = (uint64_t)i * 1000u;
+        s.prerollSample(t, mkPacket((uint32_t)t));
+    }
+    const uint64_t downMs = BOOT_LINK_GRACE_MS + 1u;  // 5001
+    UplinkScheduler::LinkTransition tr = s.updateLink(downMs, bootMs);
+    TEST_ASSERT_TRUE(tr.becameDown);
+    TEST_ASSERT_EQUAL_INT(5, tr.prerollSplicedCount);
+    TEST_ASSERT_EQUAL_INT(5, ob_count());
+
+    // Aynı tick'te (nowMs=downMs) offlineSample çağrılsa bile throttle
+    // nedeniyle ÖRNEK ALINMAZ (duplicate riski yok).
+    TEST_ASSERT_FALSE(s.offlineSample(downMs, mkPacket((uint32_t)downMs)));
+    TEST_ASSERT_EQUAL_INT(5, ob_count());
+
+    // period_ms sonra normal örnekleme devam eder.
+    const uint64_t nextMs = downMs + OFFLINE_SAMPLE_PERIOD_MS;
+    TEST_ASSERT_TRUE(s.offlineSample(nextMs, mkPacket((uint32_t)nextMs)));
+    TEST_ASSERT_EQUAL_INT(6, ob_count());
+
+    // Tüm dizi kesin artan, tekrarsız: 1000,2000,3000,4000,5000,(downMs+period).
+    TelemetryData out;
+    uint32_t prevTs = 0;
+    bool first = true;
+    while (ob_pop(out)) {
+        if (!first) TEST_ASSERT_TRUE(out.TEL_timestampMs > prevTs);
+        prevTs = out.TEL_timestampMs;
+        first = false;
+    }
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)nextMs, prevTs);
+}

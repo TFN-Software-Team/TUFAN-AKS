@@ -668,6 +668,7 @@ static bool LoRa_txSend(const TelemetryData &pkt, bool isReplay, void *ctxv) {
   *c->auxNotReadyLogged = false;
   if (isReplay) {
     c->hal->feedWatchdog();  // eski: her başarılı replay sonrası esp_task_wdt_reset
+    ESP_LOGI("REPLAY", "TX ts=%lu", (unsigned long)pkt.TEL_timestampMs);
   }
   return true;
 }
@@ -740,6 +741,9 @@ void vTask_LoRa_UKS(void *pvParameters) {
   uint8_t LO_rxBuffer[4];
   uint32_t lastStackLog = 0;
   TickType_t LO_lastTelemetryTick = 0;
+  // R2 teşhis enstrümantasyonu: bu kesintide offlineSample() ile eklenen
+  // (pre-roll HARİÇ — o ayrı loglanır) kayıt sayacı; her DOWN geçişinde sıfırlanır.
+  uint32_t LO_offlineSampleCount = 0;
 
   while (true) {
     esp_task_wdt_reset();
@@ -762,6 +766,11 @@ void vTask_LoRa_UKS(void *pvParameters) {
         LO_sched.updateLink(LO_hal.nowMs(), LO_bootMs);
     if (LO_tr.becameDown) {
       ESP_LOGW("LINK", "UKS heartbeat timeout — link DOWN");
+      LO_offlineSampleCount = 0;
+      // R2 (ADIM 1a/2b): pre-roll splice DOWN geçişiyle AYNI çağrıda olur
+      // (updateLink içinde) — burada sonucunu raporluyoruz.
+      ESP_LOGW("OFFLINE", "kayit basladi (ts=%lu, preroll ile %d onceki kayit eklendi)",
+               (unsigned long)LO_hal.nowMs(), LO_tr.prerollSplicedCount);
     } else if (LO_tr.becameUp) {
       if (LO_tr.hadSamples) {
         ESP_LOGI("LINK",
@@ -769,8 +778,11 @@ void vTask_LoRa_UKS(void *pvParameters) {
                  "replay ediliyor",
                  LO_tr.bufferedCount, (unsigned long)LO_tr.firstTs,
                  (unsigned long)LO_tr.lastTs);
+        ESP_LOGI("REPLAY", "%d kayit bekliyor [%lu..%lu]", LO_tr.bufferedCount,
+                 (unsigned long)LO_tr.firstTs, (unsigned long)LO_tr.lastTs);
       } else {
         ESP_LOGI("LINK", "Heartbeat alindi — link UP: 0 paket replay edilecek");
+        ESP_LOGI("REPLAY", "0 kayit bekliyor");
       }
     }
 
@@ -780,15 +792,32 @@ void vTask_LoRa_UKS(void *pvParameters) {
         pdMS_TO_TICKS(LORA_TX_PERIOD_MS)) {
       LO_lastTelemetryTick = LO_nowTick;
       if (TEL_sensorDataQueue != nullptr) {
+        // R2 (ADIM 2a): pre-roll — link durumundan BAĞIMSIZ, koşulsuz her tick.
+        TelemetryData LO_prerollLive = {};
+        if (xQueuePeek(TEL_sensorDataQueue, &LO_prerollLive, 0) == pdTRUE) {
+          LO_sched.prerollSample(LO_hal.nowMs(), LO_prerollLive);
+        }
+
         if (!LO_sched.isLinkDown()) {
           TelemetryData LO_live = {};
           const bool LO_haveLive =
               (xQueuePeek(TEL_sensorDataQueue, &LO_live, 0) == pdTRUE);
+          const bool LO_hadPendingReplay = (ob_count() > 0);
           LO_sched.onTxTickLinkUp(LO_haveLive, LO_live, &LoRa_txSend, &LO_txCtx);
+          if (LO_hadPendingReplay && ob_count() == 0) {
+            ESP_LOGI("REPLAY", "drenaj tamamlandi");
+          }
         } else {
           TelemetryData LO_buffered = {};
           if (xQueuePeek(TEL_sensorDataQueue, &LO_buffered, 0) == pdTRUE) {
-            LO_sched.offlineSample(LO_hal.nowMs(), LO_buffered);
+            if (LO_sched.offlineSample(LO_hal.nowMs(), LO_buffered)) {
+              LO_offlineSampleCount++;
+              if ((LO_offlineSampleCount % 10u) == 0u) {
+                ESP_LOGI("OFFLINE", "%lu kayit (son ts=%lu)",
+                         (unsigned long)LO_offlineSampleCount,
+                         (unsigned long)LO_buffered.TEL_timestampMs);
+              }
+            }
           }
         }
       }

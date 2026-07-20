@@ -63,3 +63,15 @@ dosyalarını güncelle. "AÇIK İŞ" durum değişikliklerinde
 `xfail(strict=True)` olduğu için, işaretlenmiş bir alan artık gerçekten
 destekleniyorsa test **XPASS** ile suite'i bilerek kırar; bu, izleyicinin
 güncellenmesi gerektiğinin sinyalidir.
+
+## 6. Test Baselines
+
+Güncel (2026-07-20, R2 — pre-roll/tespit-gecikmesi düzeltmesi sonrası):
+
+- **AKS native** (`ESP_AKS`, `pio test -e native`): **446/446**
+- **AKS e2e** (`ESP_AKS/tools/e2e`, `pytest`): **34 passed + 1 xfail**
+- **TUFAN-Monitor** (`pytest`): **57 passed**
+
+Bir değişiklik bu sayıları düşürüyorsa (yeni xfail hariç, beklenmeyen
+FAIL/ERROR varsa) **DUR** — regresyon var demektir. Sayı artışı (yeni test
+eklenmesi) normaldir; bu bölüm ilgili PR/commit ile birlikte güncellenir.

@@ -133,3 +133,75 @@ def test_60s_outage_replay_preserves_single_file_and_coverage(csv_logger_module)
         f"zaman cizelgesinde 5000 ms'yi asan bosluk(lar) var: "
         f"{[g for g in gaps if g > 5000]}"
     )
+
+
+# ===========================================================================
+# R2 — Pre-roll (tespit gecikmesi penceresi) e2e kanitlari.
+# ===========================================================================
+
+
+def test_outage_near_link_timeout_has_no_gap_at_start_thanks_to_preroll():
+    """Kesinti LINK_TIMEOUT_MS'e yakin (biraz uzun) surerse, pre-roll
+    OLMASAYDI resmi DOWN penceresi cok kisa kalir ve offline ornekleme
+    neredeyse hic veri toplayamazdi (bkz. native
+    test_short_outage_near_detection_threshold_covered_by_preroll). Bu test
+    aynı senaryoyu e2e katmaninda (GERCEK UKS kabul kurallari + Monitor CSV
+    isleme dahil) dogrular: kesinti araligindaki ts'ler arasinda 5000 ms'yi
+    asan bosluk KALMAMALI — pre-roll, tespit gecikmesi penceresini de kapsar.
+    """
+    outage_ms = contract.LINK_TIMEOUT_MS + 3000  # resmi DOWN penceresi ~3 sn
+    sim = run_outage_simulation(outage_ms=outage_ms)
+
+    # Pre-roll sayesinde kesinti araligi (tespit gecikmesi DAHIL) buffer'a
+    # giriyor — toplam buffered sayisi ~outage_ms/1000'e yakin olmali (bkz.
+    # aks_loop_sim.run_outage_simulation docstring — lag penceresi kaybı YOK).
+    assert len(sim.buffered_outage_ts) >= outage_ms // contract.OFFLINE_SAMPLE_PERIOD_MS - 1, (
+        "pre-roll'un tespit gecikmesi penceresini kapatmasi beklenirken "
+        f"buffered_outage_ts beklenenden az: {len(sim.buffered_outage_ts)}"
+    )
+
+    sorted_unique_ts = sorted(set(sim.buffered_outage_ts))
+    gaps = [b - a for a, b in zip(sorted_unique_ts, sorted_unique_ts[1:])]
+    assert all(g <= 5000 for g in gaps), (
+        f"pre-roll'a ragmen kesinti icinde 5000 ms'yi asan bosluk var: "
+        f"{[g for g in gaps if g > 5000]}"
+    )
+
+    # Kesintinin GERCEK basladigi an (outage_start_ms) ile ilk buffered ts
+    # arasindaki fark da 5 sn'yi asmamali (9.2.h kesintinin EN BASINDA da).
+    assert sorted_unique_ts[0] - sim.outage_start_ms <= 5000, (
+        f"ilk buffered ts ({sorted_unique_ts[0]}), kesinti baslangicindan "
+        f"({sim.outage_start_ms}) 5 sn'den fazla uzakta — pre-roll marjini "
+        "kontrol edin (PREROLL_CAPACITY / LINK_TIMEOUT_MS turetmesi)."
+    )
+
+
+def test_outage_shorter_than_link_timeout_is_never_detected_or_recovered():
+    """BILINEN SINIR (kod ile AYNI davranis, kasitli): RF kesintisi
+    LINK_TIMEOUT_MS'ten KISA surerse, heartbeat bosluğu hic 9 sn esigini
+    asmaz — AKS link'i hicbir zaman DOWN gormez (becameDown hic tetiklenmez),
+    pre-roll splice hic cagirlmaz. O pencerede "canli" sanilan TX'ler yine
+    havada kaybolur ve KURTARILAMAZ. Bu, tek-yonlu/ACK'siz heartbeat
+    tasariminin (9.2.a) yapisal bir siniridir — bu test bunu e2e katmaninda
+    BELGELER (regresyon degil, bilinen-sinir kaniti)."""
+    outage_ms = contract.LINK_TIMEOUT_MS - 2000  # kesin esik altinda
+    sim = run_outage_simulation(outage_ms=outage_ms, post_live_ms=5000)
+
+    assert sim.buffered_outage_ts == [], (
+        "beklenmedik: LINK_TIMEOUT_MS altindaki bir kesinti buffer'a veri "
+        "yazdi — link FSM esigi ya da pre-roll splice kosulu degismis olabilir "
+        "(bu test kasitli olarak BOS liste bekliyor; kod GERCEKTEN bu limiti "
+        "asincaya kadar (ör. ACK mekanizmasi eklenene kadar) bu davranis "
+        "beklenen/bilinen bir sinirdir)."
+    )
+
+    # Kesinti penceresindeki (rf_down) "canli" TX denemeleri havada kayboldu:
+    # sim.packets icinde bu araliga denk gelen HICBIR paket olmamali.
+    lost_window_packets = [
+        p for p in sim.packets
+        if sim.outage_start_ms <= p.tick_now_ms < sim.outage_end_ms
+    ]
+    assert lost_window_packets == [], (
+        f"RF kesinti penceresinde teslim edilmis gorunen paket(ler) var — "
+        f"RF-kaybi modeli bozulmus olabilir: {lost_window_packets}"
+    )

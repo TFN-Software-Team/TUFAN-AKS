@@ -34,6 +34,66 @@ This note captures the current AKS-side telemetry bandwidth estimate and the pra
 > stayed at `2000 ms` throughout. AKS commits: `9230936` (9.6->2.4 kbps),
 > `c083139` (2.4->4.8 kbps); synchronized with UKS the same day.
 
+> **Air rate revision (2026-07-20):** field range testing (following the
+> 2026-07-17 change above) found the link unreliable at `1.5 km` — the
+> range target is no longer `500 m`. This reverts the `c083139` decision:
+> air rate `4.8 -> 2.4 kbps` (`REG0 = 0x62`, bit[2:0] = `010`) and TX rate
+> `2 Hz -> 1 Hz` (`LORA_TX_PERIOD_MS = 1000`), i.e. back to the
+> mid-July intermediate configuration (equivalent to `9230936`). Team
+> approved. Updated figures: a `~90 byte` TEL packet now spends `~380 ms`
+> airtime at 2.4 kbps (was `~190 ms` at 4.8 kbps); live-only occupancy is
+> unchanged at `~38%` of the (now longer) `1000 ms` tick, and replay-drain
+> occupancy (live + 1 replay) is `~76%`. UKS's `TEL_LINK_TIMEOUT_MS` is
+> recalibrated `2000 -> 4000 ms` in the same commit set, preserving the
+> same `4x` margin over `LORA_TX_PERIOD_MS` (see "UKS-side TEL Timeout
+> Margin" below — the invariant `TEL_LINK_TIMEOUT_MS >= 3 x
+> LORA_TX_PERIOD_MS` is drift-guarded by
+> `test_uks_tel_link_timeout_has_enough_margin_over_tx_period`).
+> `OFFLINE_SAMPLE_PERIOD_MS` and `REPLAY_BURST_PER_TICK` are **not**
+> changed by this revision — at 1 Hz TX, the link-UP drain rate (1
+> record/s) now exactly equals the offline fill rate (1 record/s), so a
+> flapping link can no longer *net* drain the buffer; the ring instead
+> slides forward and overwrites its oldest records (see
+> `lib/OfflineBuffer/OfflineBuffer.h`). This tradeoff was accepted by the
+> team, not treated as a defect to fix here.
+>
+> **G10-b finding — ACCEPTED (2026-07-20 team decision), known constraint
+> until the binary-frame transition:** at 2.4 kbps, one worst-case
+> `LORA_TEL_FRAME_MAX_BYTES=120 B` frame takes `~500 ms` airtime; the
+> busiest tick (live + 1 replay back-to-back) is therefore `~1000 ms` —
+> **exactly the full `LORA_TX_PERIOD_MS` tick against the theoretical
+> 120 B ceiling, i.e. zero margin on paper.** Unlike the `G10`
+> `SystemConfig.h` `static_assert` (which only bounds the local ESP32<->E22
+> UART line at 9600 baud and explicitly excludes air rate from its scope),
+> this air-time budget has no compile-time enforcement — there is no
+> air-rate constant in `SystemConfig.h` to assert against, so the
+> derivation is documented as a comment (`SystemConfig.h`, "G10-b") rather
+> than as a `static_assert`. Forcing it into a `static_assert` with any real
+> safety margin would fail to compile at the current
+> `REPLAY_BURST_PER_TICK=1` / `LORA_TX_PERIOD_MS=1000` values, so it was
+> **not** done and the formula was **not** loosened to force a pass.
+>
+> **Why accepted rather than mitigated now:** the `120 B` figure is a
+> theoretical ceiling (`LORA_TEL_FRAME_MAX_BYTES`, see the "worst-case digit
+> width" comment in `SystemConfig.h`), not the typical case — a realistic
+> `TEL` frame is closer to `~65 bytes` (see "Current AKS Telemetry Payload"
+> above), giving a live+replay burst of `~540 ms` inside the `1000 ms` tick,
+> i.e. `~46%` margin in the common case, not zero. On top of that, two
+> independent layers of slack absorb an occasional saturated tick even when
+> the ceiling is approached: (1) AUX back-pressure — a busy tick's next
+> attempt is simply deferred, not lost (see "Can a TEL frame actually be
+> skipped?" below); (2) UKS's `TEL_LINK_TIMEOUT_MS=4000` tolerates 3
+> consecutive fully-skipped ticks (see the worst-case gap table below)
+> before a false `LINK,DOWN`. Between these, an occasional single tick at
+> the theoretical ceiling is not expected to cause field-visible link
+> flapping. **`REPLAY_BURST_PER_TICK` and `LORA_TEL_FRAME_MAX_BYTES` are
+> deliberately left unchanged.** The durable fix is the planned binary-frame
+> transition (see "If Link Margin Is Poor" below), which shrinks the frame
+> size enough to reopen real margin at the ceiling case too; this constraint
+> is expected to close then, not before. Field validation of this
+> assumption (2+ consecutive skipped ticks, replay-drain flapping) remains
+> open — see "Recommended Field Checks" below.
+
 ## Current AKS Telemetry Payload
 
 Current uplink format (AKS→UKS, v2):
@@ -41,7 +101,7 @@ Current uplink format (AKS→UKS, v2):
 - ASCII CSV line
 - Prefix: `TEL,<version>,<sequence>,...` (19 comma-separated fields total, `TEL` tag included)
 - Terminator: `\r\n`
-- Rate: `2 Hz` (`LORA_TX_PERIOD_MS = 500`)
+- Rate: `1 Hz` (`LORA_TX_PERIOD_MS = 1000`, reverted from `2 Hz` on 2026-07-20)
 
 Representative packet:
 
@@ -52,21 +112,21 @@ TEL,2,0,1500,-250,5,1,0,37734,37422,32,31,2,780,-181610,6283,1,12345,1413\r\n
 Typical payload size is approximately `50-80 bytes` depending on numeric field widths.
 A conservative planning budget of `90 bytes` per packet gives:
 
-- `90 bytes * 2 Hz = 180 bytes/s`
-- `180 bytes/s * 10 bits/byte ~= 1800 bit/s` on the UART side including start/stop overhead
+- `90 bytes * 1 Hz = 90 bytes/s`
+- `90 bytes/s * 10 bits/byte ~= 900 bit/s` on the UART side including start/stop overhead
 
-On the air side, at the `4.8 kbps` E22 air data rate (`REG0 = 0x63`, bit[2:0] = `011`):
+On the air side, at the `2.4 kbps` E22 air data rate (`REG0 = 0x62`, bit[2:0] = `010`, reverted from `4.8 kbps` on 2026-07-20):
 
-- `90 bytes * 10 bits/byte / 4800 bit/s ~= 190 ms` airtime per packet
-- Live-only occupancy: `190 ms / 500 ms tick ~= 38%`
-- During offline-buffer drain (live + 1 replay frame back-to-back): `~380 ms / 500 ms tick ~= 76%` peak occupancy
+- `90 bytes * 10 bits/byte / 2400 bit/s ~= 380 ms` airtime per packet
+- Live-only occupancy: `380 ms / 1000 ms tick ~= 38%`
+- During offline-buffer drain (live + 1 replay frame back-to-back): `~760 ms / 1000 ms tick ~= 76%` peak occupancy
 
 ## Interpretation
 
 Important distinction:
 
 - The ESP32 <-> E22-400T30D-V2 UART link is configured for `9600 baud`.
-- The radio air data rate of the E22 module (currently `4.8 kbps`, `REG0 = 0x63` bit[2:0] = `011`, see `E22Regs.h`) is lower than the UART baud.
+- The radio air data rate of the E22 module (currently `2.4 kbps`, `REG0 = 0x62` bit[2:0] = `010`, see `E22Regs.h`) is lower than the UART baud.
 - Therefore, final field testing must confirm that the selected E22 radio configuration can drain the UART input fast enough at the chosen packet rate.
 
 ## Current Reliability Policy
@@ -96,15 +156,139 @@ Implemented now:
   dereferencing, so other tasks querying link state during the (re)init
   window get a safe default (`false`, i.e. "not down") rather than crashing.
 
+## Pre-roll Buffer — Detection-Lag Gap Fix (2026-07-20, R2)
+
+**Field problem:** when the UKS↔AKS link drops and reconnects in the field,
+AKS's offline-buffer replay does not fully reach the monitoring station —
+TUFAN-Monitor's graph draws a straight line across the outage instead of
+showing the recovered data. Root cause, found by re-reading the actual
+`vTask_LoRa_UKS` task body and its native tests end to end (not assumed):
+
+- **Integration check (negative result — no bug here):** `UplinkScheduler`
+  *is* fully wired into `vTask_LoRa_UKS` (`src/main.cpp`, the "M1 refactor" —
+  no leftover inline link-FSM/sampling code exists). `offlineSample()` /
+  `onTxTickLinkUp()` reach real UART TX through `LoRa_txSend` with no broken
+  links in the chain, and `updateLink()`'s heartbeat clock is fed exclusively
+  by `onRxByte()` classifying real UART RX bytes against `UKS_HEARTBEAT_BYTE`
+  (`0xB0`). This was verified by reading the code, not assumed from prior
+  notes or "native tests are green" — "tested" code can still have a
+  structural gap even when every wire is connected.
+- **The actual gap — detection lag:** `updateLink()` only flips to `DOWN`
+  `LINK_TIMEOUT_MS` (9 s) *after* the last heartbeat. Until then, the task
+  believes the link is still UP and keeps attempting **live** TX every tick —
+  but if the link is actually physically down, those attempts are lost on
+  air. `offlineSample()` only runs once `isLinkDown()==true`, so **the first
+  ~9 s of every real outage was never recorded anywhere** — not buffered, not
+  replayed, and therefore never reaches Monitor. This is exactly reproduced
+  by the existing native test `test_outage_offline_sampling_then_replay_drain`
+  (Phase B only starts sampling at `now = 1000 + LINK_TIMEOUT_MS + 1`) —
+  native tests were "green" because nothing was asserting coverage of that
+  first 9 s window; they were correctly testing what *does* get buffered,
+  just not testing for the hole before it.
+
+**Fix — `lib/OfflineBuffer/PrerollBuffer.h` (`PrerollBuffer` class):** a
+second, small circular buffer that samples continuously at the same 1 Hz
+cadence as `OfflineBuffer`, **independent of link state** — it runs every TX
+tick whether the link is believed UP or DOWN. Capacity is derived at compile
+time, `PREROLL_CAPACITY = LINK_TIMEOUT_MS/1000 + 2` (currently `11`), so it
+always holds at least the full detection-lag window plus margin. On the
+`DOWN` transition (`UplinkScheduler::updateLink`), the pre-roll's contents
+are spliced onto the front of `OfflineBuffer` in chronological (FIFO) order,
+then the pre-roll buffer is cleared — this backfills the detection-lag window
+before normal offline sampling continues. The splice also seeds
+`offlineSample()`'s own throttle clock (`m_lastOfflineSampleMs = nowMs` of
+the transition) so the very next tick's offline sample is correctly throttled
+and never duplicates the last spliced timestamp.
+
+**Coverage proof (native tests, `test_native_preroll_buffer` +
+`test_native_uplink_scheduler`):** `test_short_outage_near_detection_threshold_covered_by_preroll`
+walks a full tick-by-tick timeline matching the real task's execution order
+and proves the gap between any two consecutive buffered records — including
+across the splice boundary — never exceeds `2 × LORA_TX_PERIOD_MS` (2 s),
+well inside the 9.2.h 5-second rule, even when the *official* DOWN window is
+as short as a single tick. `test_preroll_splice_overflow_drops_oldest_keeps_order`
+covers the case where `OfflineBuffer` is already near-full (e.g. from a prior
+un-drained flapping outage) when the splice happens.
+
+**Known, intentional limitation (not fixed by pre-roll, reported not
+silently accepted):** if the RF outage is genuinely shorter than
+`LINK_TIMEOUT_MS` (9 s), the heartbeat gap never crosses the timeout —
+`becameDown` never fires, the splice never runs, and the "live" TX attempts
+lost during that sub-9s window are unrecoverable. This is a structural
+consequence of a one-way, ACK-less heartbeat design (9.2.a) and is out of
+this fix's scope (`LINK_TIMEOUT_MS` is a frozen calibration constant here);
+`test_outage_shorter_than_link_timeout_is_never_detected_or_recovered` (e2e)
+and its native-side reasoning document this explicitly rather than silently
+overclaiming full coverage. Closing it would require either lowering
+`LINK_TIMEOUT_MS` (reopens the flapping risk the 2026-07-07 fix addressed) or
+adding an ACK/link-quality mechanism — both out of scope here.
+
+**Diagnostic instrumentation (`src/main.cpp`, permanent, lightweight):** new
+`OFFLINE`/`REPLAY`-tagged log lines make the bench-visible flow: `OFFLINE:
+kayit basladi (ts=..., preroll ile N onceki kayit eklendi)` on the DOWN
+transition (reporting the splice count directly), `OFFLINE: N kayit (son
+ts=...)` every 10th offline sample, `REPLAY: N kayit bekliyor [ilk..son]` on
+UP, `REPLAY: TX ts=...` per replay transmission, and `REPLAY: drenaj
+tamamlandi` when the buffer empties.
+
+**TUFAN-Monitor side:** the graph previously plotted points by *arrival*
+time (wall-clock receipt), not by the packet's own `ts_ms` — so replayed
+(backdated) points always landed at "now" on the x-axis instead of their true
+historical position, and the graph could never visually "fill in" a
+straight-line gap. Fixed in `monitor.py`: points are now inserted sorted by
+the packet's own `ts_ms` (`insert_sorted_point`), and the line is broken
+(`build_line_with_gaps`) wherever a >5 s gap has not yet been filled — as
+replay points arrive and get inserted into their correct historical slot, the
+break shrinks/disappears. The CSV log file continues to be written in
+**arrival order** (not re-sorted) — the spec (9.2.e/9.2.h) requires the
+outage-interval timestamps to be *present* in the file, not written in a
+particular order, and the timestamp column itself carries the true ordering
+for later analysis; this decision is recorded as a comment at the write site
+in `monitor.py`. `csv_logger.py`'s stdlib-only / no-`config`-import
+constraint is untouched — all changes are in `monitor.py`.
+
+### 9.2.e / 9.2.h / 9.4.b.vi Compliance Table (post-R2)
+
+| Requirement | Before R2 | After R2 |
+|---|---|---|
+| 9.2.e — outage telemetry is recorded and later delivered | First `LINK_TIMEOUT_MS` (~9 s) of every outage silently lost (never buffered) | Pre-roll backfills the detection-lag window on every detected (`≥LINK_TIMEOUT_MS`) outage; native-proven max internal gap `≤2×LORA_TX_PERIOD_MS` |
+| 9.2.h — no unfilled gap `>5 s` in the recorded timeline | Violated at the *start* of every outage (up to ~9 s gap before first offline sample) | Satisfied at outage start too, not just mid/end-outage (see coverage proof above) |
+| 9.4.b.vi — boot-time link-loss also covered | Boot-grace (`BOOT_LINK_GRACE_MS`) already covered *no-heartbeat-since-boot*, but pre-roll has little/no history to splice right after boot (nothing to backfill) | Unchanged/expected — pre-roll only has data to offer once the vehicle has been running; boot-time behavior is bounded by `BOOT_LINK_GRACE_MS` as before |
+| Monitor graph visually reflects the above | Straight-line interpolation across every gap, replay points misplaced at arrival time | Sorted-by-`ts_ms` insertion + gap-break rendering; gap visually shrinks as replay arrives |
+| Sub-`LINK_TIMEOUT_MS` RF blips | Unrecoverable (undetected) | **Still unrecoverable** — documented structural limitation, not claimed as fixed |
+
+### Bench Procedure (R2 validation)
+
+1. **Long outage (≥30 s):** power up AKS+UKS, let the link settle (heartbeat
+   flowing), then physically disconnect the LoRa antenna (or power UKS off)
+   for ≥30 s. Watch the AKS serial monitor: expect `LINK,DOWN` (~9 s after
+   the physical cut) immediately followed by an `OFFLINE: kayit basladi
+   (ts=..., preroll ile N onceki kayit eklendi)` line with `N` close to
+   `PREROLL_CAPACITY` (11), then `OFFLINE: N kayit (...)` every ~10 s while
+   still down. Reconnect; expect `REPLAY: N kayit bekliyor [ilk..son]`
+   followed by one `REPLAY: TX ts=...` line per drained record and a final
+   `REPLAY: drenaj tamamlandi`. On TUFAN-Monitor, confirm the speed graph's
+   gap (which appeared broken during the outage) fills in as replay points
+   arrive, and that the resulting CSV file contains timestamps spanning the
+   *entire* outage interval (including the pre-9s window) with no `>5000 ms`
+   gap between sorted, unique `ts_ms` values.
+2. **Short outage (`<9 s`, e.g. ~5 s):** repeat with a brief disconnect.
+   Expect **no** `LINK,DOWN`/`OFFLINE`/`REPLAY` lines at all (heartbeat gap
+   never crosses `LINK_TIMEOUT_MS`) — this is the documented, accepted
+   limitation above, not a regression; confirm it matches expectation rather
+   than treating its absence as a bug.
+
 ## Replay-Mode Budget
 
-When the link reconnects (link UP), the offline buffer begins to drain while the live stream continues. To prevent buffer overrun at the 9600 baud UART limit (`~480 bytes per 500 ms tick`), the replay burst must be strictly limited.
+When the link reconnects (link UP), the offline buffer begins to drain while the live stream continues. To prevent buffer overrun at the 9600 baud UART limit (`~960 bytes per 1000 ms tick`, up from `~480 bytes per 500 ms tick` now that the tick is lengthened to 1000 ms), the replay burst must be strictly limited.
 
 - Live stream: `1 frame/tick` (`~90 bytes`)
 - Replay stream: `REPLAY_BURST_PER_TICK = 1` (`~90 bytes`)
 - Total TX load: `~180 bytes / tick`
 
-This keeps the TX load well under the `480 bytes / tick` budget (previously `~192 bytes / 200 ms tick` before the tick period was lengthened to 500 ms as part of the link-flapping fix — the budget only got roomier, so this does not reopen the issue described below). Previous configurations using a burst of 3 generated `~360 bytes / tick` at the old 200 ms tick, which caused the 256-byte TX buffer to fill, blocking the UART write. This blocking starved the LoRa RX heartbeat handler, causing phantom link timeouts (re-triggering a link DOWN state). With `REPLAY_BURST_PER_TICK = 1`, the task loop remains unblocked and RX processing (which is evaluated before TX) operates securely.
+This keeps the TX load well under the `960 bytes / tick` UART-hardware budget (previously `~192 bytes / 200 ms tick` before the tick period was first lengthened to 500 ms as part of the link-flapping fix, then to 1000 ms on 2026-07-20 — the UART-hardware budget only got roomier each time, so this does not reopen the issue described below). Previous configurations using a burst of 3 generated `~360 bytes / tick` at the old 200 ms tick, which caused the 256-byte TX buffer to fill, blocking the UART write. This blocking starved the LoRa RX heartbeat handler, causing phantom link timeouts (re-triggering a link DOWN state). With `REPLAY_BURST_PER_TICK = 1`, the task loop remains unblocked and RX processing (which is evaluated before TX) operates securely.
+
+**Important:** the `~960 bytes / tick` figure above is the **local UART line** budget (ESP32<->E22, 9600 baud) — it does not account for the slower **air-rate** budget. At the current `2.4 kbps` air rate, the same `1 live + 1 replay` load takes `~1000 ms` of airtime, i.e. the entire tick with zero spare margin (see the "Open finding" note in the "Air rate revision (2026-07-20)" block above and `SystemConfig.h` "G10-b"). The two budgets are independent bottlenecks; this one (UART hardware) has roomy margin, the other (air rate) does not.
 - All replayed and live packets pass through `TelemetrySanitize::sanitizeForUplink` immediately before `sendStatus` (S4) so UKS's accept ranges are never violated.
 - No AKS retransmission / no AKS-level ACK handling.
 - AUX gate checked before each TX attempt; if busy, TX for that tick is skipped (packet stays queued, not dropped).
@@ -123,12 +307,14 @@ half-duplex channel congestion that previously delayed the UKS→AKS heartbeat
 (see "Link flapping fix" note above) also delay AKS→UKS `TEL` frames enough
 to trip UKS's own link-down watchdog?
 
-**UKS-side constant:** `TEL_LINK_TIMEOUT_MS = 2000` (`UKS-Telemetry/Core/Inc/telemetry.h`).
-If no valid `TEL` frame arrives for more than this duration, UKS declares
-`LINK,DOWN` (symmetric to AKS's heartbeat-based detection, see `UYUM_NOTU.md`
-bölüm 2). Nominal `TEL` cadence is `LORA_TX_PERIOD_MS = 500` ms, so the
-nominal margin is `2000 / 500 = 4x` — the header comment there calls this out
-explicitly ("4x marj birakiyor").
+**UKS-side constant:** `TEL_LINK_TIMEOUT_MS = 4000` (`UKS-Telemetry/Core/Inc/telemetry.h`,
+recalibrated `2000 -> 4000` on 2026-07-20 alongside the `LORA_TX_PERIOD_MS`
+`500 -> 1000` reversion, same commit set). If no valid `TEL` frame arrives
+for more than this duration, UKS declares `LINK,DOWN` (symmetric to AKS's
+heartbeat-based detection, see `UYUM_NOTU.md` bölüm 2). Nominal `TEL`
+cadence is `LORA_TX_PERIOD_MS = 1000` ms, so the nominal margin is
+`4000 / 1000 = 4x` — unchanged from before the revision (the header
+comment there calls this out explicitly, "4x marj").
 
 ### Can a TEL frame actually be skipped?
 
@@ -136,7 +322,7 @@ Per-tick TX (`UplinkScheduler::onTxTickLinkUp`, `src/main.cpp::LoRa_txSend`)
 attempts up to `REPLAY_BURST_PER_TICK=1` replay frame **then** 1 live frame,
 each gated by `isAuxReady()`. If AUX is busy, `LoRa_txSend` returns `false`
 and that attempt is skipped for the tick — **not queued for later within the
-same tick**, it simply waits for the next 500 ms tick. Since the replay and
+same tick**, it simply waits for the next 1000 ms tick. Since the replay and
 live checks happen back-to-back (microseconds apart), an AUX-busy tick
 effectively skips **both** attempts for that tick, not just one. A skipped
 live packet is not buffered as offline data since the link is still UP; the
@@ -148,33 +334,51 @@ of blocking when the ring lacks room for a full frame.)
 
 ### Worst-case gap vs. TEL_LINK_TIMEOUT_MS
 
-| Consecutive fully-skipped ticks | Gap seen at UKS | vs. 2000 ms | Result |
+| Consecutive fully-skipped ticks | Gap seen at UKS | vs. 4000 ms | Result |
 |---|---|---|---|
-| 0 | 500 ms | — | LINK stays UP |
-| 1 | 1000 ms | < 2000 | LINK stays UP |
-| 2 | 1500 ms | < 2000 | LINK stays UP |
-| 3 | 2000 ms | == 2000 (strict `>` check in `main.c`) | LINK stays UP (boundary, not triggered) |
-| 4 | 2500 ms | > 2000 | **False `LINK,DOWN`** |
+| 0 | 1000 ms | — | LINK stays UP |
+| 1 | 2000 ms | < 4000 | LINK stays UP |
+| 2 | 3000 ms | < 4000 | LINK stays UP |
+| 3 | 4000 ms | == 4000 (strict `>` check in `main.c`) | LINK stays UP (boundary, not triggered) |
+| 4 | 5000 ms | > 4000 | **False `LINK,DOWN`** |
 
-So the current configuration tolerates **3 consecutive fully-skipped TX
-ticks** (1.5 s of AUX-busy or deferred TX) before UKS would falsely declare
-the link down; a 4th consecutive miss is required to trip it.
+So the recalibrated configuration still tolerates **3 consecutive
+fully-skipped TX ticks** before UKS would falsely declare the link down — the
+same tolerance as before the revision, since the `4x` ratio was preserved.
+In absolute time this is now 3 s of AUX-busy/deferred TX (was 1.5 s at
+`500 ms` ticks); a 4th consecutive miss is still required to trip it.
 
 ### Why 3-in-a-row is considered low-probability today (not field-proven)
 
-- **AUX-busy duration is air-time-bounded, not tick-period-bounded.** At the
-  configured `4.8 kbps` air rate, one `LORA_TEL_FRAME_MAX_BYTES=120` frame
-  takes ≈200 ms on air; the busiest tick (live+replay during a replay drain)
-  sends at most 2 frames ≈400 ms. That leaves ≈100 ms of slack inside every
-  500 ms tick in the busiest realistic case — tighter than under the retired
-  `9.6 kbps` setting (which left ≈300 ms), but a single tick's own AUX
-  activity should still clear before the *next* tick fires.
+- **AUX-busy duration is air-time-bounded, not tick-period-bounded — and
+  this assumption is tighter after the 2026-07-20 air-rate reversion, at
+  the theoretical ceiling.** At the configured `2.4 kbps` air rate, one
+  `LORA_TEL_FRAME_MAX_BYTES=120` frame takes ≈500 ms on air (was ≈200 ms at
+  the retired `4.8 kbps`); against that ceiling, the busiest tick
+  (live+replay during a replay drain) sends at most 2 frames ≈1000 ms —
+  the entire `1000 ms` tick, zero slack on paper. **Team-accepted
+  (2026-07-20, G10-b) rather than mitigated:** `120 B` is a worst-case
+  digit-width ceiling, not the typical packet — a realistic `~65 B` TEL
+  frame gives a live+replay burst of `~540 ms`, i.e. `~46%` slack in the
+  common case (see "Air rate revision (2026-07-20)" note above). Even at
+  the ceiling case, two layers still absorb an occasional saturated tick:
+  (1) AUX back-pressure defers rather than drops the next attempt, and (2)
+  `TEL_LINK_TIMEOUT_MS=4000` tolerates 3 consecutive fully-skipped ticks
+  (table below) before a false `LINK,DOWN`. This does not change the
+  worst-case-gap table below (that table is about the `TEL` frame arrival
+  gap at UKS, bounded by `LORA_TX_PERIOD_MS` regardless of in-tick airtime
+  headroom); it is a known, accepted constraint until the planned
+  binary-frame transition shrinks the ceiling case enough to reopen real
+  margin there too (see `SystemConfig.h` "G10-b" and "If Link Margin Is
+  Poor" below). Field validation (2+ consecutive skipped ticks, replay-
+  drain flapping) remains open — see "Recommended Field Checks".
 - **Replay mode does not change the TX cadence.** It adds a second frame to
-  the *same* 500 ms tick (still one grid, see "Replay-Mode Budget" above),
-  it does not insert extra ticks. The combined peak throughput
-  (`480 B/s ≤ 768 B/s` budget, `SystemConfig.h` `static_assert`) is
-  well inside the UART's capacity, so replay draining is not, by itself, a
-  mechanism for stacking multiple consecutive skips.
+  the *same* 1000 ms tick (still one grid, see "Replay-Mode Budget" above),
+  it does not insert extra ticks. The combined peak throughput at the
+  **UART-hardware** level (`240 B/s ≤ 768 B/s` budget, `SystemConfig.h`
+  `static_assert`) is well inside the UART's capacity — but see the bullet
+  above: the **air-rate** level budget is a separate, much tighter
+  constraint that this `static_assert` does not cover.
 - **The original heartbeat-flapping mechanism doesn't have a direct mirror
   here.** That issue was UKS's *own* module being squeezed for airtime by
   AKS's then-continuous 5 Hz TX. AKS's TEL cadence, by contrast, is gated by
@@ -188,13 +392,18 @@ the link down; a 4th consecutive miss is required to trip it.
 measurement. "Recommended Field Checks" item 3 below (AUX-busy frequency)
 should specifically also track whether **2+ consecutive** TX ticks are ever
 skipped in practice; if UKS logs a `LINK,DOWN` while AKS's own tick log shows
-no >2000 ms gap in its TX attempts, that indicates genuine RF/channel loss
+no >4000 ms gap in its TX attempts, that indicates genuine RF/channel loss
 rather than a false positive from local scheduling — worth distinguishing
 before assuming the margin is real in the field.
 
-**Constants intentionally left unchanged** (field-calibrated): `LORA_TX_PERIOD_MS=500`,
-`TEL_LINK_TIMEOUT_MS=2000`, `LINK_TIMEOUT_MS=9000`. This section only adds
-analysis + a drift-guard invariant (`tools/e2e/test_contract_drift.py`:
+**Constants changed by the 2026-07-20 revision:** `LORA_TX_PERIOD_MS`
+(`500 -> 1000`) and `TEL_LINK_TIMEOUT_MS` (`2000 -> 4000`), recalibrated
+together in the same commit set to preserve the `4x` margin ratio.
+**Constant intentionally left unchanged:** `LINK_TIMEOUT_MS=9000` — covered
+by the same G10-b team decision (2026-07-20, option a): accepted, `9000 ms`
+kept as-is; reopens if field observation (2+ consecutive skipped ticks)
+shows otherwise (see `SystemConfig.h` next to its definition). This section's analysis is
+protected by a drift-guard invariant (`tools/e2e/test_contract_drift.py`:
 `TEL_LINK_TIMEOUT_MS ≥ 3 × LORA_TX_PERIOD_MS`) so that if someone later
 raises `LORA_TX_PERIOD_MS` unilaterally without revisiting this margin, the
 e2e suite fails instead of silently eroding the 3-tick tolerance computed
@@ -204,16 +413,17 @@ above.
 
 Before locking Phase 3 complete, validate:
 
-1. ~~Actual E22 air data rate and module configuration in hardware (bench dump vs `E22Regs.h`)~~ — **DONE 2026-07-15**: bench dump matched `E22Regs.h`/`e22_regs.h` targets exactly, see `TEKNIK_KONTROL_PROVASI.md` §4 / `BENCH_E22_TEYIT.md` "Sonuç Kaydı" (P10).
-2. Whether `2 Hz` remains loss-free in practice.
-3. Whether AUX busy events appear frequently under worst-case telemetry load.
+1. ~~Actual E22 air data rate and module configuration in hardware (bench dump vs `E22Regs.h`)~~ — **DONE 2026-07-15**: bench dump matched `E22Regs.h`/`e22_regs.h` targets exactly, see `TEKNIK_KONTROL_PROVASI.md` §4 / `BENCH_E22_TEYIT.md` "Sonuç Kaydı" (P10). **NEEDS RE-VALIDATION** after the 2026-07-20 `REG0` change (`0x63 -> 0x62`) — this bench check predates the revision and has not been re-run against the new target.
+2. Whether `1 Hz` (2026-07-20 reversion, was `2 Hz`) remains loss-free in practice.
+3. Whether AUX busy events appear frequently under worst-case telemetry load — **now higher priority** given the "Open finding" above (zero in-tick airtime margin at 2.4 kbps during replay drain); watch specifically for **2+ consecutive** skipped TX ticks, not just isolated single skips.
 4. Whether UKS parser cleanly handles skipped sequence numbers.
+5. Replay drain sırasında (%76+ doluluk, ~10 dk) LINK DOWN→UP flapping'in geri gelmediğini teyit et (2026-07-07 vakasının tekrarı riski) — bkz. `lib/OfflineBuffer/OfflineBuffer.h` "DAVRANIŞ NOTU (2026-07-20)": 1 Hz'de drain hızı = doluş hızı olduğundan, flapping bir linkte buffer net boşalamayabilir; bu senaryoda gerçek link durumunun (UP/DOWN log'ları) beklenen davranışla eşleştiğini saha testinde doğrula.
 
 ## If Link Margin Is Poor
 
 Preferred mitigation order:
 
 1. Reduce telemetry field count.
-2. Reduce transmit rate below `2 Hz`.
+2. Reduce transmit rate below `1 Hz` (current rate as of 2026-07-20).
 3. Move from verbose ASCII to compact framed binary payloads.
 4. Add selective ACK / retry only if field testing proves it necessary.

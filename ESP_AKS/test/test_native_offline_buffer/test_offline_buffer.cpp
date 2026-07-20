@@ -241,8 +241,10 @@ void test_offline_should_sample_past_period_is_true(void) {
 }
 
 // ---------------------------------------------------------------------------
-// 1 Hz örnekleme simülasyonu (S2): 500 ms tik'lerle (LORA_TX_PERIOD_MS, link
-// flapping düzeltmesi sonrası 2 Hz) 10 sn kesinti simüle edilir (20 tik).
+// 1 Hz örnekleme simülasyonu (S2): 500 ms tik'lerle (illüstratif; gerçek
+// LORA_TX_PERIOD_MS 2026-07-20 itibarıyla 1000 ms/1 Hz — bu test offline
+// örnekleme kapısını izole test ettiğinden gerçek TX periyoduna bağlı
+// DEĞİLDİR) 10 sn kesinti simüle edilir (20 tik).
 // offline_should_sample 1000 ms periyotla push'u kapılar; beklenen ~10 paket
 // (±1) — 9.2.h'nin ≤5 sn kuralına 5x marjla uyar.
 // ---------------------------------------------------------------------------
@@ -270,8 +272,10 @@ void test_1hz_sampling_over_10s_outage_yields_about_10_packets(void) {
 }
 
 // ---------------------------------------------------------------------------
-// 60 sn kesinti simülasyonu (kabul kriteri): 120 tik × 500 ms
-// (LORA_TX_PERIOD_MS, 2 Hz) = 60000 ms. 1 Hz örnekleme + kapasite 600 ile:
+// 60 sn kesinti simülasyonu (kabul kriteri): 120 tik × 500 ms (illüstratif
+// tik değeri; gerçek LORA_TX_PERIOD_MS 2026-07-20 itibarıyla 1000 ms/1 Hz —
+// bu test offline örnekleme kapısını izole test eder) = 60000 ms. 1 Hz
+// örnekleme + kapasite 600 ile:
 // buffer <= 600 paket, en eski paketin ts'i kesinti başlangıcına (0) ait
 // olmalı (kapasite hiç aşılmıyor: 60 paket <= 600).
 // ---------------------------------------------------------------------------
@@ -303,11 +307,11 @@ void test_60s_outage_simulation_stays_within_capacity(void) {
 // ---------------------------------------------------------------------------
 // Replay throttle simülasyonu (S1): 60 buffered paket, her "tik"te en fazla
 // REPLAY_BURST_PER_TICK(=1) paket + 1 canlı gönderilir. Buffer'ın
-// boşalması için gereken tik sayısı 60 olmalı; 60 tik ×
-// LORA_TX_PERIOD_MS(500ms, link flapping düzeltmesi sonrası 2 Hz) = 30000 ms.
-// Canlı akış (ayrı sayaç) hiç kesilmeden her tikte 1 artmalı. Per-tick byte
-// bütçesi (9600 baud'da 500 ms'de ~480 byte) aşılmadığı teyit edilir (1
-// canlı + 1 replay = 180 byte, bkz. LoRa_Link_Analysis.md).
+// boşalması için gereken tik sayısı 60 olmalı; aşağıdaki "ticks * 500"
+// zaman bütçesi illüstratif bir üst-sınır kontrolüdür, gerçek
+// LORA_TX_PERIOD_MS'e bağlı DEĞİLDİR (2026-07-20 itibarıyla gerçek değer
+// 1000 ms/1 Hz — 60 tik × 1000 ms = 60000 ms gerçek süre). Canlı akış (ayrı
+// sayaç) hiç kesilmeden her tikte 1 artmalı.
 // ---------------------------------------------------------------------------
 void test_replay_throttle_drains_60_packets_within_expected_ticks(void) {
     ob_reset();

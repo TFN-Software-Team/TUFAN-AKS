@@ -9,6 +9,10 @@ extern void test_boot_grace_link_down_when_no_heartbeat(void);
 extern void test_tx_tick_aux_busy_keeps_buffer(void);
 extern void test_tx_tick_one_replay_then_live(void);
 extern void test_outage_offline_sampling_then_replay_drain(void);
+extern void test_preroll_splices_into_offline_buffer_on_down_with_order(void);
+extern void test_preroll_splice_overflow_drops_oldest_keeps_order(void);
+extern void test_short_outage_near_detection_threshold_covered_by_preroll(void);
+extern void test_preroll_splice_no_ts_duplicate_at_boundary(void);
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -21,5 +25,9 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_tx_tick_aux_busy_keeps_buffer);
     RUN_TEST(test_tx_tick_one_replay_then_live);
     RUN_TEST(test_outage_offline_sampling_then_replay_drain);
+    RUN_TEST(test_preroll_splices_into_offline_buffer_on_down_with_order);
+    RUN_TEST(test_preroll_splice_overflow_drops_oldest_keeps_order);
+    RUN_TEST(test_short_outage_near_detection_threshold_covered_by_preroll);
+    RUN_TEST(test_preroll_splice_no_ts_duplicate_at_boundary);
     return UNITY_END();
 }
