@@ -5,6 +5,7 @@
 #include "LinkMonitor.h"       // link_check_timeout_with_boot_grace (saf)
 #include "LoraRxHandler.h"     // lora_classify_rx_byte / lora_note_unknown_byte (saf)
 #include "OfflineBuffer.h"     // ob_push/ob_peek/ob_drop_front/ob_count + offline_should_sample
+#include "PrerollBuffer.h"     // R2: tespit-gecikmesi (LINK_TIMEOUT_MS) penceresini kapatan pre-roll
 #include "VehicleData.h"       // TelemetryData (M3)
 
 // UplinkScheduler — SAF, tick-driven, donanımsız uplink beyni (M1 refactor).
@@ -43,6 +44,9 @@ class UplinkScheduler {
         int bufferedCount = 0;    // UP anında ob_count()
         uint32_t firstTs = 0;     // kesinti ilk örnek ts_ms
         uint32_t lastTs = 0;      // kesinti son örnek ts_ms
+        // R2: bu DOWN geçişinde pre-roll'dan OfflineBuffer'a aktarılan kayıt
+        // sayısı (tespit-gecikmesi penceresi geri doldurma — bkz. PrerollBuffer.h).
+        int prerollSplicedCount = 0;
     };
 
     UplinkScheduler(uint32_t linkTimeoutMs, uint32_t bootGraceMs,
@@ -63,6 +67,12 @@ class UplinkScheduler {
     // --- OFFLINE mod: canlı paketi 1 Hz'e seyreltilmiş örnekle (buffer'a yaz) ---
     // Döner: bu tick tampona bir örnek yazıldı mı.
     bool offlineSample(uint64_t nowMs, const TelemetryData& live);
+
+    // --- Pre-roll: link durumundan BAĞIMSIZ, her tick koşulsuz çağrılır ---
+    // (aynı 1 Hz periyodu offlineSample ile paylaşır — m_offlineSamplePeriodMs).
+    // DOWN geçişinde updateLink() bu tamponu otomatik olarak OfflineBuffer'ın
+    // önüne aktarır (bkz. LinkTransition::prerollSplicedCount).
+    void prerollSample(uint64_t nowMs, const TelemetryData& live);
 
     // --- NORMAL mod TX tick: <=burst replay (başarılı gönderimde düşür) + 1 canlı ---
     // Döner: bu tick fiilen gönderilen paket sayısı.
@@ -96,4 +106,8 @@ class UplinkScheduler {
     uint32_t m_offlineFirstTs = 0u;
     uint32_t m_offlineLastTs = 0u;
     bool m_offlineHasSamples = false;
+
+    // R2: link durumundan bağımsız sürekli çalışan pre-roll tamponu (tespit
+    // gecikmesi penceresi geri doldurma — bkz. PrerollBuffer.h).
+    PrerollBuffer m_preroll;
 };

@@ -36,3 +36,41 @@ class OfflineBufferSim:
 
     def is_empty(self) -> bool:
         return not self._items
+
+
+class PrerollBufferSim:
+    """PrerollBuffer.h'nin saf-Python eslenigi (R2).
+
+    Link durumundan BAGIMSIZ, surekli sample() cagrilan (period_ms throttle
+    ile) dairesel tampon; capacity dolunca en eski dusurulur. pop_oldest ile
+    FIFO tuketilir (splice hazirligi) — OfflineBufferSim'e ekleme YAPMAZ,
+    cagiran (run_outage_simulation) UplinkScheduler::updateLink'teki splice
+    sirasini birebir taklit eder.
+    """
+
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self._items: deque = deque()
+        self._has_sample = False
+        self._last_sample_ms = 0
+
+    def sample(self, now_ms: int, item, period_ms: int) -> bool:
+        if self._has_sample and (now_ms - self._last_sample_ms) < period_ms:
+            return False
+        self._last_sample_ms = now_ms
+        self._has_sample = True
+        if len(self._items) == self.capacity:
+            self._items.popleft()
+        self._items.append(item)
+        return True
+
+    def pop_oldest(self):
+        return self._items.popleft() if self._items else None
+
+    def count(self) -> int:
+        return len(self._items)
+
+    def reset(self) -> None:
+        self._items.clear()
+        self._has_sample = False
+        self._last_sample_ms = 0

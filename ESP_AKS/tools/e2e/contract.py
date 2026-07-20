@@ -172,6 +172,14 @@ REPLAY_BURST_PER_TICK = 1        # link-up sonrasi tik basina en fazla replay
 BOOT_LINK_GRACE_MS = 5000        # boot'tan itibaren ilk heartbeat icin tanina sure
 LINK_TIMEOUT_MS = 9000           # yarim-dubleks kanal tikanikligi nedeniyle ~5-6 sn'lik fiili heartbeat araligina marj (bkz. SystemConfig.h)
 
+# R2 — PrerollBuffer.h PREROLL_CAPACITY makrosunun Python eslenigi (tespit
+# gecikmesi penceresini kapatan, link durumundan bagimsiz surekli 1 Hz
+# dairesel tampon). Ayni formul: LINK_TIMEOUT_MS/1000 + 2 sn marj. LINK_TIMEOUT_MS
+# degisirse bu deger de otomatik senkron kalir (test_contract_drift.py
+# PrerollBuffer.h'nin de LINK_TIMEOUT_MS'ten TUREDIGINI, sabit literal
+# OLMADIGINI denetler).
+PREROLL_CAPACITY = LINK_TIMEOUT_MS // 1000 + 2
+
 # TERS YON: UKS'in TEL frame timeout'u (UKS Core/Inc/telemetry.h). AKS'in
 # LINK_TIMEOUT_MS'i (yukarida) UKS->AKS heartbeat icindir; bu ise AKS->UKS
 # TEL frame'leri icin UKS tarafinda simetrik bir bekci — bkz. Documents/

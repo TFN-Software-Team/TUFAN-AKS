@@ -42,6 +42,33 @@ UplinkScheduler::LinkTransition UplinkScheduler::updateLink(uint64_t nowMs,
         // Yeni kesinti başlıyor — örnekleme saatini ve ts aralığını sıfırla.
         m_lastOfflineSampleMs = 0u;
         m_offlineHasSamples = false;
+
+        // R2: pre-roll'u OfflineBuffer'ın ÖNÜNE aktar (kronolojik sıra —
+        // pre-roll zaten en eskiden en yeniye FIFO) — tespit gecikmesi
+        // (LINK_TIMEOUT_MS) penceresi böylece geri doldurulur. Aktarım
+        // sonrası pre-roll temizlenir (ts tekrarı yok — aynı pencere bir
+        // daha aktarılmaz, pre-roll sıfırdan birikmeye başlar).
+        TelemetryData prerollEntry;
+        bool sawPrerollSample = false;
+        while (m_preroll.popOldest(prerollEntry)) {
+            ob_push(prerollEntry);
+            if (!sawPrerollSample) {
+                m_offlineFirstTs = prerollEntry.TEL_timestampMs;
+                sawPrerollSample = true;
+            }
+            m_offlineLastTs = prerollEntry.TEL_timestampMs;
+            tr.prerollSplicedCount++;
+        }
+        m_preroll.reset();
+        if (sawPrerollSample) {
+            m_offlineHasSamples = true;
+            // Throttle saatini pre-roll'un son (spliced) örneğinin duvar-saati
+            // anına değil, BU geçişin nowMs'ine devam ettiriyoruz — offlineSample()
+            // ilk çağrıda hemen tekrar örnek almaz (period_ms geçmeden), böylece
+            // aynı canlı veri iki kez (spliced + ilk offlineSample) tamponlanmaz.
+            m_lastOfflineSampleMs = nowMs;
+        }
+
         tr.changed = true;
         tr.becameDown = true;
         tr.linkDown = true;
@@ -73,6 +100,10 @@ bool UplinkScheduler::offlineSample(uint64_t nowMs, const TelemetryData& live) {
     }
     m_offlineLastTs = live.TEL_timestampMs;
     return true;
+}
+
+void UplinkScheduler::prerollSample(uint64_t nowMs, const TelemetryData& live) {
+    m_preroll.sample(nowMs, live, m_offlineSamplePeriodMs);
 }
 
 int UplinkScheduler::onTxTickLinkUp(bool haveLive, const TelemetryData& live,

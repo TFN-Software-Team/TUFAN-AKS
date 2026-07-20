@@ -163,6 +163,40 @@ def test_aks_p6_offline_buffer_constants(aks_root):
     assert extract_define_int(ob_header, "OB_CAPACITY", source="AKS OfflineBuffer.h") == contract.OB_CAPACITY
 
 
+def test_aks_preroll_capacity_is_derived_from_link_timeout_not_hardcoded(aks_root):
+    """R2: PrerollBuffer.h PREROLL_CAPACITY, LINK_TIMEOUT_MS'ten derleme
+    zamaninda TUREMELI (sabit literal DEGIL) — aksi halde LINK_TIMEOUT_MS
+    ileride degisirse pre-roll penceresi (tespit gecikmesi kapsamasi) sessizce
+    yetersiz kalir. Formul degerini de (contract.PREROLL_CAPACITY ile) capraz
+    kontrol eder — extract_define_int burada KULLANILAMAZ cunku deger bir
+    ifade (int(raw, 0) formul icin patlar), o yuzden ham metin regex'iyle
+    dogrudan degerlendirilir."""
+    preroll_header = read(aks_root / "lib/OfflineBuffer/PrerollBuffer.h")
+    raw = extract_define_raw(preroll_header, "PREROLL_CAPACITY", source="AKS PrerollBuffer.h")
+
+    assert "LINK_TIMEOUT_MS" in raw, (
+        f"PREROLL_CAPACITY artik LINK_TIMEOUT_MS'ten turetilmiyor gorunuyor "
+        f"(ham deger: {raw!r}) — sabit bir literale donmus olabilir; bu, "
+        "LINK_TIMEOUT_MS degistiginde pre-roll penceresinin sessizce "
+        "bayatlamasina yol acar."
+    )
+
+    # Formul, mevcut LINK_TIMEOUT_MS ile contract.PREROLL_CAPACITY'yi
+    # URETMELI (ayni hesap: LINK_TIMEOUT_MS/1000 + 2).
+    m = re.search(r"LINK_TIMEOUT_MS\s*\)\s*/\s*1000U?\s*\)\s*\+\s*(\d+)U?", raw)
+    assert m, (
+        f"PREROLL_CAPACITY formulu beklenen '(LINK_TIMEOUT_MS)/1000 + N' "
+        f"seklinde ayristirilamadi (ham deger: {raw!r}) — formul degistiyse "
+        "bu regex'i de AYNI COMMIT'te guncelleyin."
+    )
+    margin = int(m.group(1))
+    computed = contract.LINK_TIMEOUT_MS // 1000 + margin
+    assert computed == contract.PREROLL_CAPACITY, (
+        f"PrerollBuffer.h formulunden hesaplanan kapasite ({computed}) "
+        f"contract.PREROLL_CAPACITY'den ({contract.PREROLL_CAPACITY}) sapmis."
+    )
+
+
 # ===========================================================================
 # 3.3 — E22 register sozlesmesi (UKS e22_regs.h <-> AKS E22Regs.h)
 # ===========================================================================
