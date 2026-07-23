@@ -13,6 +13,7 @@ extern void test_motor_valid_renders_as_one(void);
 extern void test_motor_timeout_renders_as_one(void);
 extern void test_bms_valid_renders_as_one(void);
 extern void test_full_format_with_distinct_values(void);
+extern void test_snprintf_truncation(void);
 extern void test_two_packets_have_separator(void);
 // v2 yeni alanlar
 extern void test_ts_ms_is_encoded(void);
@@ -44,6 +45,12 @@ extern void test_sanitize_current_normal_passthrough(void);
 extern void test_sanitize_for_uplink_passthrough_when_all_valid(void);
 extern void test_sanitize_for_uplink_corrects_invalid_system_state(void);
 extern void test_sanitize_for_uplink_corrects_soc_and_current_together(void);
+
+extern void test_sanitize_rpm_negative_becomes_zero(void);
+extern void test_sanitize_rpm_zero_passthrough(void);
+extern void test_sanitize_rpm_positive_passthrough(void);
+extern void test_sanitize_rpm_above_max_clamped(void);
+extern void test_rpmToSpeedKmhX10Impl_nan_protection(void);
 
 // TelemetrySanitize::sanitizeMotorVoltForTorqueField (torque alanı semantik
 // uyumsuzluk clamp'i — bkz. Documents/TORQUE_ALAN_KARAR_NOTU.md) testleri
@@ -90,6 +97,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_motor_timeout_renders_as_one);
     RUN_TEST(test_bms_valid_renders_as_one);
     RUN_TEST(test_full_format_with_distinct_values);
+    RUN_TEST(test_snprintf_truncation);
     RUN_TEST(test_two_packets_have_separator);
     RUN_TEST(test_ts_ms_is_encoded);
     RUN_TEST(test_spd_x10_is_encoded);
@@ -105,6 +113,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_impl_motor_rpm_false_applies_gear_ratio);
     RUN_TEST(test_impl_applies_clamp);
     RUN_TEST(test_impl_realistic_range_sweep_stays_within_bounds);
+    RUN_TEST(test_rpmToSpeedKmhX10Impl_nan_protection);
 
     RUN_TEST(test_sanitize_system_state_valid_passthrough);
     RUN_TEST(test_sanitize_system_state_zero_becomes_fault);
@@ -118,6 +127,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_sanitize_for_uplink_passthrough_when_all_valid);
     RUN_TEST(test_sanitize_for_uplink_corrects_invalid_system_state);
     RUN_TEST(test_sanitize_for_uplink_corrects_soc_and_current_together);
+
+    RUN_TEST(test_sanitize_rpm_negative_becomes_zero);
+    RUN_TEST(test_sanitize_rpm_zero_passthrough);
+    RUN_TEST(test_sanitize_rpm_positive_passthrough);
+    RUN_TEST(test_sanitize_rpm_above_max_clamped);
 
     RUN_TEST(test_sanitize_motor_volt_for_torque_field_within_range_passthrough);
     RUN_TEST(test_sanitize_motor_volt_for_torque_field_at_boundary_passthrough);

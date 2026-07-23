@@ -32,6 +32,10 @@ class RelayManager {
     // tamamıdır (eski davranışla birebir aynı); roller atandığında flaşör
     // kanalı maskenin dışındadır ve son yazılan durumu shadow'da korunur.
     void allOn();   // Close contactor bank (mask)
+
+    // mask'taki 1 olan kanalları TEK TEK, aralarında stepDelayMs bekleyerek enerjilendirir.
+    void setBankStaggered(uint16_t mask, uint32_t stepDelayMs = RELAY_STAGGER_STEP_MS);
+
     void allOff(bool silent = false);  // Open contactor bank — SAFETY (8.2.a.vi)
 
     // Read back current relay state for diagnostics

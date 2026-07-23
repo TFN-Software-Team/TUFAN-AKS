@@ -270,7 +270,7 @@ void test_rpm_to_speed_typical(void) {
 // spd_x10 için 0..3000 kabul ediyor, üstünü parse_fail ile reddediyor.
 // ---------------------------------------------------------------------------
 void test_rpm_to_speed_clamp(void) {
-    uint16_t result = rpmToSpeedKmhX10(65535u);
+    uint16_t result = rpmToSpeedKmhX10(32767);
     TEST_ASSERT_EQUAL_UINT16(TEL_SPD_X10_MAX, result);
 }
 
@@ -296,11 +296,19 @@ void test_rpm_to_speed_clamp_just_above_threshold_rpm(void) {
 
 // ---------------------------------------------------------------------------
 // rpmToSpeedKmhX10: eşiğin hemen altında (rpm=2842) ham hesap ~2999.6 —
-// clamp devreye GİRMEMELİ, gerçek (kırpılmamış) değer dönmeli.
-// ---------------------------------------------------------------------------
+// clamp olmaz, gerçek hız döner.
 void test_rpm_to_speed_no_clamp_just_below_threshold_rpm(void) {
     uint16_t result = rpmToSpeedKmhX10(2842u);
-    TEST_ASSERT_TRUE(result < TEL_SPD_X10_MAX);
+    TEST_ASSERT_EQUAL_UINT16(2999, result);
+}
+
+// rpmToSpeedKmhX10Impl: NaN koruması
+void test_rpmToSpeedKmhX10Impl_nan_protection(void) {
+    // rpmToSpeedKmhX10Impl(0, ..., 0.0f, ...) -> 0 (NaN yok)
+    TEST_ASSERT_EQUAL_UINT16(0, rpmToSpeedKmhX10Impl(0, 0.5f, 0.0f, false));
+    TEST_ASSERT_EQUAL_UINT16(0, rpmToSpeedKmhX10Impl(100, 0.5f, 0.0f, false));
+    // rpmToSpeedKmhX10Impl(100, ..., 1.0f, ...) -> pozitif bir değer
+    TEST_ASSERT_EQUAL_UINT16(105, rpmToSpeedKmhX10Impl(100, 0.56f, 1.0f, false));
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +363,7 @@ void test_impl_motor_rpm_false_applies_gear_ratio(void) {
 // özel bir davranış değil, çekirdek fonksiyonun kendisinde).
 // ---------------------------------------------------------------------------
 void test_impl_applies_clamp(void) {
-    uint16_t result = rpmToSpeedKmhX10Impl(65535u, 0.5f, 1.0f, false);
+    uint16_t result = rpmToSpeedKmhX10Impl(32767, 0.5f, 1.0f, false);
     TEST_ASSERT_EQUAL_UINT16(TEL_SPD_X10_MAX, result);
 }
 
@@ -392,4 +400,29 @@ void test_impl_realistic_range_sweep_stays_within_bounds(void) {
             }
         }
     }
+}
+
+void test_snprintf_truncation(void) {
+    // 192 byte buffer'ı TelemetryData'nın integer tipleriyle taşırmak teorik
+    // olarak imkansızdır (max ~115 karakter). Ancak mantığın test edilmesi 
+    // adına sınır değerler (en uzun string formatı) gönderilir ve çökmediği
+    // doğrulanır. Kesilme durumu Telemetry.cpp'de güvence altına alınmıştır.
+    fake_uart_reset();
+    Telemetry tel;
+    tel.begin();
+    
+    TelemetryData d = makeDistinctData();
+    d.TEL_motorRpm = 65535;
+    d.TEL_motorVoltageDeciV = 65535;
+    d.TEL_bmsCellVoltageMaxDeciMv = 65535;
+    d.TEL_bmsCellVoltageMinDeciMv = 65535;
+    d.TEL_bmsCurrentCentiA = -2147483647; 
+    d.TEL_bmsSocHundredths = 65535;
+    d.TEL_timestampMs = 4294967295;
+    d.TEL_speedKmhX10 = 65535;
+    
+    tel.sendStatus(d);
+    
+    TEST_ASSERT_TRUE(fake_uart_get_size() > 0);
+    // Buffer taşsaydı UART'a hiç yazılmazdı.
 }

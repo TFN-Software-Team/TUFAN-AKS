@@ -40,7 +40,10 @@ struct TelemetryData {
     uint16_t TEL_bmsCellVoltageMaxDeciMv;  // DOĞRULANDI — 0xE001 byte[2:3], HAM (deci-mV, /10 YAPILMAZ)
     uint16_t TEL_bmsCellVoltageMinDeciMv;  // DOĞRULANDI — 0xE001 byte[0:1], HAM (deci-mV, /10 YAPILMAZ)
     uint16_t TEL_bmsCellVoltageAvgDeciMv = 0; // DOĞRULANDI — 0xE001 byte[4:5], HAM (deci-mV, /10 YAPILMAZ, ortalama hücre voltajı)
-    uint8_t TEL_bmsSystemState;            // BİLİNMİYOR — kaynak ID çözülmedi
+    // KAYNAK YOK: bu alan hicbir CAN ID'den parse edilmiyor.
+    // Varsayilan 0 degeri sanitize edildiginde notr (2) olarak raporlanir.
+    // Gercek CAN kaynagi icin sniffer oturumu gerekiyor. Bkz. AKS-17.
+    uint8_t TEL_bmsSystemState;
 
     bool TEL_cellVoltageDataValid = false;
     bool TEL_cellVoltageTimeoutActive = false;

@@ -16,6 +16,7 @@ UBaseType_t s_itemSize = 0;
 UBaseType_t s_capacity = 0;
 int s_queueToken = 1;
 int s_mutexToken = 1;
+TickType_t s_mockTickCount = 0;
 }  // namespace
 
 extern "C" {
@@ -56,9 +57,18 @@ BaseType_t xSemaphoreTake(SemaphoreHandle_t /*s*/, TickType_t /*ticks*/) {
 
 BaseType_t xSemaphoreGive(SemaphoreHandle_t /*s*/) { return pdTRUE; }
 
+TickType_t xTaskGetTickCount(void) {
+    return s_mockTickCount;
+}
+
 }  // extern "C"
 
 // Test helper — testler arası queue durumunu temizler.
 void fake_freertos_reset(void) {
     s_queue.clear();
+    s_mockTickCount = 0;
+}
+
+void fake_freertos_advance_time(uint32_t ms) {
+    s_mockTickCount += pdMS_TO_TICKS(ms);
 }

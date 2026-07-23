@@ -42,6 +42,27 @@ UplinkScheduler::LinkTransition UplinkScheduler::updateLink(uint64_t nowMs,
         // Yeni kesinti başlıyor — örnekleme saatini ve ts aralığını sıfırla.
         m_lastOfflineSampleMs = 0u;
         m_offlineHasSamples = false;
+
+        // --- Look-back tamponunu OfflineBuffer'a aktar (9.2.h boslugu) ---
+        int lookbackItems = (m_linkTimeoutMs / 1000) + 2;
+        if (lookbackItems > m_lookbackCount) {
+            lookbackItems = m_lookbackCount;
+        }
+
+        if (lookbackItems > 0) {
+            int startIdx = (m_lookbackHead - lookbackItems + 16) % 16;
+            for (int i = 0; i < lookbackItems; i++) {
+                int idx = (startIdx + i) % 16;
+                ob_push(m_lookbackBuf[idx]);
+                if (i == 0) {
+                    m_offlineFirstTs = m_lookbackBuf[idx].TEL_timestampMs;
+                    m_offlineHasSamples = true;
+                }
+                m_offlineLastTs = m_lookbackBuf[idx].TEL_timestampMs;
+            }
+            m_lastOfflineSampleMs = m_lastLookbackSampleMs;
+        }
+
         tr.changed = true;
         tr.becameDown = true;
         tr.linkDown = true;
@@ -56,6 +77,15 @@ UplinkScheduler::LinkTransition UplinkScheduler::updateLink(uint64_t nowMs,
         tr.lastTs = m_offlineLastTs;
     }
     return tr;
+}
+
+void UplinkScheduler::recordLookback(uint64_t nowMs, const TelemetryData& live) {
+    if (m_lastLookbackSampleMs == 0 || (nowMs - m_lastLookbackSampleMs) >= m_offlineSamplePeriodMs) {
+        m_lastLookbackSampleMs = nowMs;
+        m_lookbackBuf[m_lookbackHead] = live;
+        m_lookbackHead = (m_lookbackHead + 1) % 16;
+        if (m_lookbackCount < 16) m_lookbackCount++;
+    }
 }
 
 bool UplinkScheduler::offlineSample(uint64_t nowMs, const TelemetryData& live) {

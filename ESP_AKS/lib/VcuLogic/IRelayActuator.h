@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "SystemConfig.h"
 
 // ---------------------------------------------------------------------------
 // IRelayActuator — VcuLogic'in aktüatör (röle / kontaktör sürücüsü) katmanından
@@ -32,6 +33,9 @@ class IRelayActuator {
     // kontaktörler" davranışı); roller atandığında flaşör kanalı maskenin
     // dışındadır (durumu korunur).
     virtual void allOn() = 0;
+
+    // mask'taki 1 olan kanalları TEK TEK, aralarında stepDelayMs bekleyerek enerjilendirir.
+    virtual void setBankStaggered(uint16_t mask, uint32_t stepDelayMs = RELAY_STAGGER_STEP_MS) = 0;
 
     // Kontaktör bank maskesini açar (GÜVENLİK — şartname 8.2.a.vi; maske
     // dışı flaşör kanalına dokunmaz). silent=true yalnız LOG açısından

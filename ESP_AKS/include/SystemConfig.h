@@ -9,6 +9,7 @@
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "driver/uart.h"
+#include "esp_system.h"
 #include "E22Regs.h"
 
 // --- CAN Message IDs ---
@@ -92,11 +93,10 @@
 // 33'tür.
 #define HMI_TX_PIN GPIO_NUM_33  // Şemadaki screen_RX (ESP TX -> Ekran RX)
 #define HMI_RX_PIN GPIO_NUM_32  // Şemadaki screen_TX (Ekran TX -> ESP RX)
-// Nextion seri hızı (8N1 → ham ~960 B/s) — aşağıdaki resync bütçe
+// Nextion seri hızı (8N1 → ham ~11520 B/s) — aşağıdaki resync bütçe
 // static_assert'ı bunu kullanır. DİKKAT: DisplayHMI::begin() UART config'i
-// baud'u ayrıca literal (9600) yazar; orası değişirse bu sabit de AYNI
-// commit'te güncellenmeli, yoksa bütçe kanıtı eski hıza göre doğrular.
-#define HMI_UART_BAUD 9600
+// baud'u ayrıca literal YAZILMIYOR artık, bu makroyu kullanıyor.
+#define HMI_UART_BAUD 115200
 
 // --- Nextion Reset (brown-out) Algılama ---
 // readTouchCommand RX yoluna paralel bağlı dedektör (lib/DisplayHMI/
@@ -107,6 +107,9 @@
 // güç hattı sürekli brown-out yapıyorsa log spam'i önlenir, toplam sayaç
 // logda görünür kalır.
 #define HMI_RESET_WARN_LOG_INTERVAL_MS 5000U
+
+#define HMI_LINK_TIMEOUT_MS 5000       // Nextion koptu kabul etme suresi
+#define VCU_AUTO_RESET_DELAY_MS 10000  // FAULT'tan oto-reset icin bekleme
 
 // --- HMI Round-Robin Resync (reset dedektörünün emniyet katmanı) ---
 // Startup event'i brown-out sırasında RX hattında bozulup KAYBOLABİLİR —
@@ -130,14 +133,12 @@
 // En uzun komut: 'contactor.txt="CLOSED"' = 22 + 3 = 25 B → marjla 26.
 #define HMI_RESYNC_CMD_MAX_BYTES 26U
 
-// BÜTÇE KANITI: 9600 baud 8N1 → ham 960 B/s; HMI_Task 10 Hz → döngü başına
-// ~96 B (buildBmsNextionCommands maxBytes=90 bu bütçeden). Resync tetik
-// başına TEK alan gönderir → tepe ek yük = 26 B / 500 ms = 52 B/s, ham
-// kapasitenin ≤ %10'u (96 B/s) olmalı ki BMS panelinin 90 B/döngü tavanıyla
-// birlikte TX ring (256 B) baskı altında kalmasın. Aralık görev periyodunun
-// (100 ms) altına indirilse bile hmi_resync_due_field çağrı başına tek alan
-// döndürdüğünden fiili tavan 26 B × 10 Hz = 260 B/s'de kendiliğinden doyar;
-// aşağıdaki assert normal yapılandırmayı %10 payın içinde tutar.
+// BÜTÇE KANITI: 115200 baud 8N1 → ham 11520 B/s; HMI_Task 10 Hz → döngü başına
+// ~1152 B. Tam yenileme bile (~302 B) tek döngüde TX ring'e (1024 B) rahat sığar.
+// Resync tetik başına TEK alan gönderir → tepe ek yük = 26 B / 500 ms = 52 B/s.
+// Bu ek yük, normal kapasitenin ≤ %10'u olmalıdır. Eskiden 9600 baud için (96 B/s)
+// kritik olan bu sınır, şimdi 115200 (1152 B/s) ile fazlasıyla emniyetli bölgededir.
+// hmi_resync_due_field çağrı başına tek alan döndürdüğünden tavan 260 B/s'de doyar.
 #ifdef __cplusplus
 static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
                       (unsigned)HMI_RESYNC_INTERVAL_MS
@@ -167,10 +168,10 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 
 // BİRLEŞİK BÜTÇE KANITI: iki resync katmanının toplam tepe yükü
 //   skalar: 26 B / 500 ms = 52 B/s   +   BMS: 48 B / 1000 ms = 48 B/s
-//   = 100 B/s ≤ ham kapasitenin %15'i (960 × 0.15 = 144 B/s).
-// BMS tarafı ayrıca buildBmsNextionCommands'ın 90 B/döngü sert tavanından
-// geçtiğinden tek döngüde bütçe aşımı zaten mümkün değildir; bu assert
-// ortalama yükün de sınırlı kaldığını derleme zamanında kanıtlar.
+//   = 100 B/s ≤ ham kapasitenin %15'i (11520 × 0.15 = 1728 B/s).
+// BMS tarafı eskiden 90 B/döngü tavanına sıkışıyordu, şimdi baud artışıyla
+// tüm 27 slot (yaklaşık ~1300 B) bile 1 sn'ye rahatça sığar; fakat biz
+// yine de ortalama yükü yaymak adına mevcut sistemi koruyoruz.
 #ifdef __cplusplus
 static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
                       (unsigned)HMI_RESYNC_INTERVAL_MS
@@ -546,6 +547,11 @@ static_assert(
 // Bkz. lib/CanManager/MotorFaultDebounce.h (saf, bayraktan bağımsız).
 #define MOTOR_ERROR_DEBOUNCE_FRAMES 3
 
+/// Maksimum RPM eşiği — FAULT/E-STOP'tan RESET'e geçiş için motor RPM'i
+/// bu değerin altında olmalı. 50 RPM ≈ 0.5 km/h — rölanti titreşimi
+/// ve sensör gürültüsünü tolere eder, hareket halini reddeder. (AKS-04)
+#define VCU_RESET_MAX_RPM 50
+
 // --- Phase 1 Planning Notes ---
 // Torque command generation is intentionally held at zero until the pedal /
 // brake input model is finalized. READY -> DRIVE enable is now command-driven,
@@ -559,6 +565,10 @@ static_assert(
 // 20 ms sembolik; motor sürücüsü entegrasyonunda gerçek tork sönüm süresine
 // göre kalibre edilecek (motor RPM/akım düşüşü doğrulanmadan sahaya çıkma).
 #define VCU_CONTACTOR_OPEN_DELAY_MS 20
+
+/// Kademeli role kapatma adim gecikmesi (AKS-06)
+#define RELAY_STAGGER_STEP_MS 30
+// Kademeli kapatmanin toplam suresi 10 kanal x 30 ms = 300 ms'dir.
 
 // --- Phase 2 Safety Thresholds ---
 // Warning levels should eventually trigger derating (AÇIK İŞ B12 — İSKELET
@@ -701,6 +711,10 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // watchdog timeout should still be reviewed once final task runtimes stabilize.
 
 // --- CAN Freshness Thresholds ---
+/// Kuyruktaki sensor verisinin gecerlilik suresi (AKS-13)
+/// CAN task'i takilirsa tuketicilerin bayat veriyi taze sanmasini engeller.
+#define SENSOR_DATA_MAX_AGE_MS 500
+
 #define CAN_MOTOR_STATUS_TIMEOUT_MS 1500
 #define CAN_BMS_STATUS_TIMEOUT_MS   500
 #define CAN_CELL_VOLTAGE_TIMEOUT_MS 500  // E015-E020 grubu
@@ -713,5 +727,24 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // tetiklendiginde ayni durum tekrar tekrar olussa bile log spam'ini
 // onlemek icin alan basina en fazla 1 WARN / bu sure.
 #define TEL_SANITIZE_WARN_THROTTLE_MS 10000
+
+// --- Sürüm Kimliği (AKS-18) ---
+// Nextion'a gönderilecek getter. Ekran projesi hazır olduğunda kullanılacak.
+// TODO: DisplayHMI üzerinden Nextion'a FW_VERSION göndermek için alan ekle.
+inline const char* AKS_getFirmwareVersion() {
+#ifdef FW_VERSION
+    return FW_VERSION;
+#else
+    return "dev";
+#endif
+}
+
+extern esp_reset_reason_t g_bootResetReason;
+
+// Nextion'a gonderilecek sekilde hazirla (EKRAN PROJESI HAZIR DEGIL)
+// TODO: DisplayHMI uzerinden Nextion'a boot_reason gondermek icin alan ekle.
+inline esp_reset_reason_t AKS_getBootResetReason() {
+    return g_bootResetReason;
+}
 
 #endif  // SYSTEM_CONFIG_H

@@ -12,6 +12,8 @@ uint8_t s_regs[256] = {0};  // MCP23S17 register modeli
 int s_dummy_device = 1;     // non-null sentinel for spi_device_handle_t
 }  // namespace
 
+int fake_spi_next_fails = 0;
+
 extern "C" {
 
 esp_err_t spi_bus_initialize(spi_host_device_t /*host*/,
@@ -30,6 +32,11 @@ esp_err_t spi_bus_add_device(spi_host_device_t /*host*/,
 
 esp_err_t spi_device_transmit(spi_device_handle_t /*h*/,
                               spi_transaction_t* trans) {
+    if (fake_spi_next_fails > 0) {
+        fake_spi_next_fails--;
+        return ESP_FAIL;
+    }
+
     if (trans == nullptr || trans->tx_buffer == nullptr)
         return ESP_OK;
 
@@ -53,6 +60,10 @@ esp_err_t spi_device_transmit(spi_device_handle_t /*h*/,
 
 const char* esp_err_to_name(esp_err_t /*err*/) {
     return "FAKE_ERR";
+}
+
+void vTaskDelay(TickType_t /*xTicksToDelay*/) {
+    // Stub for testing
 }
 
 }  // extern "C"

@@ -109,8 +109,24 @@ void test_verifyIfDue_throttles_to_period(void) {
 }
 
 // ---------------------------------------------------------------------------
+// SPI read hatası (ESP_FAIL) gelirse verifyOutputs hata olarak yakalar ve
+// actuator fault bayrağını set eder.
+// ---------------------------------------------------------------------------
+void test_verify_spi_error_sets_fault(void) {
+    primeRelay();
+    fake_spi_reset();
+    TEST_ASSERT_FALSE(RelayManager::instance().hasActuatorFault());
+
+    fake_spi_next_fails = 1; // Ilk SPI okumasi ESP_FAIL donecek
+    bool ok = RelayManager::instance().verifyOutputs();
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_TRUE(RelayManager::instance().hasActuatorFault());
+}
+
+// ---------------------------------------------------------------------------
 // readRegister begin() sonrası doğru register değerlerini döndürür.
 // ---------------------------------------------------------------------------
+
 void test_readRegister_returns_written_values(void) {
     primeRelay();  // begin() OLAT=0xFF/0xFF, IODIR=0x00/0x00 yazdı
     uint8_t v = 0xEE;

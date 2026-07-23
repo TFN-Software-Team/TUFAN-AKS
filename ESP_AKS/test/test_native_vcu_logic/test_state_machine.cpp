@@ -94,14 +94,35 @@ void test_idle_start_permitted_when_bms_valid_and_clean(void) {
 }
 
 // ---------------------------------------------------------------------------
-// G1 interlock: bmsDataValid=true ama uyari kosulu aktifken (WARN bandi pack
-// voltaji) START gelirse READY'ye GECILMEZ, IDLE'da kalir.
+// AKS-14: Uyari kosulu aktifken (WARN bandi) READY girisine IZIN VERILIR.
 // ---------------------------------------------------------------------------
-void test_idle_start_rejected_when_warning_active(void) {
+void test_idle_start_permitted_when_warning_active(void) {
     primeIdle();
 
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsPackVoltageDeciV = 715;  // <= 720 dV WARN low (kritik degil, >600)
+    d.TEL_bmsPackVoltageDeciV = 710;  // WARN (<= 720)
+    d.TEL_bmsCurrentCentiA = -800;    // Desarj 8A (safe, ama ornekte istenmis)
+    VcuLogic::setTelemetryData(d);
+
+    VcuLogic::postEvent(VcuEvent::START_REQUEST);
+    VcuLogic::run();
+
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::READY),
+                          static_cast<int>(VcuLogic::getState()));
+    TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOn_count);
+    
+    // WARN + READY durumunda uyari bayraginin set oldugunu dogrula
+    TEST_ASSERT_TRUE(VcuLogic::hasWarningCondition(d));
+}
+
+// ---------------------------------------------------------------------------
+// CRITICAL bandındaki degerlerle READY'ye girilemez.
+// ---------------------------------------------------------------------------
+void test_idle_start_rejected_when_critical_active(void) {
+    primeIdle();
+
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_bmsPackVoltageDeciV = 590;  // CRITICAL (<= 600)
     VcuLogic::setTelemetryData(d);
 
     VcuLogic::postEvent(VcuEvent::START_REQUEST);
@@ -629,4 +650,88 @@ void test_estop_zero_torque_reaches_can_queue_before_contactor_open(void) {
 // yardımcısı false döner (CanManager::sendTorqueCommand bunu kullanır).
 void test_flag0_torque_frame_disabled(void) {
     TEST_ASSERT_FALSE(MotorTorque::frameEnabled());
+}
+
+// ===========================================================================
+// AKS-03: postEvent(EMERGENCY_STOP) with nullptr queue
+// ===========================================================================
+void test_post_event_estop_without_queue_enters_estop(void) {
+    VcuLogic::resetForTest();
+    fake_freertos_reset();
+    fake_relay_reset();
+    
+    // No init() called -> queue is nullptr
+    VcuLogic::postEvent(VcuEvent::EMERGENCY_STOP);
+    
+    // Initialize relays and state
+    VcuLogic::init(g_mockRelay);
+    
+    // Process the pending event
+    VcuLogic::run();
+    
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::EMERGENCY_STOP),
+                          static_cast<int>(VcuLogic::getState()));
+}
+
+// ===========================================================================
+// AKS-05: E-STOP > FAULT and FAULT -> E-STOP transitions
+// ===========================================================================
+void test_estop_keeps_state_when_fault_arrives(void) {
+    primeIdle();
+    VcuLogic::postEvent(VcuEvent::EMERGENCY_STOP);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::EMERGENCY_STOP),
+                          static_cast<int>(VcuLogic::getState()));
+
+    VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::EMERGENCY_STOP),
+                          static_cast<int>(VcuLogic::getState()));
+}
+
+void test_fault_transitions_to_estop_when_estop_arrives(void) {
+    primeIdle();
+    VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
+                          static_cast<int>(VcuLogic::getState()));
+
+    VcuLogic::postEvent(VcuEvent::EMERGENCY_STOP);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::EMERGENCY_STOP),
+                          static_cast<int>(VcuLogic::getState()));
+}
+
+// ===========================================================================
+// AKS-15: Auto-reset from FAULT after delay
+// ===========================================================================
+void test_fault_auto_reset_after_delay(void) {
+    primeIdle();
+    VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
+                          static_cast<int>(VcuLogic::getState()));
+
+    // Make interlock satisfied
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorRpm = 0; // safe
+    VcuLogic::setTelemetryData(d);
+
+    // Run until just before delay
+    // delay is 10000 ms, each tick is 20 ms
+    // 500 ticks total. We run 499 ticks.
+    for (int i = 0; i < 499; i++) {
+        VcuLogic::run();
+        TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
+                              static_cast<int>(VcuLogic::getState()));
+    }
+
+    // Tick 500 should trigger the reset postEvent
+    VcuLogic::run();
+    
+    // One more tick to process the queue
+    VcuLogic::run();
+    
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
+                          static_cast<int>(VcuLogic::getState()));
 }

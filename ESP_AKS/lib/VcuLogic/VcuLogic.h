@@ -35,7 +35,8 @@ enum class VcuEvent : uint8_t {
     DRIVE_ENABLE = 2,
     EMERGENCY_STOP = 3,
     FAULT_DETECTED = 4,
-    RESET = 5
+    RESET = 5,
+    HEADLIGHT_TOGGLE = 6
 };
 
 // ---------------------------------------------------------------------------
@@ -133,6 +134,9 @@ inline bool fanDesiredState(bool currentOn, bool bmsDataValid,
 #endif  // RELAY_ROLES_ASSIGNED
 
 inline bool hasWarningCondition(const TelemetryData& VCU_data) {
+    // AKS-12: Hucre gerilimi verisi bayat — uyari uret
+    if (VCU_data.TEL_cellVoltageTimeoutActive) return true;
+
     if (!VCU_data.TEL_bmsDataValid)
         return false;
 
@@ -163,10 +167,9 @@ inline bool hasWarningCondition(const TelemetryData& VCU_data) {
 
 inline bool hasCriticalCondition(const TelemetryData& VCU_data,
                                  VcuState currentState) {
-    // NOT: TEL_bmsSystemState hiçbir CAN ID'den parse EDİLMİYOR (üretimde hep
-    // 0 kalır) — ==4 kontrolü kaynak bağlanana kadar ETKİSİZ. Bkz.
-    // Documents/UKS_LoRa_Protocol.md "DOĞRULANACAK".
-    if (VCU_data.TEL_motorErrorFlags != 0 || (VCU_data.TEL_bmsDataValid && VCU_data.TEL_bmsSystemState == 4))
+    // DEVRE DISI: TEL_bmsSystemState gercek bir kaynaktan gelmiyor (AKS-17).
+    // Gercek CAN parse eklendikten sonra yeniden aktif edilecek.
+    if (VCU_data.TEL_motorErrorFlags != 0)
         return true;
 
     if (VCU_data.TEL_motorTimeoutActive && currentState != VcuState::IDLE)
@@ -178,6 +181,15 @@ inline bool hasCriticalCondition(const TelemetryData& VCU_data,
     if (VCU_data.TEL_bmsTimeoutActive && currentState != VcuState::IDLE)
         return true;
 
+    // AKS-12: READY/DRIVE'da hucre verisi bayatlarsa kritik
+    if (VCU_data.TEL_cellVoltageTimeoutActive &&
+        (currentState == VcuState::READY || currentState == VcuState::DRIVE)) {
+        return true;
+    }
+
+    // FAIL-OPEN: guvenligi yalnizca 'READY/DRIVE'a bmsDataValid olmadan
+    // girilemez' degismezine dayaniyor. Yeni bir gecis eklenirse burasi
+    // yeniden degerlendirilmeli. (AKS-12 notu)
     if (!VCU_data.TEL_bmsDataValid)
         return false;
 
@@ -202,12 +214,19 @@ inline bool hasCriticalCondition(const TelemetryData& VCU_data,
 
 inline bool isResetInterlockSatisfied(const TelemetryData& VCU_data,
                                       VcuState currentState) {
-    // NOT: TEL_bmsSystemState==4 kontrolü kaynak bağlanana kadar etkisiz
-    // (alan üretimde parse edilmiyor, hep 0 — bkz. hasCriticalCondition notu).
-    if (VCU_data.TEL_motorErrorFlags != 0 || (VCU_data.TEL_bmsDataValid && VCU_data.TEL_bmsSystemState == 4))
+    // DEVRE DISI: TEL_bmsSystemState gercek bir kaynaktan gelmiyor (AKS-17).
+    // Gercek CAN parse eklendikten sonra yeniden aktif edilecek.
+    if (VCU_data.TEL_motorErrorFlags != 0)
         return false;
 
     if (hasCriticalCondition(VCU_data, currentState))
+        return false;
+
+    // AKS-04: Hareket halinde RESET'e izin verme (fail-safe: bayat veri = red)
+    if (!VCU_data.TEL_motorDataValid || VCU_data.TEL_motorTimeoutActive)
+        return false;
+
+    if (VCU_data.TEL_motorRpm >= VCU_RESET_MAX_RPM || VCU_data.TEL_motorRpm <= -VCU_RESET_MAX_RPM)
         return false;
 
     return true;
@@ -235,8 +254,11 @@ inline bool isReadyEntryPermitted(const TelemetryData& VCU_data) {
     if (hasCriticalCondition(VCU_data, VcuState::IDLE))
         return false;
 
-    if (hasWarningCondition(VCU_data))
-        return false;
+    // AKS-14: WARN kosullari READY girisini BLOKLAMAZ, sadece uyari uretir.
+    // Bloklama yalnizca hasCriticalCondition() ile yapilir.
+    // Esik degerlerine (72.0V, 9A) dokunulmadi — sadece davraniş degisti.
+    // if (hasWarningCondition(VCU_data))
+    //     return false;
 
 #if MOTOR_DRIVER_PRESENT
     // Motor sürücüsü araçta: READY interlock'u taze motor verisi de arar.

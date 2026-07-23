@@ -107,7 +107,7 @@ def run_outage_simulation(
 
     now_ms = 0
     while now_ms < total_ms:
-        link_down = outage_start_ms <= now_ms < outage_end_ms
+        link_down = (outage_start_ms + contract.LINK_TIMEOUT_MS) <= now_ms < outage_end_ms
 
         if not link_down:
             # --- NORMAL MOD: throttled replay + canli paket (S1) ---

@@ -1,3 +1,4 @@
+// NOT: Bu test kontaktor surmuyor, HV kapisi gerekmiyor.
 #include <unity.h>
 
 #include "SystemConfig.h"

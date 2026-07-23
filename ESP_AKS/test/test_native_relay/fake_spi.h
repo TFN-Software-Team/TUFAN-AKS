@@ -23,3 +23,5 @@ void         fake_spi_reset(void);  // yalnız write-log'u temizler (register mo
 // --- MCP23S17 register modeli (geri-okuma testleri için) ---
 void    fake_spi_set_reg(uint8_t reg, uint8_t value);  // reset/bozulma simülasyonu
 uint8_t fake_spi_get_reg(uint8_t reg);
+
+extern int fake_spi_next_fails; // kac adet transmit cagirisi ESP_FAIL donecek

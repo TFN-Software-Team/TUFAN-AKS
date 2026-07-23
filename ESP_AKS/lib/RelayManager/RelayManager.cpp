@@ -2,6 +2,8 @@
 #include "SystemConfig.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static constexpr const char* TAG = "RelayManager";
 
@@ -107,6 +109,24 @@ void RelayManager::allOn() {
 
     verifyOutputs();  // G3: kontaktörler gerçekten kapandı mı geri-oku
 }
+
+void RelayManager::setBankStaggered(uint16_t mask, uint32_t stepDelayMs) {
+    if (!s_initialized) {
+        ESP_LOGW(TAG, "setBankStaggered called before begin()");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Staggered closing bank mask=0x%03X, step=%u ms",
+             (unsigned)mask, (unsigned)stepDelayMs);
+
+    for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
+        if (mask & (1u << ch)) {
+            setRelay(ch, true);
+            vTaskDelay(pdMS_TO_TICKS(stepDelayMs));
+        }
+    }
+}
+
 
 void RelayManager::allOff(bool silent) {
     // Kontaktör BANK maskesini açar (GÜVENLİK — şartname 8.2.a.vi: güvenlik

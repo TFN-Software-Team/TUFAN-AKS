@@ -41,6 +41,18 @@ void test_reported_minmax_overrides_scan_summary(void) {
     TEST_ASSERT_EQUAL_UINT16(95, c.cellDeltaMv);   // 3400-3305, tarama deltası 20 DEĞİL
 }
 
+void test_reported_minmax_underflow_protection(void) {
+    BmsPackData d = makePackWithScanAndReport();
+    d.bmsReportedCellMaxMv = 3305;
+    d.bmsReportedCellMinMv = 3400; // min > max
+
+    BmsComputed c = computePack(d);
+
+    TEST_ASSERT_EQUAL_UINT16(3305, c.cellMaxMv);
+    TEST_ASSERT_EQUAL_UINT16(3400, c.cellMinMv);
+    TEST_ASSERT_EQUAL_UINT16(0, c.cellDeltaMv);
+}
+
 // REGRESYON KİLİDİ: bmsReported* dolu OLSA BİLE cellMax/MinIndex tarama
 // kaynaklı kalır (E001 indeks taşımaz).
 void test_reported_minmax_keeps_scan_indices(void) {

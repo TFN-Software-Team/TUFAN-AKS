@@ -82,7 +82,7 @@ def test_uks_tel_link_timeout_matches_contract(uks_telemetry_dir):
     )
 
 
-def test_uks_tel_link_timeout_has_enough_margin_over_tx_period(uks_telemetry_dir):
+def test_uks_tel_link_timeout_has_enough_margin_over_tx_period(uks_telemetry_dir, aks_root):
     """Invariant: TEL_LINK_TIMEOUT_MS >= 3 x LORA_TX_PERIOD_MS.
 
     Bkz. Documents/LoRa_Link_Analysis.md 'UKS-side TEL Timeout Margin': bu
@@ -95,9 +95,12 @@ def test_uks_tel_link_timeout_has_enough_margin_over_tx_period(uks_telemetry_dir
     header = read(uks_telemetry_dir / "Core/Inc/telemetry.h")
     uks_timeout = extract_define_int(header, "TEL_LINK_TIMEOUT_MS", source="UKS telemetry.h")
 
-    assert uks_timeout >= 3 * contract.LORA_TX_PERIOD_MS, (
+    sys_config = read(aks_root / "include/SystemConfig.h")
+    lora_tx_period = extract_define_int(sys_config, "LORA_TX_PERIOD_MS", source="AKS SystemConfig.h")
+
+    assert uks_timeout >= 3 * lora_tx_period, (
         f"UKS TEL_LINK_TIMEOUT_MS ({uks_timeout} ms) artik en az 3x AKS "
-        f"LORA_TX_PERIOD_MS'i ({contract.LORA_TX_PERIOD_MS} ms) karsilamiyor "
+        f"LORA_TX_PERIOD_MS'i ({lora_tx_period} ms) karsilamiyor "
         "— ardisik tik atlama toleransi (bkz. Documents/LoRa_Link_Analysis.md "
         "'UKS-side TEL Timeout Margin' tablosu) 3'un altina dusmus olabilir. "
         "LORA_TX_PERIOD_MS degistiyse TEL_LINK_TIMEOUT_MS'i (UKS telemetry.h) "
@@ -158,9 +161,24 @@ def test_aks_p6_offline_buffer_constants(aks_root):
     assert extract_define_int(sys_config, "OFFLINE_SAMPLE_PERIOD_MS", source="AKS SystemConfig.h") == contract.OFFLINE_SAMPLE_PERIOD_MS
     assert extract_define_int(sys_config, "REPLAY_BURST_PER_TICK", source="AKS SystemConfig.h") == contract.REPLAY_BURST_PER_TICK
     assert extract_define_int(sys_config, "BOOT_LINK_GRACE_MS", source="AKS SystemConfig.h") == contract.BOOT_LINK_GRACE_MS
+    assert extract_define_int(sys_config, "LORA_TX_PERIOD_MS", source="AKS SystemConfig.h") == contract.LORA_TX_PERIOD_MS
+    assert extract_define_int(sys_config, "LINK_TIMEOUT_MS", source="AKS SystemConfig.h") == contract.LINK_TIMEOUT_MS
 
     ob_header = read(aks_root / "lib/OfflineBuffer/OfflineBuffer.h")
     assert extract_define_int(ob_header, "OB_CAPACITY", source="AKS OfflineBuffer.h") == contract.OB_CAPACITY
+
+def test_aks_telemetry_cpp_format_string_matches_contract(aks_root):
+    src = read(aks_root / "lib/Telemetry/Telemetry.cpp")
+    m = re.search(r'"TEL,([^"]+)\\r\\n"', src)
+    assert m, "Telemetry.cpp icinde TEL format stringi bulunamadi"
+    fmt = m.group(1)
+    
+    specifiers = fmt.split(",")
+    
+    assert len(specifiers) == len(contract.FIELD_ORDER), (
+        f"Telemetry.cpp icindeki format specifier sayisi ({len(specifiers)}) ile "
+        f"contract.py'deki FIELD_ORDER sayisi ({len(contract.FIELD_ORDER)}) eslesmiyor."
+    )
 
 
 # ===========================================================================

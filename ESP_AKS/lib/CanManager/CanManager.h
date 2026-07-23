@@ -109,13 +109,14 @@ class CanManager {
     bool CAN_hasSeenMotorStatus = false;
     bool CAN_motorTimeoutLogged = false;
 
-    // G9: motor errorFlags debounce sayacı — ardışık hatalı frame sayısı. Temiz
-    // frame gelince sıfırlanır (bkz. MotorFaultDebounce.h). Yalnız handleMotorStatus
-    // yazar/okur (CAN task'ine yerel; ek mutex gerektirmez).
     uint16_t CAN_motorErrorConsecutive = 0;
 
-    bool CAN_busOffLogged = false;
-    bool CAN_busRecoveredLogged = false;
+    TickType_t CAN_lastMotorTimeoutCheckTick = 0;
+    uint8_t CAN_motorTimeoutDebounceCount = 0;
+
+    uint8_t CAN_busOffRecoveryAttempts = 0;
+    TickType_t CAN_lastBusOffRecoveryTick = 0;
+    TickType_t CAN_lastStatusCheckTick = 0;
 
     // Autobaud yeniden-deneme durumu (bkz. AutobaudPolicy.h / BRING_UP_
     // CHECKLIST.md bölüm 4). CAN_bitrateVerified: begin()'de auto-detect

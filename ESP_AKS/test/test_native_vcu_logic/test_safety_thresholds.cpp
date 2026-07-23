@@ -333,3 +333,35 @@ void test_baseline_clean_data_no_conditions(void) {
     TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::DRIVE));
 }
 
+// ---------------------------------------------------------------------------
+// AKS-12: Hücre gerilimi timeout'u
+// ---------------------------------------------------------------------------
+void test_cell_voltage_timeout_idle_warning(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_cellVoltageTimeoutActive = true;
+    TEST_ASSERT_TRUE(hasWarningCondition(d));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::IDLE));
+}
+
+void test_cell_voltage_timeout_ready_critical(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_cellVoltageTimeoutActive = true;
+    TEST_ASSERT_TRUE(hasWarningCondition(d));
+    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
+}
+
+void test_cell_voltage_timeout_drive_critical(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_cellVoltageTimeoutActive = true;
+    TEST_ASSERT_TRUE(hasWarningCondition(d));
+    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::DRIVE));
+}
+
+void test_cell_voltage_timeout_inactive_no_warning(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_cellVoltageTimeoutActive = false;
+    // other fields are valid due to makeTelemetryDataValid, so no warning/critical expected
+    TEST_ASSERT_FALSE(hasWarningCondition(d));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::IDLE));
+}
+

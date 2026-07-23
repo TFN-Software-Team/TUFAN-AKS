@@ -257,8 +257,10 @@ def parse_uks_frame(line: str) -> dict | UksRejection:
     values = {}
     for name, tok in zip(FIELD_ORDER, fields[1:]):
         lo, hi = FIELD_RANGES[name]
-        if not _is_strict_int_token(tok, allow_sign=(lo < 0)):
+        allow_sign = (name not in ("seq", "ts_ms"))
+        if not _is_strict_int_token(tok, allow_sign=allow_sign):
             return UksRejection("parse_fail")
+
         v = int(tok)
         if v < lo or v > hi:
             return UksRejection("parse_fail")

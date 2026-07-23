@@ -68,6 +68,7 @@ extern void test_e033_stub_accepts_valid_dlc(void);
 extern void test_stubs_do_not_write_telemetry(void);
 
 // Cell voltage parsing (E015-E020) and E001 min/max/avg
+extern void test_decimvtomv_consistency(void);
 extern void test_e015_dlc_too_short(void);
 extern void test_e015_parses_four_cells_correctly(void);
 extern void test_e015_cells_in_lifepo4_range(void);
@@ -171,6 +172,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_stubs_do_not_write_telemetry);
 
     // Cell voltage parsing (E015-E020) and E001 min/max/avg
+    RUN_TEST(test_decimvtomv_consistency);
     RUN_TEST(test_e015_dlc_too_short);
     RUN_TEST(test_e015_parses_four_cells_correctly);
     RUN_TEST(test_e015_cells_in_lifepo4_range);

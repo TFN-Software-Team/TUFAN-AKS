@@ -20,12 +20,12 @@
 
 namespace TelemetrySanitize {
 
-// UKS Decode_Line: Parse_Int(f[12], min=1, max=4).
-// Bilinmeyen/gecersiz BMS sistem durumu guvenlik acisindan FAULT (4)
-// gibi ele alinir — hem guvenli varsayim hem de UKS'in reddetmeyecegi
-// bir deger garantisi.
+// KAYNAK YOK: TEL_bmsSystemState hicbir CAN ID'den parse edilmiyor.
+// Gercek kaynak bulunana kadar 0 -> 2 (notr/IDLE) raporlanir.
+// Onceki davranis 0 -> 4 (FAULT) idi ve UKS'te yaniltici gosterime yol aciyordu.
+// Bkz. bulgu T3-21/T2-22, AKS-17.
 inline uint8_t sanitizeSystemState(uint8_t raw) {
-    return (raw >= 1U && raw <= 4U) ? raw : 4U;
+    return (raw >= 1U && raw <= 4U) ? raw : 2U;
 }
 
 // UKS Decode_Line: Parse_Int(f[15], min=0, max=10000).
@@ -55,6 +55,13 @@ inline uint16_t sanitizeMotorVoltForTorqueField(uint16_t raw) {
     return (raw > 32767U) ? 32767U : raw;
 }
 
+inline int16_t sanitizeRpm(int16_t raw) {
+    constexpr int16_t TEL_RPM_MAX = 20000;
+    if (raw < 0) return 0;
+    if (raw > TEL_RPM_MAX) return TEL_RPM_MAX;
+    return raw;
+}
+
 // Tek ortak sanitize kapısı: canlı VE replay (OfflineBuffer'dan gelen)
 // paketler, UKS'e gitmeden hemen önce (sendStatus çağrısının hemen
 // öncesinde) buradan geçer — böylece ikisi de aynı garantiye sahip olur
@@ -62,6 +69,7 @@ inline uint16_t sanitizeMotorVoltForTorqueField(uint16_t raw) {
 // bu yalnızca onları tek noktada birleştiren bir sarmalayıcıdır.
 inline TelemetryData sanitizeForUplink(const TelemetryData& raw) {
     TelemetryData out = raw;
+    out.TEL_motorRpm           = sanitizeRpm(out.TEL_motorRpm);
     out.TEL_bmsSystemState     = sanitizeSystemState(out.TEL_bmsSystemState);
     out.TEL_bmsSocHundredths   = sanitizeSoc(out.TEL_bmsSocHundredths);
     out.TEL_bmsCurrentCentiA  = sanitizeCurrent(out.TEL_bmsCurrentCentiA);

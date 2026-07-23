@@ -15,6 +15,13 @@ void test_e015_dlc_too_short(void) {
     TEST_ASSERT_FALSE(success);
 }
 
+void test_decimvtomv_consistency(void) {
+    TEST_ASSERT_EQUAL_UINT16(deciMvToMv(33), deciMvToMv(33));
+    TEST_ASSERT_EQUAL_UINT16(3, deciMvToMv(33));
+    TEST_ASSERT_EQUAL_UINT16(3, deciMvToMv(34));
+    TEST_ASSERT_EQUAL_UINT16(4, deciMvToMv(35));
+}
+
 void test_e015_parses_four_cells_correctly(void) {
     twai_message_t msg = {};
     msg.identifier = 0x0000E015;
