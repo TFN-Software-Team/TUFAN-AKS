@@ -90,8 +90,10 @@ INT32_MIN = -2147483648
 
 
 def sanitize_system_state(raw: int) -> int:
-    """TelemetrySanitize::sanitizeSystemState — 1..4 disinda FAULT(4)."""
-    return raw if 1 <= raw <= 4 else 4
+    """TelemetrySanitize::sanitizeSystemState — 1..4 disinda IDLE(2).
+    AKS-17: TEL_bmsSystemState gercek bir kaynaktan gelmiyor; 0 -> 2 (IDLE)
+    raporlanir (onceki davranis 0 -> 4/FAULT'tu, yaniltici gosterime yol aciyordu)."""
+    return raw if 1 <= raw <= 4 else 2
 
 
 def sanitize_soc(raw: int) -> int:

@@ -143,7 +143,9 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     assert "sanitizeSystemState" in text
     assert "sanitizeSoc" in text
     assert "sanitizeCurrent" in text
-    # sysState disi -> 4 (FAULT) kurali kaynakta hala mevcut mu?
+    # sysState disi -> 2 (IDLE) kurali kaynakta hala mevcut mu?
+    # AKS-17: TEL_bmsSystemState gercek bir kaynaktan gelmiyor; 0 -> 2 (IDLE)
+    # raporlanir (onceki davranis 0 -> 4/FAULT'tu, yaniltici gosterime yol aciyordu).
     m = re.search(
         r"sanitizeSystemState[^{]*\{[^}]*\}", strip_c_comments(text), re.DOTALL
     )
@@ -151,8 +153,8 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     assert re.search(r">=\s*1U?\s*&&.*<=\s*4U?", m.group(0)) or re.search(
         r"1U?\s*<=.*<=\s*4U?", m.group(0)
     ), "sanitizeSystemState govdesinde 1..4 aralik kontrolu bulunamadi"
-    assert re.search(r":\s*4U?\s*;", m.group(0)), (
-        "sanitizeSystemState govdesinde FAULT(4) donus degeri bulunamadi"
+    assert re.search(r":\s*2U?\s*;", m.group(0)), (
+        "sanitizeSystemState govdesinde IDLE(2) donus degeri bulunamadi"
     )
 
 
@@ -297,13 +299,15 @@ def test_uks_sends_heartbeat_0xb0(uks_telemetry_dir):
     hb_value = extract_define_int(lora_h, "LORA_HEARTBEAT_BYTE", source="UKS lora.h")
     assert hb_value == contract.LORA_HEARTBEAT_BYTE
 
-    # main.c fiilen Lora_Send(..., &hb, ...) cagirip 0xB0 gonderiyor mu?
+    # main.c fiilen Lora_SendHeartbeatFast(&lora_ctx, LORA_HEARTBEAT_BYTE)
+    # cagirip 0xB0 gonderiyor mu? (UKS-05: Lora_Send yerine
+    # Lora_SendHeartbeatFast kullanilir — RX interrupt'siz, TX-safe path.)
     assert re.search(r"LORA_HEARTBEAT_BYTE", main_c), (
         "UKS main.c LORA_HEARTBEAT_BYTE'i kullanmiyor gorunuyor — 0xB0 "
         "gonderimi POZITIF dogrulanamadi"
     )
-    assert re.search(r"Lora_Send\s*\(\s*&lora_ctx\s*,\s*&hb", main_c), (
-        "UKS main.c icinde heartbeat byte'inin Lora_Send ile TX edildigi "
+    assert re.search(r"Lora_SendHeartbeatFast\s*\(\s*&lora_ctx\s*,\s*LORA_HEARTBEAT_BYTE", main_c), (
+        "UKS main.c icinde heartbeat byte'inin Lora_SendHeartbeatFast ile TX edildigi "
         "kod bulunamadi"
     )
 
