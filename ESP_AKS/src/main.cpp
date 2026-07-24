@@ -681,8 +681,9 @@ static bool LoRa_txSend(const TelemetryData &pkt, bool isReplay, void *ctxv) {
     return false;
   }
   // HİPOTEZ (bkz. SysStateDerive.h, Documents/CAN_Message_Table.md "0x0000E003"):
-  // sanitize'DAN ÖNCE — sanitizeSystemState(0) çalışırsa 0'ı zaten FAULT(4)
-  // yapar, türetilmiş 1/2/3 değeri o noktadan sonra uygulanırsa etkisiz kalır.
+  // sanitize'DAN ÖNCE — sanitizeSystemState(0) çalışırsa 0'ı IDLE(2)
+  // yapar (AKS-17), türetilmiş 1/2/3 değeri o noktadan sonra uygulanırsa
+  // etkisiz kalır.
   // Yalnızca LoRa TX paketleme kopyası (pktForUplink) değişir; VcuLogic'in
   // okuduğu paylaşılan TelemetryData (pkt / TEL_sensorDataQueue) DOKUNULMADAN
   // kalır (EK B güven kuralı — bu türetilmiş değer VCU karar mantığına
@@ -863,9 +864,9 @@ extern "C" void app_main() {
   // BMS durumu: 0xE000 ve 0xE001 DOĞRULANDI (packV, current, SoC, temp,
   // hücre min/max/avg). 24 hücrenin tekil voltajları (E015-E020) da
   // DOĞRULANDI. Açık iş: TEL_bmsSystemState hiçbir CAN ID'den parse
-  // EDİLMİYOR — TelemetrySanitize::sanitizeSystemState(0) bunu FAULT(4)
-  // yapar → UKS ekranında BMS her zaman FAULT görünür. Hücre sıcaklığı
-  // (E032-E033) alan anlamı hâlâ BİLİNMİYOR (stub).
+  // EDİLMİYOR — TelemetrySanitize::sanitizeSystemState(0) bunu IDLE(2)
+  // yapar → UKS ekranında BMS her zaman IDLE görünür (AKS-17). Hücre
+  // sıcaklığı (E032-E033) alan anlamı hâlâ BİLİNMİYOR (stub).
   // Bkz. Documents/CAN_Message_Table.md.
   ESP_LOGW(TAG, "BMS: sysState henuz parse edilmiyor (E002-E006 stub). "
                 "Hucre voltajlari (E015-E020) DOGRULANDI ve aktif.");
