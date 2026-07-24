@@ -10,6 +10,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#ifndef NATIVE_BUILD
+#include "esp_timer.h"   // AKS-10: gercek ms tabani (esp_timer_get_time)
+#endif
 
 static constexpr const char* TAG = "VCU_LOGIC";
 static constexpr uint32_t TASK_PERIOD_MS = 20;
@@ -133,7 +136,11 @@ void init(IRelayActuator& relays) {
         return;
     }
 
+#ifdef NATIVE_BUILD
     s_lastTimeMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+#else
+    s_lastTimeMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+#endif
     transitionTo(VcuState::IDLE);
 }
 
@@ -144,8 +151,17 @@ extern "C" void fake_freertos_advance_time(uint32_t);
 void run() {
 #ifdef NATIVE_BUILD
     fake_freertos_advance_time(TASK_PERIOD_MS);
-#endif
+    // Native testlerde esp_timer_get_time yok — tik sayacı ms tabanli
+    // (portTICK_PERIOD_MS=1) oldugundan xTaskGetTickCount() zaten ms verir.
     uint32_t nowMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+#else
+    // AKS-10: Gercek ms tabani — esp_timer_get_time() mikrosaniye verir,
+    // /1000 ile ms'e cevirilir. xTaskGetTickCount()*portTICK_PERIOD_MS
+    // yalnizca 10ms cozunurlugu (100 Hz tik) sagliyordu; bu, 20ms VCU
+    // dongusu icin yeterli ama zamanlamaya bagli kararlarda drift riski
+    // tasiyordu. Isaresiz cikarma idiomu uint32_t sarmasi ile dogru calisir.
+    uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+#endif
     uint32_t delta = nowMs - s_lastTimeMs;
     s_lastTimeMs = nowMs;
 
