@@ -5,6 +5,8 @@
 
 #include "driver/spi_master.h"
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 namespace {
 std::vector<FakeSpiWrite> s_writes;

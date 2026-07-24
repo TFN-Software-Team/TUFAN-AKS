@@ -1,7 +1,9 @@
 #pragma once
+#include "SystemConfig.h"
 #include <atomic>
 #include <cstdint>
 #include "driver/spi_master.h"
+#include "driver/gpio.h"
 
 #define MCP23S17_IODIRA 0x00
 #define MCP23S17_IODIRB 0x01

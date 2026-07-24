@@ -60,12 +60,14 @@ void test_hmi_touch_parser_state_reset_on_artifact(void) {
     TEST_ASSERT_FALSE(HMI_parseTouchByte(0xFC, state, outCmd));
 }
 
+#include "driver/uart.h"
+
 extern "C" {
-int uart_write_bytes(int, const void*, size_t) { return 0; }
-int uart_read_bytes(int, void*, uint32_t, uint32_t) { return 0; }
-int uart_param_config(int, const void*) { return 0; }
-int uart_set_pin(int, int, int, int, int) { return 0; }
-int uart_driver_install(int, int, int, int, void*, int) { return 0; }
+int uart_write_bytes(uart_port_t, const void*, size_t) { return 0; }
+int uart_read_bytes(uart_port_t, void*, uint32_t, uint32_t) { return 0; }
+int uart_param_config(uart_port_t, const uart_config_t*) { return 0; }
+int uart_set_pin(uart_port_t, int, int, int, int) { return 0; }
+int uart_driver_install(uart_port_t, int, int, int, void*, int) { return 0; }
 }
 
 // We include the cpp file directly because DisplayHMI is ignored in native lib_ignore

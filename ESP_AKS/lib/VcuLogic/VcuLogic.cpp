@@ -122,12 +122,14 @@ void init(IRelayActuator& relays) {
     s_eventQueue = xQueueCreate(8, sizeof(VcuEvent));
     if (s_eventQueue == nullptr) {
         ESP_LOGE(TAG, "Failed to create event queue");
+        s_relays->allOff(false);
         return;
     }
 
     s_TEL_dataMutex = xSemaphoreCreateMutex();
     if (s_TEL_dataMutex == nullptr) {
         ESP_LOGE(TAG, "Failed to create telemetry mutex");
+        s_relays->allOff(false);
         return;
     }
 
@@ -135,9 +137,12 @@ void init(IRelayActuator& relays) {
     transitionTo(VcuState::IDLE);
 }
 
+#ifdef NATIVE_BUILD
+extern "C" void fake_freertos_advance_time(uint32_t);
+#endif
+
 void run() {
 #ifdef NATIVE_BUILD
-    extern void fake_freertos_advance_time(uint32_t);
     fake_freertos_advance_time(TASK_PERIOD_MS);
 #endif
     uint32_t nowMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -249,8 +254,7 @@ void run() {
     }
 
     VcuState currentState = s_state.load(std::memory_order_relaxed);
-    if ((currentState == VcuState::IDLE || currentState == VcuState::READY ||
-         currentState == VcuState::DRIVE) &&
+    if ((currentState == VcuState::READY || currentState == VcuState::DRIVE) &&
         hasCriticalCondition()) {
         ESP_LOGE(TAG, "Critical safety threshold exceeded, entering FAULT");
         transitionTo(VcuState::FAULT);
@@ -323,6 +327,7 @@ void run() {
             return;
         }
 
+#if RELAY_ROLES_ASSIGNED
         if (event == VcuEvent::HEADLIGHT_TOGGLE) {
             bool hlDesired = !s_headlightOn.load(std::memory_order_relaxed);
             s_relays->setRelay(RELAY_CH_HEADLIGHT, hlDesired);
@@ -330,27 +335,27 @@ void run() {
             s_headlightOn.store(hlDesired, std::memory_order_relaxed);
             // return yok, asagidaki isleme devam et
         }
+#endif
 
         // State-specific event handling
         switch (currentState) {
             case VcuState::IDLE:
             {
-                // OTOMATIK GECIS (Fiziksel arac tasarimi): HMI ekran start/reset komutlari 
-                // iptal edildiginden, VCU sistem enerjilendiginde otomatik olarak 
-                // READY (ve sonra DRIVE) durumuna gecer.
-                TelemetryData VCU_snap = getTelemetrySnapshot();
-                bool actuatorFault = s_relays->hasActuatorFault();
-                if (isReadyEntryPermitted(VCU_snap) && !actuatorFault) {
-                    if (hasWarningCondition(VCU_snap)) {
-                        ESP_LOGW("VCU", "READY girildi ama WARN kosulu aktif!");
-                    }
-                    transitionTo(VcuState::READY);
-                } else {
-                    const char* reason = actuatorFault ? "actuator fault" : readyRejectReason(VCU_snap);
-                    if (reason != s_lastReadyRejectReason || s_stateTimer - s_lastReadyRejectLogMs >= 1000) {
-                        ESP_LOGW(TAG, "Otomatik READY gecisi reddedildi (bekleniyor): %s", reason);
-                        s_lastReadyRejectReason = reason;
-                        s_lastReadyRejectLogMs = s_stateTimer;
+                if (event == VcuEvent::START_REQUEST) {
+                    TelemetryData VCU_snap = getTelemetrySnapshot();
+                    bool actuatorFault = s_relays->hasActuatorFault();
+                    if (isReadyEntryPermitted(VCU_snap) && !actuatorFault) {
+                        if (hasWarningCondition(VCU_snap)) {
+                            ESP_LOGW("VCU", "READY girildi ama WARN kosulu aktif!");
+                        }
+                        transitionTo(VcuState::READY);
+                    } else {
+                        const char* reason = actuatorFault ? "actuator fault" : readyRejectReason(VCU_snap);
+                        if (reason != s_lastReadyRejectReason || s_stateTimer - s_lastReadyRejectLogMs >= 1000) {
+                            ESP_LOGW(TAG, "READY gecisi reddedildi: %s", reason);
+                            s_lastReadyRejectReason = reason;
+                            s_lastReadyRejectLogMs = s_stateTimer;
+                        }
                     }
                 }
                 break;
@@ -358,9 +363,7 @@ void run() {
 
             case VcuState::READY:
             {
-                // READY'de kontaktorlerin (S2/HV-) kapanmasi icin ufak bir yerlesme 
-                // payi (1000ms) birakip DRIVE'a otomatik gec.
-                if (s_stateTimer >= 1000) {
+                if (event == VcuEvent::DRIVE_ENABLE) {
                     transitionTo(VcuState::DRIVE);
                 }
                 break;

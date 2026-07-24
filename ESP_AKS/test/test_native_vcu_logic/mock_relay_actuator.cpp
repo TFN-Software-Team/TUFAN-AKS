@@ -43,6 +43,14 @@ void MockRelayActuator::allOn() {
     }
 }
 
+void MockRelayActuator::setBankStaggered(uint16_t mask, uint32_t /*stepDelayMs*/) {
+    ++g_fake_relay_allOn_count;
+    for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
+        if (mask & (1u << ch))
+            g_fake_relay_channelState[ch] = true;
+    }
+}
+
 void MockRelayActuator::allOff(bool silent) {
     ++g_fake_relay_allOff_count;
     if (g_fake_relay_allOff_firstSeq == 0)

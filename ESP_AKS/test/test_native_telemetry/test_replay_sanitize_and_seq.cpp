@@ -31,13 +31,13 @@ void test_replay_output_sanitizes_corrupted_system_state(void) {
     TEST_ASSERT_TRUE(ob_drop_front());
 
     const char* expected =
-        "TEL,2,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0\r\n";
+        "TEL,2,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0\r\n";
     TEST_ASSERT_EQUAL_STRING(expected, fake_uart_get_buffer());
     TEST_ASSERT_TRUE(ob_is_empty());
 }
 
 // ---------------------------------------------------------------------------
-// S4: sysState=0 (diğer aralık-dışı uç) da aynı şekilde FAULT(4)'e döner.
+// S4: sysState=0 (diğer aralık-dışı uç) da aynı şekilde IDLE(2)'ye döner (AKS-17).
 // ---------------------------------------------------------------------------
 void test_replay_output_sanitizes_zero_system_state(void) {
     fake_uart_reset();
@@ -55,7 +55,7 @@ void test_replay_output_sanitizes_zero_system_state(void) {
     tel.sendStatus(TelemetrySanitize::sanitizeForUplink(replay));
     TEST_ASSERT_TRUE(ob_drop_front());
 
-    TEST_ASSERT_NOT_NULL(strstr(fake_uart_get_buffer(), ",4,0,0,0,0,0,0\r\n"));
+    TEST_ASSERT_NOT_NULL(strstr(fake_uart_get_buffer(), ",2,0,0,0,0,0,0\r\n"));
 }
 
 // ---------------------------------------------------------------------------

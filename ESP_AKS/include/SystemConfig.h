@@ -6,10 +6,18 @@
 // Used across multiple modules for consistency
 
 // --- Includes ---
+#ifdef ESP_PLATFORM
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "driver/uart.h"
 #include "esp_system.h"
+#else
+#include <stdint.h>
+typedef int esp_reset_reason_t;
+#ifndef ESP_RST_BROWNOUT
+#define ESP_RST_BROWNOUT 15
+#endif
+#endif
 #include "E22Regs.h"
 
 // --- CAN Message IDs ---

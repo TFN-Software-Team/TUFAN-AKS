@@ -1,22 +1,16 @@
 #ifndef TUFAN_ALLOW_HV_TEST
-#pragma message("TUFAN_ALLOW_HV_TEST tanimli degil. Bu test donanim gerektirir, atlanacak.")
+#error "Bu test kontaktorleri kapatir. Arac montajliyken CALISTIRMAYIN. Bilerek calistiriyorsaniz -D TUFAN_ALLOW_HV_TEST=1 ile derleyin."
 #endif
 
 #include <unity.h>
 #include "RelayManager.h"
 
 void test_relay_begin_returns_true(void) {
-#ifndef TUFAN_ALLOW_HV_TEST
-    TEST_IGNORE_MESSAGE("TUFAN_ALLOW_HV_TEST not defined, skipping HW SPI/I2C test");
-#endif
     bool ok = RelayManager::instance().begin();
     TEST_ASSERT_TRUE(ok);
 }
 
 void test_relay_set_and_all_calls_do_not_crash(void) {
-#ifndef TUFAN_ALLOW_HV_TEST
-    TEST_IGNORE_MESSAGE("TUFAN_ALLOW_HV_TEST not defined, skipping HW SPI/I2C test");
-#endif
     RelayManager::instance().setRelay(0, true);
     
     // Gercek geri-okuma assert'i (OLAT kaydini oku)

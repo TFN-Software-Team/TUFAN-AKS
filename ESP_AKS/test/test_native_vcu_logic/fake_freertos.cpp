@@ -61,8 +61,6 @@ TickType_t xTaskGetTickCount(void) {
     return s_mockTickCount;
 }
 
-}  // extern "C"
-
 // Test helper — testler arası queue durumunu temizler.
 void fake_freertos_reset(void) {
     s_queue.clear();
@@ -72,3 +70,5 @@ void fake_freertos_reset(void) {
 void fake_freertos_advance_time(uint32_t ms) {
     s_mockTickCount += pdMS_TO_TICKS(ms);
 }
+
+}  // extern "C"

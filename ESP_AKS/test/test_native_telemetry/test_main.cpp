@@ -34,8 +34,8 @@ extern void test_impl_realistic_range_sweep_stays_within_bounds(void);
 
 // TelemetrySanitize (UKS aralik-disi alan sanitizasyonu) birim testleri
 extern void test_sanitize_system_state_valid_passthrough(void);
-extern void test_sanitize_system_state_zero_becomes_fault(void);
-extern void test_sanitize_system_state_five_becomes_fault(void);
+extern void test_sanitize_system_state_zero_becomes_idle(void);
+extern void test_sanitize_system_state_five_becomes_idle(void);
 extern void test_sanitize_soc_within_range_passthrough(void);
 extern void test_sanitize_soc_at_max_passthrough(void);
 extern void test_sanitize_soc_above_max_clamped(void);
@@ -116,8 +116,8 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_rpmToSpeedKmhX10Impl_nan_protection);
 
     RUN_TEST(test_sanitize_system_state_valid_passthrough);
-    RUN_TEST(test_sanitize_system_state_zero_becomes_fault);
-    RUN_TEST(test_sanitize_system_state_five_becomes_fault);
+    RUN_TEST(test_sanitize_system_state_zero_becomes_idle);
+    RUN_TEST(test_sanitize_system_state_five_becomes_idle);
     RUN_TEST(test_sanitize_soc_within_range_passthrough);
     RUN_TEST(test_sanitize_soc_at_max_passthrough);
     RUN_TEST(test_sanitize_soc_above_max_clamped);

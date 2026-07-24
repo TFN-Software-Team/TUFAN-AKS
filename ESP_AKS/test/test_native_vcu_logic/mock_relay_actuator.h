@@ -43,6 +43,7 @@ void fake_relay_reset(void);
 class MockRelayActuator : public IRelayActuator {
    public:
     void allOn() override;
+    void setBankStaggered(uint16_t mask, uint32_t stepDelayMs = RELAY_STAGGER_STEP_MS) override;
     void allOff(bool silent) override;
     void setRelay(uint8_t channel, bool state) override;
     void verifyIfDue(uint32_t nowMs) override;

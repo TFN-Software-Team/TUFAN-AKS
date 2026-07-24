@@ -167,9 +167,10 @@ inline bool hasWarningCondition(const TelemetryData& VCU_data) {
 
 inline bool hasCriticalCondition(const TelemetryData& VCU_data,
                                  VcuState currentState) {
-    // DEVRE DISI: TEL_bmsSystemState gercek bir kaynaktan gelmiyor (AKS-17).
-    // Gercek CAN parse eklendikten sonra yeniden aktif edilecek.
     if (VCU_data.TEL_motorErrorFlags != 0)
+        return true;
+
+    if (VCU_data.TEL_bmsDataValid && VCU_data.TEL_bmsSystemState == 4)
         return true;
 
     if (VCU_data.TEL_motorTimeoutActive && currentState != VcuState::IDLE)

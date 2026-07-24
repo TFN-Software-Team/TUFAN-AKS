@@ -105,6 +105,11 @@ extern void test_tick_wraparound_within_window_no_retry(void);
 extern void test_tick_wraparound_at_threshold_retries(void);
 extern void test_post_reception_timeout_is_out_of_scope(void);
 
+// Motor timeout debounce
+extern void test_motor_timeout_debounce_normal(void);
+extern void test_motor_timeout_debounce_recovered(void);
+extern void test_motor_timeout_debounce_rate_limiting(void);
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -207,6 +212,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_tick_wraparound_within_window_no_retry);
     RUN_TEST(test_tick_wraparound_at_threshold_retries);
     RUN_TEST(test_post_reception_timeout_is_out_of_scope);
+
+    // Motor timeout debounce
+    RUN_TEST(test_motor_timeout_debounce_normal);
+    RUN_TEST(test_motor_timeout_debounce_recovered);
+    RUN_TEST(test_motor_timeout_debounce_rate_limiting);
 
     return UNITY_END();
 }

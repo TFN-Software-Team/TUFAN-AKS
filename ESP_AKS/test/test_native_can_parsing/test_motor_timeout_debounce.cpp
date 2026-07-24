@@ -57,10 +57,4 @@ void test_motor_timeout_debounce_rate_limiting(void) {
     TEST_ASSERT_EQUAL(0, lastCheck); // still 0
 }
 
-int main() {
-    UNITY_BEGIN();
-    RUN_TEST(test_motor_timeout_debounce_normal);
-    RUN_TEST(test_motor_timeout_debounce_recovered);
-    RUN_TEST(test_motor_timeout_debounce_rate_limiting);
-    return UNITY_END();
-}
+

@@ -14,3 +14,11 @@ typedef uint32_t  TickType_t;
 #define portMAX_DELAY   ((TickType_t)0xFFFFFFFFu)
 #define pdMS_TO_TICKS(x) ((TickType_t)(x))
 #define portTICK_PERIOD_MS 1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+TickType_t xTaskGetTickCount(void);
+#ifdef __cplusplus
+}
+#endif
