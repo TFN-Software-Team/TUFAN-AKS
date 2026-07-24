@@ -26,8 +26,8 @@ void test_reset_interlock_motor_error_blocks(void) {
 
 void test_reset_interlock_bms_error_blocks(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsSystemState = 4;  // FAULT
-    TEST_ASSERT_FALSE(isResetInterlockSatisfied(d, VcuState::FAULT));
+    d.TEL_bmsSystemState = 4;  // FAULT (devre disi: AKS-17)
+    TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }
 
 void test_reset_interlock_unverified_bms_system_state_does_not_block(void) {

@@ -252,8 +252,8 @@ void test_critical_motor_error_flag_set(void) {
 
 void test_critical_bms_error_flag_set(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsSystemState = 4;   // FAULT
-    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
+    d.TEL_bmsSystemState = 4;   // FAULT (devre disi: AKS-17)
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
 // ---------------------------------------------------------------------------
