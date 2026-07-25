@@ -2,7 +2,16 @@
 // yok; çağrılar global sayaçlara işlenir, testler bunları doğrular.
 #include "mock_relay_actuator.h"
 
+// "Bank kapatma yolu cagrildi" sayaci — allOn() VE setBankStaggered() ikisini
+// de sayar. Testlerin cogu "READY girisinde bank kapandi mi?" diye sorar ve
+// hangi yolun kullanildigi onlar icin fark etmez.
 unsigned g_fake_relay_allOn_count = 0;
+// YALNIZ allOn() sayaci. RELAY_ROLES_ASSIGNED=1'de READY girisi allOn()
+// KULLANMAMALIDIR: allOn() TUM bank maskesini (S1 dahil) kapatir ve sarj
+// hattini surus sirasinda enerjilendirirdi (sartname 8.2.a.vii ihlali).
+// Roles suite'i bu sayacin 0 kalmasini dogrular; g_fake_relay_allOn_count
+// bunu AYIRT EDEMEZ (setBankStaggered ile ortaktir).
+unsigned g_fake_relay_allOnDirect_count = 0;
 unsigned g_fake_relay_allOff_count = 0;
 unsigned g_fake_relay_allOff_silent_count = 0;
 unsigned g_fake_relay_setRelay_count = 0;
@@ -20,6 +29,7 @@ MockRelayActuator g_mockRelay;
 
 void fake_relay_reset(void) {
     g_fake_relay_allOn_count = 0;
+    g_fake_relay_allOnDirect_count = 0;
     g_fake_relay_allOff_count = 0;
     g_fake_relay_allOff_silent_count = 0;
     g_fake_relay_setRelay_count = 0;
@@ -37,6 +47,7 @@ void fake_relay_reset(void) {
 // dışındaki kanalın (roller atandığında flaşör) durumu KORUNUR.
 void MockRelayActuator::allOn() {
     ++g_fake_relay_allOn_count;
+    ++g_fake_relay_allOnDirect_count;
     for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
         if (RELAY_CONTACTOR_BANK_MASK & (1u << ch))
             g_fake_relay_channelState[ch] = true;
