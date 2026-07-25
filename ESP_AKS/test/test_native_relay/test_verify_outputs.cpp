@@ -135,3 +135,47 @@ void test_readRegister_returns_written_values(void) {
     TEST_ASSERT_TRUE(RelayManager::instance().readRegister(MCP23S17_IODIRA, v));
     TEST_ASSERT_EQUAL_HEX8(0x00, v);
 }
+
+// ---------------------------------------------------------------------------
+// Y31 — IOCON.BANK bozulması (BANK=1) → uyuşmazlık sayılır, re-init tetiklenir
+// ve register modeli BANK=0'a geri döner.
+//
+// NEDEN KRİTİK: BANK=1'de MCP23S17'nin TÜM register haritası kayar (OLATA
+// 0x14 → 0x0A gibi). Bu durumda OLAT/IODIR geri-okumaları BAŞKA register'lardan
+// gelir; eski verifyOutputs bunu göremez ve "çıkışlar doğru" diyebilirdi.
+// Yani kontaktörler komut edildiği gibi DAVRANMADIĞI HALDE doğrulama YEŞİL
+// görünürdü — sessiz ve tehlikeli bir yanılgı.
+// ---------------------------------------------------------------------------
+void test_verify_detects_iocon_bank_corruption_and_restores(void) {
+    primeRelay();
+    fake_spi_reset();
+    TEST_ASSERT_FALSE(RelayManager::instance().hasActuatorFault());
+
+    // BANK bitini (bit 7) set et — chip BANK=1'e düşmüş gibi davransın.
+    fake_spi_set_reg(MCP23S17_IOCON_BANK0, 0x80);
+
+    bool ok = RelayManager::instance().verifyOutputs();
+
+    TEST_ASSERT_FALSE(ok);                                           // uyuşmazlık görüldü
+    TEST_ASSERT_TRUE(RelayManager::instance().hasActuatorFault());   // fault latch'lendi
+    // re-init IOCON'u temizledi → model BANK=0'a döndü
+    TEST_ASSERT_EQUAL_HEX8(0x00, fake_spi_get_reg(MCP23S17_IOCON_BANK0));
+}
+
+// Y31 — reinitAndReassert() IOCON'u OLAT/IODIR'den ÖNCE yazmalı. Bu yol zaten
+// bir uyuşmazlık (muhtemel brown-out) sonrası çağrılır; IOCON düzeltilmeden
+// yapılan OLAT/IODIR yazımları yanlış register'lara gider ve re-assert sessizce
+// ETKİSİZ kalırdı.
+void test_reassert_writes_iocon_before_output_registers(void) {
+    primeRelay();
+    fake_spi_reset();
+
+    fake_spi_set_reg(MCP23S17_OLATA, 0xAA);   // bozulma → re-init tetikle
+    RelayManager::instance().verifyOutputs();
+
+    TEST_ASSERT_TRUE(fake_spi_write_count() >= 2);
+    TEST_ASSERT_EQUAL_HEX8(MCP23S17_IOCON_BANK1, fake_spi_write_at(0).reg);
+    TEST_ASSERT_EQUAL_HEX8(0x00, fake_spi_write_at(0).value);
+    TEST_ASSERT_EQUAL_HEX8(MCP23S17_IOCON_BANK0, fake_spi_write_at(1).reg);
+    TEST_ASSERT_EQUAL_HEX8(0x00, fake_spi_write_at(1).value);
+}

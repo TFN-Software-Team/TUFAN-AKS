@@ -24,6 +24,7 @@ extern void test_setBankStaggered_drives_selected_channels(void);
 
 // init sequence (safety-critical)
 extern void test_begin_writes_in_safe_order(void);
+extern void test_begin_writes_iocon_before_any_output_register(void);
 extern void test_begin_returns_true_on_success(void);
 extern void test_begin_initializes_state_to_zero(void);
 
@@ -35,6 +36,8 @@ extern void test_clear_actuator_fault(void);
 extern void test_verifyIfDue_throttles_to_period(void);
 extern void test_readRegister_returns_written_values(void);
 extern void test_verify_spi_error_sets_fault(void);
+extern void test_verify_detects_iocon_bank_corruption_and_restores(void);
+extern void test_reassert_writes_iocon_before_output_registers(void);
 
 
 void setUp(void) {}
@@ -62,6 +65,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_setBankStaggered_drives_selected_channels);
 
     RUN_TEST(test_begin_writes_in_safe_order);
+    RUN_TEST(test_begin_writes_iocon_before_any_output_register);
     RUN_TEST(test_begin_returns_true_on_success);
     RUN_TEST(test_begin_initializes_state_to_zero);
 
@@ -72,6 +76,8 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_verifyIfDue_throttles_to_period);
     RUN_TEST(test_readRegister_returns_written_values);
     RUN_TEST(test_verify_spi_error_sets_fault);
+    RUN_TEST(test_verify_detects_iocon_bank_corruption_and_restores);
+    RUN_TEST(test_reassert_writes_iocon_before_output_registers);
 
     return UNITY_END();
 }

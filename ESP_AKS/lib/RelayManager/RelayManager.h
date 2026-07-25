@@ -5,10 +5,30 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 
+// --- MCP23S17 register adresleri (BANK=0 haritası) ---
+// DİKKAT: bu adresler yalnızca IOCON.BANK=0 iken geçerlidir. BANK=1'de tüm
+// harita kayar (ör. OLATA 0x14 → 0x0A) ve aşağıdaki sabitler YANLIŞ register'a
+// yazar. Bu yüzden begin()/reinitAndReassert() İLK İŞ olarak IOCON'u bilinen
+// bir değere (BANK=0) çeker — bkz. MCP23S17_IOCON_* notu.
 #define MCP23S17_IODIRA 0x00
 #define MCP23S17_IODIRB 0x01
 #define MCP23S17_OLATA 0x14
 #define MCP23S17_OLATB 0x15
+
+// IOCON'un İKİ adresi vardır ve hangisinin geçerli olduğu IOCON.BANK bitinin
+// KENDİSİNE bağlıdır (tavuk-yumurta): BANK=0 iken 0x0A, BANK=1 iken 0x05.
+// Chip'in hangi modda olduğunu BİLMEDİĞİMİZ için (brown-out, kısmi reset,
+// gürültülü SPI, veya önceki bir firmware) HER İKİSİNE de 0x00 yazılır:
+//   * Chip BANK=1'deyse  → 0x05'e yazım IOCON'u bulur ve BANK=0'a çeker.
+//   * Chip BANK=0'daysa  → 0x0A'ya yazım IOCON'u bulur (0x05 yazımı zararsız
+//                          bir GPINTENB/DEFVAL bölgesine düşer, hepsi 0x00).
+// Sıra ÖNEMLİ: önce 0x05 (BANK=1 varsayımı), sonra 0x0A (BANK=0 teyidi).
+// Y31: bu yazım olmadan, chip beklenmedik bir sebeple BANK=1'e düşerse tüm
+// röle yazımları sessizce yanlış register'lara gider — kontaktörler komut
+// edildiği gibi davranmaz ve geri-okuma doğrulaması da yanıltıcı olur.
+#define MCP23S17_IOCON_BANK0 0x0A
+#define MCP23S17_IOCON_BANK1 0x05
+
 #define MCP23S17_ADDR 0x40       // SPI opcode, R/W=0 (write)
 #define MCP23S17_ADDR_READ 0x41  // SPI opcode, R/W=1 (read) — G3 geri-okuma yolu
 
