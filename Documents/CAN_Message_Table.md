@@ -23,7 +23,37 @@ byte-byte belgeler. Her alan için doğrulama durumu ve kanıt verilmiştir.
 | ID Format | **29-bit Extended** (CAN 2.0b) |
 | Byte Order | **Big Endian** (doğrulanmış alanlar için kanıtlandı) |
 | CAN Bitrate | **500 kbps** (ESP-IDF TWAI driver, TJA1050 transceiver) |
-| 120 Ω Termination | Mevcut değil (Solion föyü: "Mevcut değildir") |
+| 120 Ω Termination | **DOĞRULANMALI** — bu satır eskiden Solion föyüne dayanıyordu; Solion bizim BMS'imiz DEĞİL (bkz. aşağıdaki not). Lithium Balance cBMS24 föyünde teyit edilmeli veya multimetre ile ölçülmeli. |
+
+## Batarya / BMS Donanımı — Lithium Balance cBMS24
+
+> **ÜRETİCİ NOTU (Y48):** Gerçek BMS **Lithium Balance cBMS24**'tür.
+> Belgelerde geçmişten kalan **"Solion"** adı bir HATADIR — 2026-07-03
+> main-merge'inde donanım vendörü Solion SK'dan Lithium Balance'a geçmişti ve
+> bazı satırlar güncellenmeden kalmıştı. Solion föyüne dayanan hiçbir değer
+> bu donanım için bağlayıcı DEĞİLDİR.
+
+Föy değerleri (belgelerde referans olarak kullanın):
+
+| Özellik | Değer |
+| --- | --- |
+| Hücre sayısı | 24 hücreye kadar (bizde 24S LiFePO4) |
+| Kimya | LiFePO4 |
+| Minimum besleme | 11 V |
+| Güç beslemesi | 6–35 V |
+| Dengeleme | **Pasif (dissipative)**, 200 mA @ 4.2 V |
+| Hücre voltaj hassasiyeti | ~±1.5 mV |
+| Örnekleme | ~100 ms |
+| Sıcaklık kanalı | 6 kanala kadar |
+| CAN | 2.0A/B, **125–1000 kbit/s** (bizde 500 kbps) |
+
+Paket değerleri (Y23 ekip teyidi, 24.07.2026): min **60.0 V**, nominal
+**76.8 V** (24 × 3.20 V), maks **87.6 V**, kapasite **100 Ah / 8700 Wh**.
+
+**Dengeleme AKS'in işi DEĞİLDİR:** cBMS24 pasif dengelemeyi kendi başına
+yürütür; AKS yalnızca hangi hücrenin dengelendiğini GÖSTERİR
+(`BmsComputed::balanceFlag`, bkz. o dosyadaki not). AKS'ten BMS'e dengeleme
+komutu gönderilmez.
 
 ---
 
@@ -297,8 +327,12 @@ Oturum 3'te görülmedi. Önceki oturumlarda tüm payload sıfır. Firmware tara
 ## Sonraki Adımlar
 
 1. **E002–E006 çözümü:** Diagnostic sniffer modu ile çapraz gözlem; LiBAL c-BMS CREATOR ile PeakCAN doğrulama. (HMI kararlarını etkilemiyor)
-3. **Bitrate teyidi:** 500 kbps çalışıyor (frame'ler geliyor); Solion föyü "standart 125 kbps"
-   diyor ama bu farklı bir yapılandırma olabilir.
+3. ~~**Bitrate teyidi**~~ — **KAPANDI.** Eski not, Solion föyündeki "standart
+   125 kbps" ifadesine dayanarak 500 kbps'in şüpheli olduğunu söylüyordu; ama
+   Solion bizim BMS'imiz DEĞİL (bkz. aşağıdaki üretici notu). Gerçek donanım
+   **Lithium Balance cBMS24** ve föyüne göre CAN 2.0A/B, **125–1000 kbit/s**
+   aralığını destekliyor — 500 kbps bu aralığın içindedir. Sahada frame'lerin
+   sorunsuz gelmesi de bunu doğruluyor. Araştırılacak bir çelişki yok.
 4. **SoC 2 kullanımı:** SoC 1 vs SoC 2 arasındaki 0.37% farkın anlamı araştırılacak (farklı
    algoritma? farklı hücre grubu?).
 5. **E003 b0/b1 teyit checklist'i (PCAN, 2026-07-14 analizinden):**

@@ -11,41 +11,93 @@ TUFAN-AKS is the Vehicle Control Unit (VCU / AKS) firmware for the TUFAN electri
 - Language standard: C++17
 - Main transport interfaces: CAN, SPI, UART
 
-## Repository Layout
+## Sistem Ne Yapar
 
-The current firmware repository is organized around seven runtime nodes / code areas:
+AKS (Araç Kontrol Sistemi), aracın **kontrol birimi** ve **telemetri
+kaynağıdır**. Üç işi vardır:
 
-1. `src/main.cpp`
-Application entry point, task creation, watchdog refresh points, and inter-task queue wiring.
+1. **Kontrol** — kontaktörleri süren, 6 durumlu bir güvenlik durum makinesi
+   çalıştırır: `INIT → IDLE → READY → DRIVE`, artı her an girilebilen
+   `EMERGENCY_STOP` ve `FAULT`.
+2. **Ölçüm** — CAN üzerinden BMS (Lithium Balance cBMS24) ve motor
+   sürücüsünü dinler, doğrulanmış sinyalleri tek bir veri sözleşmesinde
+   (`TelemetryData`) toplar.
+3. **Yayın** — bu veriyi LoRa ile UKS'e (yer istasyonu) gönderir ve Nextion
+   ekranına basar. Bağlantı koparsa veriyi tamponlar, dönünce replay eder.
 
-2. `src/VcuLogic.*`
-Event-driven VCU state machine for `INIT`, `IDLE`, `READY`, `DRIVE`, `EMERGENCY_STOP`, and `FAULT`.
+## RTOS Görevleri (4 task)
 
-3. `lib/CanManager`
-TWAI/CAN transport, motor driver communication, BMS frame parsing, and CAN-originated fault reporting.
+`src/main.cpp` içinde `xTaskCreatePinnedToCore` ile kurulur:
 
-4. `lib/RelayManager`
-MCP23S17-based active-low relay control for the positive contactor bank.
+| Task | İşi |
+| --- | --- |
+| `CAN_Task` | TWAI RX/TX, BMS + motor frame ayrıştırma, tazelik izleme |
+| `VCU_Task` | Durum makinesi, güvenlik eşikleri, röle/kontaktör kararları |
+| `HMI_Task` | Nextion ekranı: gösterim + dokunmatik komut okuma |
+| `LoRa_Task` | UKS uplink zamanlaması, offline tampon/replay, heartbeat |
 
-5. `lib/DisplayHMI`
-Nextion HMI UART transport and command handling.
+## Depo Yerleşimi
 
-6. `lib/Telemetry`
-LoRa / telemetry packet formatting and UART uplink support.
+- `src/main.cpp` — giriş noktası, task kurulumu, watchdog, kuyruk bağlantıları
+- `include/SystemConfig.h` — pin haritası, CAN ID'leri, zamanlama sabitleri,
+  eşikler, derleme bayrakları
+- `lib/` — **13 kütüphane**, ikiye ayrılır:
+  - **Donanıma dokunanlar:** `CanManager` (TWAI), `RelayManager` (SPI/MCP23S17),
+    `DisplayHMI` (Nextion UART), `Telemetry` + `LoraLink` + `E22Config` (LoRa)
+  - **Saf / native test edilebilir:** `CanParse`, `VcuLogic`, `BmsAlgo`,
+    `BmsModel`, `HMIHelpers`, `OfflineBuffer`, `VehicleData`
+- `test/` — native (host) test paketleri; beklenen sayılar
+  [TEST_BASELINE.md](TEST_BASELINE.md) içinde
+- `tools/e2e/` — AKS↔UKS sözleşme (drift) testleri, pytest
 
-7. `include/SystemConfig.h`
-Shared pin map, message IDs, timing constants, LoRa mode defaults, and relay channel definitions.
+## Derleme ve Yükleme
 
-## Current CAN Coverage
+```bash
+# Derle
+pio run -e esp32dev
 
-The active CAN message set is documented in [CAN_Message_Table.md](CAN_Message_Table.md).
+# Karta yükle
+pio run -e esp32dev --target upload
 
-Implemented frames:
+# Seri monitör (115200)
+pio device monitor
+```
 
-- `0x100`: torque command
-- `0x200`: motor status
-- `0xE000`: Lithium Balance BMS config
-- `0xE001`: Lithium Balance BMS live
+## Testler
+
+```bash
+pio test -e native          # varsayılan derleme (RELAY_ROLES_ASSIGNED=0)
+pio test -e native_roles    # rol mantığı varyantı (bayrak=1)
+pytest tools/e2e/ -v        # AKS↔UKS sözleşme testleri
+```
+
+**Beklenen test sayıları [TEST_BASELINE.md](TEST_BASELINE.md) içindedir.**
+Sayı düştüyse bir paket sessizce çalışmıyor olabilir — o dosyaya bakın.
+
+## Derleme Bayrakları
+
+| Bayrak | Varsayılan | Anlamı |
+| --- | --- | --- |
+| `RELAY_ROLES_ASSIGNED` | **0** | S1/S2 ayrımı, flaşör, fan, far mantığı. **0 çünkü Faz 2 (klemens↔yük) kablolaması bitmedi** — aşağıya bkz. |
+| `MOTOR_DRIVER_PRESENT` | **0** | Motor sürücüsü henüz yok; tork komutu ÜRETİLMEZ |
+| `SYSSTATE_DERIVE_FROM_CURRENT` | **1** | BMS durum alanı, doğrulanmış akımdan çalışma modu taşır (Y33) |
+
+## Güncel CAN Kapsamı
+
+Tam ve tek doğruluk kaynağı:
+[Documents/CAN_Message_Table.md](Documents/CAN_Message_Table.md).
+
+Ayrıştırılan frame'ler:
+
+| ID | İçerik | Durum |
+| --- | --- | --- |
+| `0x200` | Motor durumu (RPM, gerilim, hata bayrakları) | DOĞRULANDI |
+| `0x100` | Tork komutu (TX) | `MOTOR_DRIVER_PRESENT=0` — gönderilmiyor |
+| `0xE000` | Pack gerilimi, akım, SoC 1, SoC 2 | DOĞRULANDI |
+| `0xE001` | Hücre min/max/ort özeti + 2 sıcaklık | DOĞRULANDI |
+| `0xE015`–`0xE020` | 24 hücrenin tekil voltajları (4 hücre/frame) | DOĞRULANDI |
+| `0x1806E5F4` | Şarj cihazı komutu (yalnız dinlenir) | DOĞRULANDI |
+| `0xE002`–`0xE006`, `0xE032`, `0xE033` | Alan anlamları çözülemedi | BİLİNMİYOR — karar mantığına bağlı DEĞİL |
 
 ## LoRa / E22 Baseline
 
@@ -79,7 +131,7 @@ Röle katmanı artık şartname Bölüm 3'e (6.e.ii/6.e.iii sıcaklık uyarı fl
 Doğrulama iki aşamalıdır: **Faz 1 (yazılım kanalı ↔ kart klemensi) DOĞRULANDI** — 2026-07-22, çıplak kartta (klemensler boş, HV ayrık) 10 kanal sırayla sürülüp durum LED'iyle eşlendi, 10/10 şemayla birebir uyuştu (ch0→OUT0/D8 … ch9→OUT9/D23; ⚠️ röle ref. K1/K3… klemens sırasıyla karışık — kablolamada OUT etiketine bakılır). **Faz 2 (klemens ↔ fiziksel yük kablolaması) HENÜZ DEĞİL** — donanım ekibi harness'i çekince tamamlanacak. Bu nedenle rol mantığı `RELAY_ROLES_ASSIGNED` derleme bayrağının (varsayılan **0**, `#warning` basar) arkasında KALIR; bayrak Faz 1 ile değil, yalnızca Faz 2 kablolaması bitince 1 yapılacak. LED/test-noktası tablosu ve Faz 2 yük atamaları: [RELAY_CHANNEL_TABLE.md](Documents/RELAY_CHANNEL_TABLE.md).
 
 - **Bayrak=0 (varsayılan):** 10 kanalın tamamı tek pozitif kontaktör bankıdır (`RELAY_CONTACTOR_BANK_MASK=0x3FF`); `allOn()`/`allOff()` davranışı önceki sürümle bayt-bayt aynıdır. Flaşör / fan / far ve S1/S2 mantığı derlenmez.
-- **Bayrak=1:** `RELAY_CONTACTOR_BANK_MASK=0x17B` (flaşör 9 + fan 7 + far 2 hariç) olur; `allOff()` güvenlik açması S1+S2+HV−+bank'ı açar ama flaşörü/fanı/farı söndürmez. Flaşör, doğrulanmış BMS sıcaklığından 55 °C'de yanar, 53 °C altında söner (`FLASHER_HYSTERESIS_C=2`). Soğutma fanı (şartname B3 7.a-b) aynı desenle 40 °C'de açılır, 35 °C'ye inince kapanır (`FAN_ON_TEMP_C`/`FAN_OFF_TEMP_C`, CONFIG); FAULT/E-STOP dahil her durumda çalışır (sıcak batarya soğutması kesilmez), bayat BMS verisinde dokunulmaz. Far (şartname B2 9.19.c) artık **fiziksel bir düğmeyle** (`HEADLIGHT_SWITCH_PIN`=GPIO27, doğrudan ESP32 GPIO + INPUT_PULLUP, SPI'dan bağımsız) kontrol edilir; ekran farı KONTROL ETMEZ, yalnız durumunu GÖSTERİR (`far.pic`, Nextion Picture bileşeni "far"). Düğme tipi `HEADLIGHT_SWITCH_LATCHING` (varsayılan 1 = kalıcı/anahtarlı, otomotiv normu — ESP reset'inde far anahtar konumundan geri gelir), debounce `HEADLIGHT_DEBOUNCE_MS`=40 ms; saf karar mantığı `lib/VcuLogic/HeadlightSwitch.h` (native test edilir). BMS'ten bağımsız, FAULT/E-STOP/READY'de korunur (bank dışı kanal). Eski ekran komutu 5 (`HEADLIGHT_TOGGLE`) KALDIRILDI ve kalıcı olarak rezerve edildi. S1/S2 mod anahtarlaması: şarjda (charger CAN akışı tazeyken, `TEL_chargerActive`) S1 kapalı + S2 açık ve READY reddedilir (8.2.a.iii); READY/DRIVE'da S1 açık + sürüş bankı (`RELAY_DRIVE_BANK_MASK=0x07B`) kapalı (8.2.a.vii); güvenlik probleminde hepsi açık (8.2.a.vi).
+- **Bayrak=1:** `RELAY_CONTACTOR_BANK_MASK=0x17B` (flaşör 9 + fan 7 + far 2 hariç) olur; `allOff()` güvenlik açması S1+S2+HV−+bank'ı açar ama flaşörü/fanı/farı söndürmez. Flaşör, doğrulanmış BMS sıcaklığından 55 °C'de yanar, 53 °C altında söner (`FLASHER_HYSTERESIS_C=2`). Soğutma fanı (şartname B3 7.a-b) aynı desenle 40 °C'de açılır, 35 °C'ye inince kapanır (`FAN_ON_TEMP_C`/`FAN_OFF_TEMP_C`, CONFIG); FAULT/E-STOP dahil her durumda çalışır (sıcak batarya soğutması kesilmez), bayat BMS verisinde dokunulmaz. Far (şartname B2 9.19.c) artık **fiziksel bir düğmeyle** (`HEADLIGHT_SWITCH_PIN`=GPIO27, doğrudan ESP32 GPIO + INPUT_PULLUP, SPI'dan bağımsız) kontrol edilir; ekran farı KONTROL ETMEZ, yalnız durumunu GÖSTERİR (`far.pic`, Nextion Picture bileşeni "far"). Düğme tipi `HEADLIGHT_SWITCH_LATCHING` (varsayılan 1 = kalıcı/anahtarlı, otomotiv normu — ESP reset'inde far anahtar konumundan geri gelir), debounce `HEADLIGHT_DEBOUNCE_MS`=40 ms; saf karar mantığı `lib/VcuLogic/HeadlightSwitch.h` (native test edilir). BMS'ten bağımsız, FAULT/E-STOP/READY'de korunur (bank dışı kanal). ⚠️ **AÇIK ÇELİŞKİ — ekran komutu 5 (far toggle):** Bu satır eskiden "komut 5 KALDIRILDI ve kalıcı olarak rezerve edildi" diyordu, ama **kod hâlâ komut 5'i işliyor** (`src/main.cpp` → `case 5` → `VcuEvent::HEADLIGHT_TOGGLE`, `VcuLogic.cpp` içinde `RELAY_ROLES_ASSIGNED` arkasında). Yani ekran farı hâlâ toggle edebiliyor. Üstelik fiziksel düğme mantığı her tick'te far durumunu anahtar konumuna eşitlediğinden (latching mod), ekrandan yapılan toggle bir sonraki tick'te **geri alınır** — iki sürücü aynı kanala yazıyor. Karar verilip tek yol bırakılmalı (bkz. `BENI_OKU.md`). S1/S2 mod anahtarlaması: şarjda (charger CAN akışı tazeyken, `TEL_chargerActive`) S1 kapalı + S2 açık ve READY reddedilir (8.2.a.iii); READY/DRIVE'da S1 açık + sürüş bankı (`RELAY_DRIVE_BANK_MASK=0x07B`) kapalı (8.2.a.vii); güvenlik probleminde hepsi açık (8.2.a.vi).
 
 Sıcaklık eşikleri 55/70 °C (uyarı/kapanma, 15 °C sabit aralık — şartname 6.e.iii) `SystemConfig.h` ve `VcuLogic.h` içindeki `static_assert`'lerle derleme zamanında kilitlidir. Bayrak=1 varyantının testleri `pio test -e native_roles` ile çalışır (`test_roles_*` suite'leri).
 
@@ -111,5 +163,6 @@ ESP-AKS ve Lithium Balance c-BMS entegrasyonu başarıyla devreye alınmıştır
 - **0x1806E5F4**: Şarj cihazı gerilim ve akım hedefi (Charger command - Sadece okunuyor).
 
 **Açık İşler ve Bilinmeyenler (BİLİNMİYOR):**
-- **0xE002-0xE006**: BMS statik durumu ve limit parametreleri yayını olduğu düşünülüyor, alan anlamları tamamen çözülemedi. HMI karar mantığını etkilemez.
-- **Bitrate Teyidi:** Gerçek araç testinde CAN bus hızının `500kbps` mi yoksa `125kbps` mi olacağı belirsizdir. `CanManager::begin()` içinde **otomatik hız bulucu (auto-baud)** devreye alınarak bu risk giderilmiştir (bkz. [BRING_UP_CHECKLIST.md](Documents/BRING_UP_CHECKLIST.md)).
+- **0xE002-0xE006, 0xE032, 0xE033**: BMS statik durumu / limit parametreleri / alarm bitfield adayı olduğu düşünülüyor; alan anlamları çözülemedi. Karar mantığını ETKİLEMEZ. Bkz. `BENI_OKU.md` 5.1.
+- **BMS sağlık durumu (OK/FAULT) için CAN ID YOK** (Y33, 24.07.2026) ve aranmayacak. Telemetrideki `sysState` alanı bunun yerine **doğrulanmış akımdan türetilen çalışma modunu** taşır (1=Deşarj, 2=Boşta, 3=Şarj); FAULT üretilmez. "BMS verisi yok" bilgisi ayrı bir alandan (`bmsValid`) gider. Bkz. `lib/Telemetry/SysStateDerive.h`.
+- **Bitrate:** 500 kbps kullanılıyor ve sahada çalışıyor. cBMS24 föyü 125–1000 kbit/s aralığını desteklediğinden bir çelişki YOK. `CanManager::begin()` içindeki **otomatik hız bulucu (auto-baud)** yine de kalıcı bir güvence olarak duruyor (bkz. [BRING_UP_CHECKLIST.md](Documents/BRING_UP_CHECKLIST.md)).

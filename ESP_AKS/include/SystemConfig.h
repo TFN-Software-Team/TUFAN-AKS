@@ -195,13 +195,27 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define HMI_CMD_RESET 2
 #define HMI_CMD_EMERGENCY_STOP 3
 #define HMI_CMD_DRIVE_ENABLE 4
-// Komut 5: KULLANIM DIŞI — REZERVE (bir daha ATANMAMALI). Eskiden
-// HMI_CMD_HEADLIGHT_TOGGLE idi (far ekran butonuyla toggle, çerçeve
-// 0x5A 0x05 0xFA). Far kontrolü fiziksel düğmeye taşındı (HEADLIGHT_SWITCH_PIN,
-// şartname B2 9.19.c) — ekran artık farı KONTROL ETMEZ, yalnız durumunu
-// GÖSTERİR (far.pic). Bu numara ileride başka bir komuta atanırsa, eski ekran
-// projelerinin hâlâ gönderdiği 0x5A 0x05 0xFA çerçevesiyle karışır; o yüzden
-// KALICI OLARAK boş bırakılır (bkz. Documents/HMI_Field_Map.md).
+// Komut 5 — HMI_CMD_HEADLIGHT_TOGGLE (far ekran butonu, çerçeve 0x5A 0x05 0xFA).
+//
+// ⚠️ AÇIK ÇELİŞKİ (25.07.2026 tespiti — bkz. BENI_OKU.md):
+// Bu yorum eskiden "KULLANIM DIŞI — REZERVE, far fiziksel düğmeye taşındı"
+// diyordu, ama KOD BÖYLE DAVRANMIYOR: main.cpp'deki HMI komut switch'i hâlâ
+// `case 5` ile VcuEvent::HEADLIGHT_TOGGLE post ediyor ve VcuLogic.cpp bunu
+// RELAY_ROLES_ASSIGNED arkasında işleyip far rölesini sürüyor.
+//
+// Üstelik far kanalına İKİ SÜRÜCÜ birden yazıyor:
+//   (a) fiziksel düğme (HEADLIGHT_SWITCH_PIN, şartname B2 9.19.c) — run()'ın
+//       her tick'inde okunur ve LATCHING modda far durumunu anahtar KONUMUNA
+//       eşitler;
+//   (b) ekran komutu 5 — anlık toggle.
+// Latching modda (a) baskındır: ekrandan yapılan toggle bir sonraki tick'te
+// GERİ ALINIR. Yani komut 5 pratikte kalıcı bir etki üretmez.
+//
+// KARAR GEREKİYOR: ya komut 5 gerçekten kaldırılmalı (main.cpp'deki case ve
+// VcuLogic'teki dal silinir), ya da ekran kontrolü resmî yol yapılıp fiziksel
+// düğme mantığıyla uzlaştırılmalı. Karar verilene kadar numara BAŞKA BİR
+// KOMUTA ATANMAMALIDIR — eski ekran projeleri hâlâ 0x5A 0x05 0xFA gönderiyor
+// olabilir (bkz. Documents/HMI_Field_Map.md).
 //
 // READY/DRIVE'dan IDLE'a KONTROLLÜ dönüş (ekran "DUR" butonu, çerçeve
 // 0x5A 0x06 0xF9). Bu komuttan ÖNCE READY/DRIVE'dan çıkmanın tek yolu E-STOP
