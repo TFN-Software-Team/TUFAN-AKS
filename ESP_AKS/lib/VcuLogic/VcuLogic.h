@@ -54,8 +54,11 @@ enum class VcuEvent : uint8_t {
 // BMS/motor freshness (BMS freshness G12 ile E000+E001 ID bazında ayrı ayrı
 // izlenir; hücre voltajı freshness'ı CAN_cellVoltageSeenMask/E015-E020 ile
 // ayrı izlenir, bkz. TEL_cellVoltageTimeoutActive).
-// AÇIK İŞ: TEL_bmsSystemState==4 kontrolü kodda durur ama alan hiçbir CAN
-// ID'den parse edilmediği için kaynak bağlanana kadar ETKİSİZDİR (aşağıya bkz.).
+// KAPANDI (Y33, 24.07.2026): TEL_bmsSystemState==4 kontrolleri DEVRE DIŞI
+// bırakıldı (E-3/AKS-17, aşağıya bkz.). BMS'in sağlık durumunu yayınladığı bir
+// CAN ID'ye ULAŞILAMADI ve aranmayacak; alan artık akımdan türetilen ÇALIŞMA
+// MODUNU taşıyor (yalnız telemetri gösterimi — bkz. Telemetry/SysStateDerive.h)
+// ve FAULT ÜRETMİYOR. Dolayısıyla bu alan bir karar girdisi DEĞİLDİR.
 
 // Akım sinyali DOĞRULANDI (0xE000 byte[0:1], ×0.1A → centi-A, işaret: + şarj
 // / − deşarj) ve TEL_bmsCurrentCentiA'ya parse ediliyor. Bu iki yardımcı

@@ -143,9 +143,13 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     assert "sanitizeSystemState" in text
     assert "sanitizeSoc" in text
     assert "sanitizeCurrent" in text
-    # sysState disi -> 2 (IDLE) kurali kaynakta hala mevcut mu?
-    # AKS-17: TEL_bmsSystemState gercek bir kaynaktan gelmiyor; 0 -> 2 (IDLE)
+    # sysState disi -> 2 (BOSTA) kurali kaynakta hala mevcut mu?
+    # AKS-17: TEL_bmsSystemState gercek bir kaynaktan gelmiyor; 0 -> 2
     # raporlanir (onceki davranis 0 -> 4/FAULT'tu, yaniltici gosterime yol aciyordu).
+    # Y33 (24.07.2026): fallback 2 KALDI, ama alan artik sabit 2 DEGIL — gercek
+    # deger akimdan turetiliyor (bkz. test_aks_sysstate_derived_from_current).
+    # 1..4 araligi UKS Decode_Line kapisidir (Parse_Int(f[12], 1, 4)) ve
+    # DARALTILAMAZ: aralik disi bir deger TUM frame'i reddettirir.
     m = re.search(
         r"sanitizeSystemState[^{]*\{[^}]*\}", strip_c_comments(text), re.DOTALL
     )
@@ -155,6 +159,42 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     ), "sanitizeSystemState govdesinde 1..4 aralik kontrolu bulunamadi"
     assert re.search(r":\s*2U?\s*;", m.group(0)), (
         "sanitizeSystemState govdesinde IDLE(2) donus degeri bulunamadi"
+    )
+
+
+def test_aks_sysstate_derived_from_current(aks_root):
+    """Y33 (24.07.2026): BMS'in SAGLIK durumunu yayinladigi bir CAN ID'ye
+    ULASILAMADI ve aranmayacak. sysState alani (TEL 12) artik DOGRULANMIS
+    akimdan (0xE000 byte[0:1]) turetilen CALISMA MODUNU tasir:
+    1=Desarj, 2=Bosta, 3=Sarj — FAULT(4) URETILMEZ.
+
+    Bu bekci iki seyi korur:
+      1) SYSSTATE_DERIVE_FROM_CURRENT varsayilani 1 kalmali. 0'a donerse alan
+         sessizce sabit 2'ye duser ve operator ekraninda hicbir bilgi tasimaz
+         (AKS-17 sonrasi yasanan durum) — testler yine yesil gecerdi.
+      2) applyIfEnabled'daki BAYAT VERI korumasi durmali. TEL_bmsDataValid
+         kontrolu kaldirilirsa, BMS verisi kesildiginde son gorulen (bayat)
+         akimdan "SARJ EDILIYOR" gibi YANLIS bir mod raporlanir.
+    """
+    cfg = read(aks_root / "include/SystemConfig.h")
+    assert (
+        extract_define_int(cfg, "SYSSTATE_DERIVE_FROM_CURRENT", source="AKS SystemConfig.h")
+        == 1
+    ), (
+        "SYSSTATE_DERIVE_FROM_CURRENT varsayilani 1 DEGIL — sysState alani "
+        "akimdan turetilmiyor demektir; alan sabit 2 (Bosta) gonderir ve UKS/"
+        "Monitor ekraninda batarya calisma modu GORUNMEZ (Y33 gerilemesi). "
+        "Bayrak bilincli olarak kapatildiysa bu bekciyi AYNI COMMIT'TE guncelleyin."
+    )
+
+    derive = strip_c_comments(read(aks_root / "lib/Telemetry/SysStateDerive.h"))
+    m = re.search(r"applyIfEnabled[^{]*\{.*?\n\}", derive, re.DOTALL)
+    assert m, "SysStateDerive::applyIfEnabled govdesi bulunamadi"
+    assert "TEL_bmsDataValid" in m.group(0), (
+        "applyIfEnabled artik TEL_bmsDataValid'i kontrol etmiyor — BMS verisi "
+        "bayatladiginda son gorulen akimdan yanlis bir calisma modu (orn. "
+        "'SARJ') raporlanir. Bayat veride notr 2 (Bosta) yazilmalidir; gercek "
+        "'veri yok' bilgisi TEL alan 16 (bmsValid) uzerinden gider."
     )
 
 

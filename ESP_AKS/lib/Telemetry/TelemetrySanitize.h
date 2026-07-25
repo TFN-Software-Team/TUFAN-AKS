@@ -20,10 +20,30 @@
 
 namespace TelemetrySanitize {
 
-// KAYNAK YOK: TEL_bmsSystemState hicbir CAN ID'den parse edilmiyor.
-// Gercek kaynak bulunana kadar 0 -> 2 (notr/IDLE) raporlanir.
-// Onceki davranis 0 -> 4 (FAULT) idi ve UKS'te yaniltici gosterime yol aciyordu.
-// Bkz. bulgu T3-21/T2-22, AKS-17.
+// UKS Decode_Line: Parse_Int(f[12], min=1, max=4) — bu aralik DISINDA bir
+// deger TUM frame'i reddettirir (parse_fail), bu yuzden cikti HER ZAMAN
+// 1..4 icinde kalmalidir.
+//
+// ALAN ANLAMI (Y33 karari, 24.07.2026 — bkz. SysStateDerive.h):
+//   1 = DESARJ  (batarya akim VERIYOR — negatif akim)
+//   2 = BOSTA   (|akim| <= SYSSTATE_CURRENT_IDLE_BAND_CENTI_A) VEYA
+//               BMS verisi taze degil (SysStateDerive::applyIfEnabled)
+//   3 = SARJ    (batarya akim ALIYOR — pozitif akim)
+//   4 = FAULT   — AKS bu degeri ARTIK URETMEZ. Gecerli aralikta birakildi ki
+//                 ileride gercek bir BMS-durum CAN ID'si bulunursa (E032/E033
+//                 teyidi, bkz. BENI_OKU.md 5.1) bu sanitizer onu SESSIZCE
+//                 YUTMASIN.
+//
+// KAYNAK YOK: BMS'in SAGLIK durumunu (OK/FAULT) yayinladigi bir CAN ID'ye
+// ULASILAMADI. Alan parse edilemedigi icin ham deger hep 0 kalir; bu yuzden
+// gercek deger SysStateDerive tarafindan DOGRULANMIS akimdan turetilir ve
+// buraya 1/2/3 olarak gelir. "BMS verisi yok" bilgisi bu alandan DEGIL,
+// TEL frame'inin 16. alanindan (bmsValid) gider.
+//
+// FALLBACK: gecersiz/bilinmeyen ham deger 4 (FAULT) DEGIL 2 (BOSTA) verir —
+// aralik icinde, notr ve hicbir ariza IDDIASI tasimayan tek deger. Onceki
+// davranis 0 -> 4 (FAULT) idi ve UKS'te "BMS DAIMA FAULT" yaniltici
+// gosterimine yol aciyordu. Bkz. bulgu T3-21/T2-22, AKS-17, Y33.
 inline uint8_t sanitizeSystemState(uint8_t raw) {
     return (raw >= 1U && raw <= 4U) ? raw : 2U;
 }

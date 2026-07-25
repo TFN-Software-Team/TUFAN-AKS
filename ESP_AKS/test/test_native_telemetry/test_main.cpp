@@ -66,9 +66,10 @@ extern void test_replay_output_sanitizes_corrupted_system_state(void);
 extern void test_replay_output_sanitizes_zero_system_state(void);
 extern void test_replay_then_live_seq_is_sequential_and_monotonic(void);
 
-// SysStateDerive (HİPOTEZ — akımdan türetilmiş sysState) çekirdek matematiği
-// + flag=0 (varsayılan) no-op testleri. flag=1 davranışı ayrı bir derleme
-// birimindedir (bkz. test_native_sysstate_derive_enabled).
+// SysStateDerive (Y33 — akımdan türetilmiş sysState) çekirdek matematiği +
+// varsayılan derlemede (flag=1) türetmenin gerçekten uygulandığı testi.
+// Ezmeme kuralı ve bayat-veri koruması ayrı derleme biriminde ele alınır
+// (bkz. test_native_sysstate_derive_enabled).
 extern void test_derive_impl_zero_current_is_idle(void);
 extern void test_derive_impl_at_positive_band_boundary_is_idle(void);
 extern void test_derive_impl_at_negative_band_boundary_is_idle(void);
@@ -77,7 +78,7 @@ extern void test_derive_impl_just_below_negative_band_is_discharge(void);
 extern void test_derive_impl_large_positive_current_is_charge(void);
 extern void test_derive_impl_large_negative_current_is_discharge(void);
 extern void test_derive_production_wrapper_matches_impl_at_production_band(void);
-extern void test_apply_is_noop_when_flag_disabled_even_if_sysstate_zero(void);
+extern void test_apply_derives_from_current_in_default_build(void);
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -152,7 +153,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_derive_impl_large_positive_current_is_charge);
     RUN_TEST(test_derive_impl_large_negative_current_is_discharge);
     RUN_TEST(test_derive_production_wrapper_matches_impl_at_production_band);
-    RUN_TEST(test_apply_is_noop_when_flag_disabled_even_if_sysstate_zero);
+    RUN_TEST(test_apply_derives_from_current_in_default_build);
 
     return UNITY_END();
 }

@@ -524,21 +524,29 @@ static_assert(
 #define MOTOR_DRIVER_PRESENT 0  // Motor sürücüsü entegre edildiğinde 1 yap — READY interlock'u ve zero-torque yolu bu bayrağa bağlı.
 #endif
 
-// --- HİPOTEZ: Akımdan türetilmiş sysState (bkz. Documents/CAN_Message_Table.md
-// "0x0000E003" ve lib/Telemetry/SysStateDerive.h) ---
-// UKS `sysState` alanı (TEL alan 12) hiçbir CAN ID'den DOĞRULANMIŞ parse
-// almıyor (bkz. Documents/UKS_LoRa_Protocol.md "DOĞRULANACAK") —
-// TelemetrySanitize::sanitizeSystemState(0) bunu FAULT(4) yapar, UKS
-// ekranında BMS her zaman FAULT görünür. Bu bayrak (varsayılan KAPALI),
-// DOĞRULANMIŞ akım sinyalinden (0xE000 byte[0:1]) basit bir Discharge/IDLE/
-// Charge tahmini üretmeyi dener — E003 byte[0:1]'in gerçek sysState olup
-// olmadığı henüz TEYİT EDİLMEDİ (⚠️ HİPOTEZ, bkz. CAN_Message_Table.md).
+// --- Akımdan türetilmiş sysState — Y33 kararı (bkz. lib/Telemetry/
+// SysStateDerive.h dosya başlığı: tam gerekçe ve kapsam sınırı) ---
+// UKS `sysState` alanı (TEL alan 12) hiçbir CAN ID'den parse ALMIYOR ve Y33
+// kararıyla (24.07.2026) ARANMAYACAK: BMS'in sistem-durumunu (OK/FAULT)
+// yayınladığı bir CAN ID'ye ULAŞILAMADI. AKS-17 ham 0'ı FAULT(4) yerine
+// nötr 2'ye çevirerek yanıltıcı "BMS FAULT" gösterimini durdurmuştu, ama alan
+// o haliyle hiçbir bilgi TAŞIMIYORDU (sabit 2).
+//
+// Bu bayrak artık VARSAYILAN AÇIK: alan, DOĞRULANMIŞ akım sinyalinden
+// (0xE000 byte[0:1]) türetilen ÇALIŞMA MODUNU taşır — 1=Deşarj, 2=Boşta,
+// 3=Şarj. Ekip saha gözlemi (Y20, PCAN) akım işareti konvansiyonunu teyit
+// etti: şarjda +9.8 A, boşta -0.1 A, sürüşte -5.6 A.
+//
+// KAPSAM SINIRI: bu alan bataryanın ÇALIŞMA MODUNU söyler, BMS'in SAĞLIĞINI
+// değil — ikisi aynı şey değildir ve FAULT(4) buradan ASLA üretilmez.
+// "BMS verisi yok" bilgisi ayrı bir alandan gider (TEL alan 16 = bmsValid).
+//
 // EK B GÜVEN KURALI gereği bu türetilmiş değer YALNIZCA UKS telemetri
 // gösterimi içindir — VCU karar mantığına (FAULT/kontaktör) ASLA BAĞLANMAZ
 // (bkz. SysStateDerive.h "applyIfEnabled" çağrı noktası: yalnız LoRa TX
 // paketleme yolunda, VcuLogic'in okuduğu TelemetryData'ya DOKUNMAZ).
 #ifndef SYSSTATE_DERIVE_FROM_CURRENT
-#define SYSSTATE_DERIVE_FROM_CURRENT 0
+#define SYSSTATE_DERIVE_FROM_CURRENT 1
 #endif
 
 // CONFIG — akımın "IDLE" sayılacağı simetrik bant (centi-Amper, TEL_bmsCurrentCentiA

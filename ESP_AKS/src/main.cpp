@@ -680,10 +680,10 @@ static bool LoRa_txSend(const TelemetryData &pkt, bool isReplay, void *ctxv) {
     }
     return false;
   }
-  // HİPOTEZ (bkz. SysStateDerive.h, Documents/CAN_Message_Table.md "0x0000E003"):
-  // sanitize'DAN ÖNCE — sanitizeSystemState(0) çalışırsa 0'ı IDLE(2)
-  // yapar (AKS-17), türetilmiş 1/2/3 değeri o noktadan sonra uygulanırsa
-  // etkisiz kalır.
+  // Y33 (bkz. SysStateDerive.h): sysState alanı, DOĞRULANMIŞ akımdan türetilen
+  // ÇALIŞMA MODUNU (1=Deşarj 2=Boşta 3=Şarj) taşır. SIRA ÖNEMLİ — sanitize'DAN
+  // ÖNCE: sanitizeSystemState(0) çalışırsa 0'ı nötr 2 yapar (AKS-17) ve
+  // türetme (yalnız ham 0 iken uygulandığından) bir daha devreye giremez.
   // Yalnızca LoRa TX paketleme kopyası (pktForUplink) değişir; VcuLogic'in
   // okuduğu paylaşılan TelemetryData (pkt / TEL_sensorDataQueue) DOKUNULMADAN
   // kalır (EK B güven kuralı — bu türetilmiş değer VCU karar mantığına
@@ -863,12 +863,14 @@ extern "C" void app_main() {
 
   // BMS durumu: 0xE000 ve 0xE001 DOĞRULANDI (packV, current, SoC, temp,
   // hücre min/max/avg). 24 hücrenin tekil voltajları (E015-E020) da
-  // DOĞRULANDI. Açık iş: TEL_bmsSystemState hiçbir CAN ID'den parse
-  // EDİLMİYOR — TelemetrySanitize::sanitizeSystemState(0) bunu IDLE(2)
-  // yapar → UKS ekranında BMS her zaman IDLE görünür (AKS-17). Hücre
-  // sıcaklığı (E032-E033) alan anlamı hâlâ BİLİNMİYOR (stub).
+  // DOĞRULANDI. Y33 (24.07.2026): BMS'in SAĞLIK durumunu (OK/FAULT) yayınladığı
+  // bir CAN ID'ye ULAŞILAMADI ve aranmayacak — sysState alanı artık DOĞRULANMIŞ
+  // akımdan türetilen ÇALIŞMA MODUNU taşır (bkz. SysStateDerive.h). FAULT
+  // ARTIK ÜRETİLMEZ; "BMS verisi yok" bilgisi ayrı alandan (bmsValid) gider.
+  // E032/E033 alan anlamı hâlâ BİLİNMİYOR (bkz. BENI_OKU.md 5.1).
   // Bkz. Documents/CAN_Message_Table.md.
-  ESP_LOGW(TAG, "BMS: sysState henuz parse edilmiyor (E002-E006 stub). "
+  ESP_LOGI(TAG, "BMS: sysState = akimdan turetilen calisma modu "
+                "(1=Desarj 2=Bosta 3=Sarj); BMS saglik durumu icin CAN ID YOK. "
                 "Hucre voltajlari (E015-E020) DOGRULANDI ve aktif.");
 
   // --- Hardware initialization (before any tasks) ---
