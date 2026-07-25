@@ -739,6 +739,33 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // işaretler; CAN_Event/FAULT ÜRETMEZ (krş. motor timeout -> FAULT).
 #define CAN_CHARGER_TIMEOUT_MS      2000
 
+// --- Akım tabanlı şarj tespiti (Y20 gözlemi) — chargerActive YEDEĞİ ---
+// BİRİNCİL kaynak, charger komut frame'inin (0x1806E5F4) tazeliğidir
+// (CAN_chargerValid). Ancak bu akış OPSİYONELDİR: charger CAN'e hiç
+// konuşmuyorsa ya da farklı bir ID kullanıyorsa şarj hiç fark edilmez ve
+// şartname 8.2.a.iii (şarjda S1 KAPALI + S2 AÇIK) sessizce uygulanmaz.
+//
+// Ekip PCAN gözlemi (Y20) bağımsız ve güvenilir bir gösterge veriyor:
+//   şarjda   +9.8 A  (= +980 centi-A, POZİTİF — batarya akım ALIYOR)
+//   boşta    -0.1 A  (=  -10 centi-A)
+//   sürüşte  -5.6 A  (= -560 centi-A, NEGATİF)
+//
+// Eşik +200 centi-A (2.0 A): boşta ölçülen -10'un çok üstünde (gürültü payı)
+// ve gözlenen şarj akımının (+980) belirgin biçimde altında — ikisini kesin
+// ayırır. Sadece POZİTİF yön sayılır; deşarj asla şarj sanılmaz.
+#define CHARGE_DETECT_CURRENT_CENTI_A 200
+
+// Tek örneklik gürültü/geçici tepe ile şarj bayrağının açılıp kapanmaması
+// için ardışık örnek sayısı. CAN task periyodunda 3 ardışık E000 örneği.
+#define CHARGE_DETECT_DEBOUNCE_SAMPLES 3
+
+// GÜVENLİK KAPISI — REJENERATİF FRENLEME KARIŞIKLIĞI: motor sürücüsü
+// geldiğinde rejen de bataryaya POZİTİF akım basar. Rejeni "şarj" sanmamak
+// için akım tabanlı tespit yalnızca araç fiilen DURURKEN geçerlidir.
+// VCU_RESET_MAX_RPM (50 RPM ≈ 0.5 km/h) ile aynı "hareketsiz" ölçütü
+// kullanılır — iki yerde iki farklı durma tanımı olmasın.
+#define CHARGE_DETECT_MAX_RPM VCU_RESET_MAX_RPM
+
 // UKS'in aralik-disi alan sanitizasyonu (yalnizca vTask_LoRa_UKS icindeki uplink asamasinda yapilir)
 // tetiklendiginde ayni durum tekrar tekrar olussa bile log spam'ini
 // onlemek icin alan basina en fazla 1 WARN / bu sure.

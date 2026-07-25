@@ -458,9 +458,21 @@ TelemetryData CanManager::getTelemetryData() const {
         return CAN_telemetryCopy;
     }
     CAN_telemetryCopy = s_telemetryData;
-    // Charger freshness (updateChargerValidity) → dahili S1/S2 mod girdisi.
+    // Şarj durumu → dahili S1/S2 mod girdisi (şartname 8.2.a.iii).
     // Wire formatına serialize edilmez (bkz. VehicleData.h TEL_chargerActive).
-    CAN_telemetryCopy.TEL_chargerActive = CAN_chargerValid;
+    //
+    // İKİ BAĞIMSIZ GÖSTERGE, OR'lanır (Y20):
+    //   1. CAN_chargerValid — charger komut frame'i (0x1806E5F4) TAZE mi.
+    //      BİRİNCİL kaynak, ama OPSİYONEL bir akış: charger CAN'e hiç
+    //      konuşmuyorsa bu bayrak asla true olmaz.
+    //   2. CAN_chargeDetect.detected — akım işareti (pozitif = batarya akım
+    //      ALIYOR). Birinci gösterge sessiz kaldığında şarjı yine de yakalar.
+    // OR seçildi çünkü şarjı KAÇIRMAK (S1 açık kalır, araç şarjdayken sürüşe
+    // izin verilir) yanlış pozitiften (S1 gereksiz kapanır, START reddedilir)
+    // daha tehlikelidir. Yanlış pozitif riski ChargeDetect'teki üç koruma
+    // katmanıyla (eşik + debounce + hareketsizlik) zaten sınırlanmıştır.
+    CAN_telemetryCopy.TEL_chargerActive =
+        CAN_chargerValid || CAN_chargeDetect.detected;
     xSemaphoreGive(s_mutex);
 
     return CAN_telemetryCopy;
@@ -932,6 +944,8 @@ void CanManager::updateChargerValidity() {
 
     const TickType_t CAN_nowTick = xTaskGetTickCount();
     bool CAN_shouldLogStale = false;
+    bool CAN_shouldLogCurrentDetect = false;
+    bool CAN_currentDetected = false;
 
     // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
@@ -951,11 +965,31 @@ void CanManager::updateChargerValidity() {
         CAN_chargerStaleLogged = true;
     }
 
+    // Y20 — AKIM TABANLI ŞARJ TESPİTİ (yedek gösterge).
+    // Charger komut akışı (0x1806E5F4) opsiyoneldir: charger CAN'e hiç
+    // konuşmuyorsa CAN_chargerValid ASLA true olmaz ve şarj fark edilmez.
+    // Bu bağımsız gösterge (pozitif akım = batarya akım ALIYOR) o boşluğu
+    // kapatır. Karar saf ChargeDetect::update'te (eşik + debounce +
+    // hareketsizlik kapısı, rejen karışıklığına karşı).
+    CAN_currentDetected = ChargeDetect::update(
+        CAN_chargeDetect, s_telemetryData.TEL_bmsCurrentCentiA,
+        s_telemetryData.TEL_bmsDataValid, s_telemetryData.TEL_motorRpm);
+
+    if (CAN_currentDetected != CAN_chargeDetectLogged) {
+        CAN_shouldLogCurrentDetect = true;
+        CAN_chargeDetectLogged = CAN_currentDetected;
+    }
+
     xSemaphoreGive(s_mutex);
 
     if (CAN_shouldLogStale) {
         ESP_LOGD(TAG, "Charger frame stale after %d ms (opsiyonel akış — FAULT üretmez)",
                  CAN_CHARGER_TIMEOUT_MS);
+    }
+    if (CAN_shouldLogCurrentDetect) {
+        ESP_LOGI(TAG, "Akim tabanli sarj tespiti %s (esik %+d centi-A, Y20)",
+                 CAN_currentDetected ? "AKTIF" : "PASIF",
+                 (int)CHARGE_DETECT_CURRENT_CENTI_A);
     }
 }
 

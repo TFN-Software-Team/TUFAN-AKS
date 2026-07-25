@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "AutobaudPolicy.h"  // Saf autobaud retry karar mantığı (autobaud_should_retry)
 #include "CanParse.h"
+#include "ChargeDetect.h"  // Y20: akım tabanlı şarj tespiti (chargerActive yedeği)
 #include "TorqueRequestQueue.h"  // G2: VCU task -> CAN task tork isteği kuyruğu
 #include "VehicleData.h"  // TelemetryData (M3: LoRa Telemetry class'ına ihtiyaç yok)
 #include "TelemetrySanitize.h"
@@ -173,6 +174,12 @@ class CanManager {
     bool CAN_hasSeenCharger = false;
     bool CAN_chargerValid = false;
     bool CAN_chargerStaleLogged = false;
+
+    // Akım tabanlı şarj tespiti (Y20) — charger CAN akışı YOKKEN devreye giren
+    // YEDEK gösterge. Debounce durumu; karar saf ChargeDetect::update'te.
+    // getTelemetryData() bunu CAN_chargerValid ile OR'lar (CAN birincil).
+    ChargeDetect::State CAN_chargeDetect = ChargeDetect::makeState();
+    bool CAN_chargeDetectLogged = false;
 
 
     CAN_EventCallback CAN_eventCallback = nullptr;

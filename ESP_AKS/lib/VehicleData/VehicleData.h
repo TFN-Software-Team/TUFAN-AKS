@@ -64,8 +64,12 @@ struct TelemetryData {
     // frame gelmezse true olur; VcuLogic IDLE dışında kritik fault sayar.
     bool TEL_bmsTimeoutActive;
 
-    // Charger komut akışı (0x1806E5F4) taze mi? CanManager::getTelemetryData
-    // CAN_chargerValid'den doldurur (CAN_CHARGER_TIMEOUT_MS freshness dahil).
+    // Araç şarjda mı? CanManager::getTelemetryData İKİ BAĞIMSIZ göstergeyi
+    // OR'layarak doldurur (bkz. oradaki yorum ve lib/CanManager/ChargeDetect.h):
+    //   1. Charger komut akışı (0x1806E5F4) TAZE mi (CAN_chargerValid,
+    //      CAN_CHARGER_TIMEOUT_MS freshness dahil) — BİRİNCİL, ama opsiyonel akış.
+    //   2. Akım işareti pozitif mi (Y20: şarjda +9.8 A) — YEDEK gösterge;
+    //      charger CAN'e hiç konuşmuyorsa şarjı yine de yakalar.
     // YALNIZCA DAHİLİ kullanım: VcuLogic S1/S2 mod anahtarlaması girdisi
     // (RELAY_ROLES_ASSIGNED=1, şartname 8.2.a.iii). LoRa wire formatına
     // (Telemetry.cpp sendStatus, 19 alan v2) ASLA serialize EDİLMEZ.
