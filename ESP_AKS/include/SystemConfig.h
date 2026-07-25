@@ -621,20 +621,34 @@ static_assert(
 // DECI_MV eşiklerini (deci-mV — TEL_bmsCellVoltageMin/MaxDeciMv alanıyla AYNI
 // ölçek; GÜVENLİK-EŞİĞİ DÜZELTMESİ 2026-07-13, önceden mV-ölçekli makrolarla
 // karşılaştırılıyordu, bkz. Documents/Threshold_Ownership.md) TEL_
-// cellVoltageDataValid iken kullanır. AÇIK İŞ: yalnızca TEL_bmsSystemState
-// kaynağı henüz doğrulanmadığı için ilgili kontrol (==4 FAULT) YER
-// TUTUCUDUR ve karar mantığına fiilen BAĞLI DEĞİLDİR.
+// cellVoltageDataValid iken kullanır. KAPANDI (Y33, 24.07.2026):
+// TEL_bmsSystemState için bir CAN kaynağı BULUNAMADI ve aranmayacak; ilgili
+// ==4 kontrolleri DEVRE DIŞI bırakıldı. Alan artık yalnızca telemetri
+// gösterimi içindir (akımdan türetilen çalışma modu) ve karar mantığına
+// BAĞLI DEĞİLDİR.
 
 // Pack voltage thresholds in decivolts (1 deciV = 0.1 V).
 // Kaynak alan: Lithium Balance c-BMS 0xE000 byte[2:3], big-endian uint16,
 // raw * 0.1 = V — DOĞRULANDI (2 sniffer oturumu). KARAR MANTIĞINA BAĞLI.
 //
-// Paket: 24S LiFePO4. Referans aralık (paket etiketi/spec):
+// Paket: 24S LiFePO4 (Lithium Balance cBMS24). Paket aralığı EKİP TARAFINDAN
+// KESİNLEŞTİRİLDİ (Y23, 24.07.2026 — artık "referans/varsayım" değil):
 //   min 60.0 V (2.50 V/hücre), nominal 76.8 V (3.20 V/hücre),
-//   maks 87.6 V (3.65 V/hücre)
-// CRITICAL eşikleri doğrudan spec uçlarından; WARN eşikleri hücre başına
-// 3.00 V / 3.55 V'den türetildi. CONFIG — gerçek saha kalibrasyonu bekleniyor;
-// nihai değerler ekip/danışman onayı ile güncellenmeli.
+//   maks 87.6 V (3.65 V/hücre), kapasite 100 Ah / 8700 Wh
+// 24 × 3.20 V = 76.8 V — nominal değer hücre sayısıyla tutarlı.
+//
+// CRITICAL eşikleri doğrudan bu KESİNLEŞMİŞ spec uçlarındadır (600/876) ve
+// değiştirilmemelidir. WARN eşikleri ise hücre başına 3.00 V / 3.55 V'den
+// TÜRETİLMİŞTİR (720/852) — bunlar CONFIG'dir ve saha kalibrasyonu/danışman
+// onayıyla ayarlanabilir.
+//
+// NOT: WARN eşiği READY girişini ARTIK BLOKLAMAZ (AKS-14'te kaldırıldı);
+// yalnız uyarı/derating önerisi ve gösterim içindir. CRITICAL eşikleri
+// karar mantığına BAĞLIDIR (hasCriticalCondition -> FAULT).
+//
+// Enerji kapasitesi (8700 Wh) AKS'te DEĞİL, TUFAN-Monitor/config.py içinde
+// BATTERY_CAPACITY_WH olarak yaşar (kalan_enerji_Wh kolonu, şartname 9.2.f) —
+// AKS enerji hesabı YAPMAZ, o yüzden burada karşılığı yoktur.
 #define BMS_WARN_MIN_PACK_VOLTAGE_DECI_V 720      // 72.0 V (3.00 V/hücre)
 #define BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V 600  // 60.0 V (2.50 V/hücre — spec min)
 #define BMS_WARN_MAX_PACK_VOLTAGE_DECI_V 852      // 85.2 V (3.55 V/hücre)
