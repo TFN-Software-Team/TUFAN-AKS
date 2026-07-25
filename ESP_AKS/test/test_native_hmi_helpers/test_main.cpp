@@ -76,6 +76,14 @@ extern void test_resync_round_robin_order_and_wrap(void);
 extern void test_resync_covers_all_fields_within_full_cycle(void);
 extern void test_resync_tick_wraparound_safe(void);
 
+// EMA speed filter
+extern void test_ema_speed_normal_operation(void);
+extern void test_ema_speed_stale_data_resets_filter(void);
+
+// HMIMappings
+extern void test_hmi_are_all_contactors_closed_roles_0_idle(void);
+extern void test_hmi_are_all_contactors_closed_roles_0_ready(void);
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -146,6 +154,12 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_resync_round_robin_order_and_wrap);
     RUN_TEST(test_resync_covers_all_fields_within_full_cycle);
     RUN_TEST(test_resync_tick_wraparound_safe);
+
+    RUN_TEST(test_ema_speed_normal_operation);
+    RUN_TEST(test_ema_speed_stale_data_resets_filter);
+
+    RUN_TEST(test_hmi_are_all_contactors_closed_roles_0_idle);
+    RUN_TEST(test_hmi_are_all_contactors_closed_roles_0_ready);
 
     return UNITY_END();
 }

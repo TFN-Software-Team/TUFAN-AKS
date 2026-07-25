@@ -40,7 +40,10 @@ struct TelemetryData {
     uint16_t TEL_bmsCellVoltageMaxDeciMv;  // DOĞRULANDI — 0xE001 byte[2:3], HAM (deci-mV, /10 YAPILMAZ)
     uint16_t TEL_bmsCellVoltageMinDeciMv;  // DOĞRULANDI — 0xE001 byte[0:1], HAM (deci-mV, /10 YAPILMAZ)
     uint16_t TEL_bmsCellVoltageAvgDeciMv = 0; // DOĞRULANDI — 0xE001 byte[4:5], HAM (deci-mV, /10 YAPILMAZ, ortalama hücre voltajı)
-    uint8_t TEL_bmsSystemState;            // BİLİNMİYOR — kaynak ID çözülmedi
+    // KAYNAK YOK: bu alan hicbir CAN ID'den parse edilmiyor.
+    // Varsayilan 0 degeri sanitize edildiginde notr (2) olarak raporlanir.
+    // Gercek CAN kaynagi icin sniffer oturumu gerekiyor. Bkz. AKS-17.
+    uint8_t TEL_bmsSystemState;
 
     bool TEL_cellVoltageDataValid = false;
     bool TEL_cellVoltageTimeoutActive = false;
@@ -48,8 +51,30 @@ struct TelemetryData {
     // Lithium Balance c-BMS — CAN ID 0xE000 (DOĞRULANDI, bkz. CAN_Message_Table.md)
     uint16_t TEL_bmsPackVoltageDeciV;  // byte[2:3], raw × 0.1 = V — DOĞRULANDI
     int32_t TEL_bmsCurrentCentiA;     // byte[0:1], int16 signed, raw × 10 = centi-A — DOĞRULANDI
-    uint16_t TEL_bmsSocHundredths;     // byte[4:5], uint16, raw × 0.01 = % (SoC 1) — DOĞRULANDI
-    uint16_t TEL_bmsSoc2Hundredths;    // byte[6:7], uint16, raw × 0.01 = % (SoC 2) — DOĞRULANDI
+
+    // --- SoC: TEK GÖSTERİM KAYNAĞI KURALI (Y8 kararı, 24.07.2026) ---
+    // Sistemde SoC üreten ÜÇ ayrı yer vardır; karışıklığı önlemek için hangisinin
+    // gösterildiği burada TEK NOKTADAN tanımlanır:
+    //
+    //   1. TEL_bmsSocHundredths  (AŞAĞIDA)  → *** GÖSTERİLEN TEK SoC ***
+    //      BMS'in KENDİ raporladığı değer. Üretici hesabı, kupon sayımı/
+    //      sıcaklık düzeltmesi içerir; ortalama gerilimden tahminden daha
+    //      güvenilirdir. Kaynak DOĞRULANDI (0xE000 byte[4:5]).
+    //      Tüketiciler: Telemetry.cpp sendStatus (TEL alan 15) ve main.cpp
+    //      HMI_batteryDisplayValue (Nextion batarya göstergesi).
+    //
+    //   2. TEL_bmsSoc2Hundredths (AŞAĞIDA)  → parse edilir, GÖSTERİLMEZ.
+    //      BMS'in ikinci SoC alanı. Bilinçli olarak hiçbir ekrana/telemetriye
+    //      BAĞLANMAMIŞTIR — iki farklı yüzde göstermek operatörü yanıltırdı.
+    //      Alan, ileride anlamı netleşirse (ör. "SoC sağlık/kalibrasyon")
+    //      kullanılabilsin diye parse edilmeye devam ediyor.
+    //
+    //   3. BmsAlgo::socFromAvgMv → BmsComputed::socPercent (lib/BmsAlgo)
+    //      AKS'in ortalama hücre geriliminden LİNEER tahmini. YEDEK/tanı
+    //      amaçlıdır ve bugün hiçbir gösterim yolunda TÜKETİLMEZ.
+    //      Bkz. BmsComputed.h — oradaki uyarı da aynı kuralı tekrarlar.
+    uint16_t TEL_bmsSocHundredths;     // byte[4:5], uint16, raw × 0.01 = % (SoC 1) — DOĞRULANDI — GÖSTERİLEN
+    uint16_t TEL_bmsSoc2Hundredths;    // byte[6:7], uint16, raw × 0.01 = % (SoC 2) — DOĞRULANDI — GÖSTERİLMEZ
 
     // Lithium Balance c-BMS — CAN ID 0xE001 (kısmi DOĞRULANDI)
     int8_t TEL_bmsTempHighestC;       // max(byte[6], byte[7]), int8 °C — DOĞRULANDI
@@ -61,8 +86,12 @@ struct TelemetryData {
     // frame gelmezse true olur; VcuLogic IDLE dışında kritik fault sayar.
     bool TEL_bmsTimeoutActive;
 
-    // Charger komut akışı (0x1806E5F4) taze mi? CanManager::getTelemetryData
-    // CAN_chargerValid'den doldurur (CAN_CHARGER_TIMEOUT_MS freshness dahil).
+    // Araç şarjda mı? CanManager::getTelemetryData İKİ BAĞIMSIZ göstergeyi
+    // OR'layarak doldurur (bkz. oradaki yorum ve lib/CanManager/ChargeDetect.h):
+    //   1. Charger komut akışı (0x1806E5F4) TAZE mi (CAN_chargerValid,
+    //      CAN_CHARGER_TIMEOUT_MS freshness dahil) — BİRİNCİL, ama opsiyonel akış.
+    //   2. Akım işareti pozitif mi (Y20: şarjda +9.8 A) — YEDEK gösterge;
+    //      charger CAN'e hiç konuşmuyorsa şarjı yine de yakalar.
     // YALNIZCA DAHİLİ kullanım: VcuLogic S1/S2 mod anahtarlaması girdisi
     // (RELAY_ROLES_ASSIGNED=1, şartname 8.2.a.iii). LoRa wire formatına
     // (Telemetry.cpp sendStatus, 19 alan v2) ASLA serialize EDİLMEZ.

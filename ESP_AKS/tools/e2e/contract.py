@@ -90,8 +90,13 @@ INT32_MIN = -2147483648
 
 
 def sanitize_system_state(raw: int) -> int:
-    """TelemetrySanitize::sanitizeSystemState — 1..4 disinda FAULT(4)."""
-    return raw if 1 <= raw <= 4 else 4
+    """TelemetrySanitize::sanitizeSystemState — 1..4 disinda 2 (BOSTA).
+    AKS-17: TEL_bmsSystemState gercek bir kaynaktan gelmiyor; 0 -> 2
+    raporlanir (onceki davranis 0 -> 4/FAULT'tu, yaniltici gosterime yol aciyordu).
+    Y33 (24.07.2026): alan artik SysStateDerive ile akimdan turetilen calisma
+    modunu (1=Desarj 2=Bosta 3=Sarj) tasir; bu fallback yalnizca beklenmedik
+    ham degerler icin gecerlidir. FAULT(4) AKS tarafindan URETILMEZ."""
+    return raw if 1 <= raw <= 4 else 2
 
 
 def sanitize_soc(raw: int) -> int:
@@ -257,8 +262,10 @@ def parse_uks_frame(line: str) -> dict | UksRejection:
     values = {}
     for name, tok in zip(FIELD_ORDER, fields[1:]):
         lo, hi = FIELD_RANGES[name]
-        if not _is_strict_int_token(tok, allow_sign=(lo < 0)):
+        allow_sign = (name not in ("seq", "ts_ms"))
+        if not _is_strict_int_token(tok, allow_sign=allow_sign):
             return UksRejection("parse_fail")
+
         v = int(tok)
         if v < lo or v > hi:
             return UksRejection("parse_fail")

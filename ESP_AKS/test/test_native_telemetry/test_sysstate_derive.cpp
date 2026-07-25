@@ -3,12 +3,12 @@
 #include "SysStateDerive.h"
 
 // ===========================================================================
-// HİPOTEZ: SysStateDerive — akımdan türetilmiş sysState (bkz. SysStateDerive.h,
-// Documents/CAN_Message_Table.md "0x0000E003"). Bu dosya, bayraktan (SYSSTATE_
-// DERIVE_FROM_CURRENT) bağımsız olan çekirdek matematiği (Impl + üretim
-// sarmalayıcısı) VE varsayılan derleme ortamında (flag=0) applyIfEnabled'ın
-// gerçekten NO-OP olduğunu doğrular. flag=1 davranışı (uygulama + ezmeme
-// kuralı) ayrı bir derleme birimindedir — bkz. test_native_sysstate_derive_enabled.
+// SysStateDerive — akımdan türetilmiş sysState (Y33 kararı; bkz.
+// SysStateDerive.h). Bu dosya, bayraktan (SYSSTATE_DERIVE_FROM_CURRENT)
+// BAĞIMSIZ olan çekirdek matematiği (Impl + üretim sarmalayıcısı) VE
+// varsayılan derleme ortamında (Y33 sonrası flag=1) applyIfEnabled'ın
+// gerçekten UYGULANDIĞINI doğrular. Ezmeme kuralı ve bayat-veri koruması
+// ayrıntılı olarak test_native_sysstate_derive_enabled'da ele alınır.
 // ===========================================================================
 
 // Bant içinde (|akım| <= bant) -> IDLE(2).
@@ -57,22 +57,23 @@ void test_derive_production_wrapper_matches_impl_at_production_band(void) {
 }
 
 // ---------------------------------------------------------------------------
-// applyIfEnabled — varsayılan derleme ortamında SYSSTATE_DERIVE_FROM_CURRENT
-// tanımsız/0'dır (SystemConfig.h #ifndef guard). Bu native test binary'si bu
-// bayrağı override ETMEZ; bu yüzden burada yalnızca "flag=0 iken davranış
-// birebir korunur (dokunulmaz)" doğrulanabilir. flag=1 davranışı ayrı bir
-// derleme birimi gerektirir (bkz. test_native_sysstate_derive_enabled).
+// applyIfEnabled — Y33 sonrası SYSSTATE_DERIVE_FROM_CURRENT VARSAYILAN 1'dir
+// (SystemConfig.h #ifndef guard). Bu native test binary'si bayrağı override
+// ETMEZ, yani ÜRETİM ayarını doğrular: sysState alanı gerçekten akımdan
+// türetilir. static_assert, bayrak ileride sessizce 0'a çekilirse bu testin
+// yanıltıcı biçimde geçmesini ENGELLER.
 // ---------------------------------------------------------------------------
-void test_apply_is_noop_when_flag_disabled_even_if_sysstate_zero(void) {
-    static_assert(SYSSTATE_DERIVE_FROM_CURRENT == 0,
-                  "Bu test SYSSTATE_DERIVE_FROM_CURRENT=0 varsayar (varsayilan "
-                  "native derleme ortami)");
+void test_apply_derives_from_current_in_default_build(void) {
+    static_assert(SYSSTATE_DERIVE_FROM_CURRENT == 1,
+                  "Y33: varsayilan native derleme ortami "
+                  "SYSSTATE_DERIVE_FROM_CURRENT=1 bekler");
 
     TelemetryData d = {};
     d.TEL_bmsSystemState = 0;          // "henuz parse edilmedi" durumu
+    d.TEL_bmsDataValid = true;         // taze BMS verisi
     d.TEL_bmsCurrentCentiA = 990;      // acikca "Charge" sayilacak bir akim
 
     SysStateDerive::applyIfEnabled(d);
 
-    TEST_ASSERT_EQUAL_UINT8(0, d.TEL_bmsSystemState);  // DOKUNULMADI
+    TEST_ASSERT_EQUAL_UINT8(3, d.TEL_bmsSystemState);  // Charge
 }

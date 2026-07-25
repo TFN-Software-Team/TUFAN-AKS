@@ -6,9 +6,18 @@
 // Used across multiple modules for consistency
 
 // --- Includes ---
+#ifdef ESP_PLATFORM
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "driver/uart.h"
+#include "esp_system.h"
+#else
+#include <stdint.h>
+typedef int esp_reset_reason_t;
+#ifndef ESP_RST_BROWNOUT
+#define ESP_RST_BROWNOUT 15
+#endif
+#endif
 #include "E22Regs.h"
 
 // --- CAN Message IDs ---
@@ -92,11 +101,10 @@
 // 33'tür.
 #define HMI_TX_PIN GPIO_NUM_33  // Şemadaki screen_RX (ESP TX -> Ekran RX)
 #define HMI_RX_PIN GPIO_NUM_32  // Şemadaki screen_TX (Ekran TX -> ESP RX)
-// Nextion seri hızı (8N1 → ham ~960 B/s) — aşağıdaki resync bütçe
+// Nextion seri hızı (8N1 → ham ~11520 B/s) — aşağıdaki resync bütçe
 // static_assert'ı bunu kullanır. DİKKAT: DisplayHMI::begin() UART config'i
-// baud'u ayrıca literal (9600) yazar; orası değişirse bu sabit de AYNI
-// commit'te güncellenmeli, yoksa bütçe kanıtı eski hıza göre doğrular.
-#define HMI_UART_BAUD 9600
+// baud'u ayrıca literal YAZILMIYOR artık, bu makroyu kullanıyor.
+#define HMI_UART_BAUD 115200
 
 // --- Nextion Reset (brown-out) Algılama ---
 // readTouchCommand RX yoluna paralel bağlı dedektör (lib/DisplayHMI/
@@ -107,6 +115,9 @@
 // güç hattı sürekli brown-out yapıyorsa log spam'i önlenir, toplam sayaç
 // logda görünür kalır.
 #define HMI_RESET_WARN_LOG_INTERVAL_MS 5000U
+
+#define HMI_LINK_TIMEOUT_MS 5000       // Nextion koptu kabul etme suresi
+#define VCU_AUTO_RESET_DELAY_MS 10000  // FAULT'tan oto-reset icin bekleme
 
 // --- HMI Round-Robin Resync (reset dedektörünün emniyet katmanı) ---
 // Startup event'i brown-out sırasında RX hattında bozulup KAYBOLABİLİR —
@@ -130,14 +141,12 @@
 // En uzun komut: 'contactor.txt="CLOSED"' = 22 + 3 = 25 B → marjla 26.
 #define HMI_RESYNC_CMD_MAX_BYTES 26U
 
-// BÜTÇE KANITI: 9600 baud 8N1 → ham 960 B/s; HMI_Task 10 Hz → döngü başına
-// ~96 B (buildBmsNextionCommands maxBytes=90 bu bütçeden). Resync tetik
-// başına TEK alan gönderir → tepe ek yük = 26 B / 500 ms = 52 B/s, ham
-// kapasitenin ≤ %10'u (96 B/s) olmalı ki BMS panelinin 90 B/döngü tavanıyla
-// birlikte TX ring (256 B) baskı altında kalmasın. Aralık görev periyodunun
-// (100 ms) altına indirilse bile hmi_resync_due_field çağrı başına tek alan
-// döndürdüğünden fiili tavan 26 B × 10 Hz = 260 B/s'de kendiliğinden doyar;
-// aşağıdaki assert normal yapılandırmayı %10 payın içinde tutar.
+// BÜTÇE KANITI: 115200 baud 8N1 → ham 11520 B/s; HMI_Task 10 Hz → döngü başına
+// ~1152 B. Tam yenileme bile (~302 B) tek döngüde TX ring'e (1024 B) rahat sığar.
+// Resync tetik başına TEK alan gönderir → tepe ek yük = 26 B / 500 ms = 52 B/s.
+// Bu ek yük, normal kapasitenin ≤ %10'u olmalıdır. Eskiden 9600 baud için (96 B/s)
+// kritik olan bu sınır, şimdi 115200 (1152 B/s) ile fazlasıyla emniyetli bölgededir.
+// hmi_resync_due_field çağrı başına tek alan döndürdüğünden tavan 260 B/s'de doyar.
 #ifdef __cplusplus
 static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
                       (unsigned)HMI_RESYNC_INTERVAL_MS
@@ -167,10 +176,10 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 
 // BİRLEŞİK BÜTÇE KANITI: iki resync katmanının toplam tepe yükü
 //   skalar: 26 B / 500 ms = 52 B/s   +   BMS: 48 B / 1000 ms = 48 B/s
-//   = 100 B/s ≤ ham kapasitenin %15'i (960 × 0.15 = 144 B/s).
-// BMS tarafı ayrıca buildBmsNextionCommands'ın 90 B/döngü sert tavanından
-// geçtiğinden tek döngüde bütçe aşımı zaten mümkün değildir; bu assert
-// ortalama yükün de sınırlı kaldığını derleme zamanında kanıtlar.
+//   = 100 B/s ≤ ham kapasitenin %15'i (11520 × 0.15 = 1728 B/s).
+// BMS tarafı eskiden 90 B/döngü tavanına sıkışıyordu, şimdi baud artışıyla
+// tüm 27 slot (yaklaşık ~1300 B) bile 1 sn'ye rahatça sığar; fakat biz
+// yine de ortalama yükü yaymak adına mevcut sistemi koruyoruz.
 #ifdef __cplusplus
 static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
                       (unsigned)HMI_RESYNC_INTERVAL_MS
@@ -186,13 +195,40 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define HMI_CMD_RESET 2
 #define HMI_CMD_EMERGENCY_STOP 3
 #define HMI_CMD_DRIVE_ENABLE 4
-// Komut 5: KULLANIM DIŞI — REZERVE (bir daha ATANMAMALI). Eskiden
-// HMI_CMD_HEADLIGHT_TOGGLE idi (far ekran butonuyla toggle, çerçeve
-// 0x5A 0x05 0xFA). Far kontrolü fiziksel düğmeye taşındı (HEADLIGHT_SWITCH_PIN,
-// şartname B2 9.19.c) — ekran artık farı KONTROL ETMEZ, yalnız durumunu
-// GÖSTERİR (far.pic). Bu numara ileride başka bir komuta atanırsa, eski ekran
-// projelerinin hâlâ gönderdiği 0x5A 0x05 0xFA çerçevesiyle karışır; o yüzden
-// KALICI OLARAK boş bırakılır (bkz. Documents/HMI_Field_Map.md).
+// Komut 5 — HMI_CMD_HEADLIGHT_TOGGLE (far ekran butonu, çerçeve 0x5A 0x05 0xFA).
+//
+// ⚠️ AÇIK ÇELİŞKİ (25.07.2026 tespiti — bkz. BENI_OKU.md):
+// Bu yorum eskiden "KULLANIM DIŞI — REZERVE, far fiziksel düğmeye taşındı"
+// diyordu, ama KOD BÖYLE DAVRANMIYOR: main.cpp'deki HMI komut switch'i hâlâ
+// `case 5` ile VcuEvent::HEADLIGHT_TOGGLE post ediyor ve VcuLogic.cpp bunu
+// RELAY_ROLES_ASSIGNED arkasında işleyip far rölesini sürüyor.
+//
+// Üstelik far kanalına İKİ SÜRÜCÜ birden yazıyor:
+//   (a) fiziksel düğme (HEADLIGHT_SWITCH_PIN, şartname B2 9.19.c) — run()'ın
+//       her tick'inde okunur ve LATCHING modda far durumunu anahtar KONUMUNA
+//       eşitler;
+//   (b) ekran komutu 5 — anlık toggle.
+// Latching modda (a) baskındır: ekrandan yapılan toggle bir sonraki tick'te
+// GERİ ALINIR. Yani komut 5 pratikte kalıcı bir etki üretmez.
+//
+// KARAR GEREKİYOR: ya komut 5 gerçekten kaldırılmalı (main.cpp'deki case ve
+// VcuLogic'teki dal silinir), ya da ekran kontrolü resmî yol yapılıp fiziksel
+// düğme mantığıyla uzlaştırılmalı. Karar verilene kadar numara BAŞKA BİR
+// KOMUTA ATANMAMALIDIR — eski ekran projeleri hâlâ 0x5A 0x05 0xFA gönderiyor
+// olabilir (bkz. Documents/HMI_Field_Map.md).
+//
+// READY/DRIVE'dan IDLE'a KONTROLLÜ dönüş (ekran "DUR" butonu, çerçeve
+// 0x5A 0x06 0xF9). Bu komuttan ÖNCE READY/DRIVE'dan çıkmanın tek yolu E-STOP
+// veya FAULT'tu; normal "dur / bataryayı ayır" için E-STOP'a basmak aşırı
+// tepkiydi (E-STOP kaydı düşer, RESET interlock'u gerekir).
+//
+// STOP, E-STOP'un YERİNİ TUTMAZ — ikisi karıştırılmamalıdır:
+//   E-STOP : acil, her durumda çalışır, kontaktörleri ANINDA açar, kuyruğu
+//            bypass eder (atomic bayrak), EMERGENCY_STOP durumuna geçer.
+//   STOP   : normal/kontrollü, yalnız READY ve DRIVE'da anlamlıdır, güvenli
+//            kapanış sırasını izler (önce sıfır tork, sonra kontaktör) ve
+//            IDLE'a döner — bir arıza kaydı BIRAKMAZ.
+#define HMI_CMD_STOP 6
 
 // --- LoRa E22-400T30D-V2 (SX1268, UART & Kontrol) ---
 // Pin-uyumlu E32-433T30D yerine geçti; pin atamaları DEĞİŞMEDİ. Config
@@ -515,21 +551,29 @@ static_assert(
 #define MOTOR_DRIVER_PRESENT 0  // Motor sürücüsü entegre edildiğinde 1 yap — READY interlock'u ve zero-torque yolu bu bayrağa bağlı.
 #endif
 
-// --- HİPOTEZ: Akımdan türetilmiş sysState (bkz. Documents/CAN_Message_Table.md
-// "0x0000E003" ve lib/Telemetry/SysStateDerive.h) ---
-// UKS `sysState` alanı (TEL alan 12) hiçbir CAN ID'den DOĞRULANMIŞ parse
-// almıyor (bkz. Documents/UKS_LoRa_Protocol.md "DOĞRULANACAK") —
-// TelemetrySanitize::sanitizeSystemState(0) bunu FAULT(4) yapar, UKS
-// ekranında BMS her zaman FAULT görünür. Bu bayrak (varsayılan KAPALI),
-// DOĞRULANMIŞ akım sinyalinden (0xE000 byte[0:1]) basit bir Discharge/IDLE/
-// Charge tahmini üretmeyi dener — E003 byte[0:1]'in gerçek sysState olup
-// olmadığı henüz TEYİT EDİLMEDİ (⚠️ HİPOTEZ, bkz. CAN_Message_Table.md).
+// --- Akımdan türetilmiş sysState — Y33 kararı (bkz. lib/Telemetry/
+// SysStateDerive.h dosya başlığı: tam gerekçe ve kapsam sınırı) ---
+// UKS `sysState` alanı (TEL alan 12) hiçbir CAN ID'den parse ALMIYOR ve Y33
+// kararıyla (24.07.2026) ARANMAYACAK: BMS'in sistem-durumunu (OK/FAULT)
+// yayınladığı bir CAN ID'ye ULAŞILAMADI. AKS-17 ham 0'ı FAULT(4) yerine
+// nötr 2'ye çevirerek yanıltıcı "BMS FAULT" gösterimini durdurmuştu, ama alan
+// o haliyle hiçbir bilgi TAŞIMIYORDU (sabit 2).
+//
+// Bu bayrak artık VARSAYILAN AÇIK: alan, DOĞRULANMIŞ akım sinyalinden
+// (0xE000 byte[0:1]) türetilen ÇALIŞMA MODUNU taşır — 1=Deşarj, 2=Boşta,
+// 3=Şarj. Ekip saha gözlemi (Y20, PCAN) akım işareti konvansiyonunu teyit
+// etti: şarjda +9.8 A, boşta -0.1 A, sürüşte -5.6 A.
+//
+// KAPSAM SINIRI: bu alan bataryanın ÇALIŞMA MODUNU söyler, BMS'in SAĞLIĞINI
+// değil — ikisi aynı şey değildir ve FAULT(4) buradan ASLA üretilmez.
+// "BMS verisi yok" bilgisi ayrı bir alandan gider (TEL alan 16 = bmsValid).
+//
 // EK B GÜVEN KURALI gereği bu türetilmiş değer YALNIZCA UKS telemetri
 // gösterimi içindir — VCU karar mantığına (FAULT/kontaktör) ASLA BAĞLANMAZ
 // (bkz. SysStateDerive.h "applyIfEnabled" çağrı noktası: yalnız LoRa TX
 // paketleme yolunda, VcuLogic'in okuduğu TelemetryData'ya DOKUNMAZ).
 #ifndef SYSSTATE_DERIVE_FROM_CURRENT
-#define SYSSTATE_DERIVE_FROM_CURRENT 0
+#define SYSSTATE_DERIVE_FROM_CURRENT 1
 #endif
 
 // CONFIG — akımın "IDLE" sayılacağı simetrik bant (centi-Amper, TEL_bmsCurrentCentiA
@@ -546,6 +590,11 @@ static_assert(
 // Bkz. lib/CanManager/MotorFaultDebounce.h (saf, bayraktan bağımsız).
 #define MOTOR_ERROR_DEBOUNCE_FRAMES 3
 
+/// Maksimum RPM eşiği — FAULT/E-STOP'tan RESET'e geçiş için motor RPM'i
+/// bu değerin altında olmalı. 50 RPM ≈ 0.5 km/h — rölanti titreşimi
+/// ve sensör gürültüsünü tolere eder, hareket halini reddeder. (AKS-04)
+#define VCU_RESET_MAX_RPM 50
+
 // --- Phase 1 Planning Notes ---
 // Torque command generation is intentionally held at zero until the pedal /
 // brake input model is finalized. READY -> DRIVE enable is now command-driven,
@@ -559,6 +608,10 @@ static_assert(
 // 20 ms sembolik; motor sürücüsü entegrasyonunda gerçek tork sönüm süresine
 // göre kalibre edilecek (motor RPM/akım düşüşü doğrulanmadan sahaya çıkma).
 #define VCU_CONTACTOR_OPEN_DELAY_MS 20
+
+/// Kademeli role kapatma adim gecikmesi (AKS-06)
+#define RELAY_STAGGER_STEP_MS 30
+// Kademeli kapatmanin toplam suresi 10 kanal x 30 ms = 300 ms'dir.
 
 // --- Phase 2 Safety Thresholds ---
 // Warning levels should eventually trigger derating (AÇIK İŞ B12 — İSKELET
@@ -582,20 +635,34 @@ static_assert(
 // DECI_MV eşiklerini (deci-mV — TEL_bmsCellVoltageMin/MaxDeciMv alanıyla AYNI
 // ölçek; GÜVENLİK-EŞİĞİ DÜZELTMESİ 2026-07-13, önceden mV-ölçekli makrolarla
 // karşılaştırılıyordu, bkz. Documents/Threshold_Ownership.md) TEL_
-// cellVoltageDataValid iken kullanır. AÇIK İŞ: yalnızca TEL_bmsSystemState
-// kaynağı henüz doğrulanmadığı için ilgili kontrol (==4 FAULT) YER
-// TUTUCUDUR ve karar mantığına fiilen BAĞLI DEĞİLDİR.
+// cellVoltageDataValid iken kullanır. KAPANDI (Y33, 24.07.2026):
+// TEL_bmsSystemState için bir CAN kaynağı BULUNAMADI ve aranmayacak; ilgili
+// ==4 kontrolleri DEVRE DIŞI bırakıldı. Alan artık yalnızca telemetri
+// gösterimi içindir (akımdan türetilen çalışma modu) ve karar mantığına
+// BAĞLI DEĞİLDİR.
 
 // Pack voltage thresholds in decivolts (1 deciV = 0.1 V).
 // Kaynak alan: Lithium Balance c-BMS 0xE000 byte[2:3], big-endian uint16,
 // raw * 0.1 = V — DOĞRULANDI (2 sniffer oturumu). KARAR MANTIĞINA BAĞLI.
 //
-// Paket: 24S LiFePO4. Referans aralık (paket etiketi/spec):
+// Paket: 24S LiFePO4 (Lithium Balance cBMS24). Paket aralığı EKİP TARAFINDAN
+// KESİNLEŞTİRİLDİ (Y23, 24.07.2026 — artık "referans/varsayım" değil):
 //   min 60.0 V (2.50 V/hücre), nominal 76.8 V (3.20 V/hücre),
-//   maks 87.6 V (3.65 V/hücre)
-// CRITICAL eşikleri doğrudan spec uçlarından; WARN eşikleri hücre başına
-// 3.00 V / 3.55 V'den türetildi. CONFIG — gerçek saha kalibrasyonu bekleniyor;
-// nihai değerler ekip/danışman onayı ile güncellenmeli.
+//   maks 87.6 V (3.65 V/hücre), kapasite 100 Ah / 8700 Wh
+// 24 × 3.20 V = 76.8 V — nominal değer hücre sayısıyla tutarlı.
+//
+// CRITICAL eşikleri doğrudan bu KESİNLEŞMİŞ spec uçlarındadır (600/876) ve
+// değiştirilmemelidir. WARN eşikleri ise hücre başına 3.00 V / 3.55 V'den
+// TÜRETİLMİŞTİR (720/852) — bunlar CONFIG'dir ve saha kalibrasyonu/danışman
+// onayıyla ayarlanabilir.
+//
+// NOT: WARN eşiği READY girişini ARTIK BLOKLAMAZ (AKS-14'te kaldırıldı);
+// yalnız uyarı/derating önerisi ve gösterim içindir. CRITICAL eşikleri
+// karar mantığına BAĞLIDIR (hasCriticalCondition -> FAULT).
+//
+// Enerji kapasitesi (8700 Wh) AKS'te DEĞİL, TUFAN-Monitor/config.py içinde
+// BATTERY_CAPACITY_WH olarak yaşar (kalan_enerji_Wh kolonu, şartname 9.2.f) —
+// AKS enerji hesabı YAPMAZ, o yüzden burada karşılığı yoktur.
 #define BMS_WARN_MIN_PACK_VOLTAGE_DECI_V 720      // 72.0 V (3.00 V/hücre)
 #define BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V 600  // 60.0 V (2.50 V/hücre — spec min)
 #define BMS_WARN_MAX_PACK_VOLTAGE_DECI_V 852      // 85.2 V (3.55 V/hücre)
@@ -701,6 +768,10 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // watchdog timeout should still be reviewed once final task runtimes stabilize.
 
 // --- CAN Freshness Thresholds ---
+/// Kuyruktaki sensor verisinin gecerlilik suresi (AKS-13)
+/// CAN task'i takilirsa tuketicilerin bayat veriyi taze sanmasini engeller.
+#define SENSOR_DATA_MAX_AGE_MS 500
+
 #define CAN_MOTOR_STATUS_TIMEOUT_MS 1500
 #define CAN_BMS_STATUS_TIMEOUT_MS   500
 #define CAN_CELL_VOLTAGE_TIMEOUT_MS 500  // E015-E020 grubu
@@ -709,9 +780,55 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // işaretler; CAN_Event/FAULT ÜRETMEZ (krş. motor timeout -> FAULT).
 #define CAN_CHARGER_TIMEOUT_MS      2000
 
+// --- Akım tabanlı şarj tespiti (Y20 gözlemi) — chargerActive YEDEĞİ ---
+// BİRİNCİL kaynak, charger komut frame'inin (0x1806E5F4) tazeliğidir
+// (CAN_chargerValid). Ancak bu akış OPSİYONELDİR: charger CAN'e hiç
+// konuşmuyorsa ya da farklı bir ID kullanıyorsa şarj hiç fark edilmez ve
+// şartname 8.2.a.iii (şarjda S1 KAPALI + S2 AÇIK) sessizce uygulanmaz.
+//
+// Ekip PCAN gözlemi (Y20) bağımsız ve güvenilir bir gösterge veriyor:
+//   şarjda   +9.8 A  (= +980 centi-A, POZİTİF — batarya akım ALIYOR)
+//   boşta    -0.1 A  (=  -10 centi-A)
+//   sürüşte  -5.6 A  (= -560 centi-A, NEGATİF)
+//
+// Eşik +200 centi-A (2.0 A): boşta ölçülen -10'un çok üstünde (gürültü payı)
+// ve gözlenen şarj akımının (+980) belirgin biçimde altında — ikisini kesin
+// ayırır. Sadece POZİTİF yön sayılır; deşarj asla şarj sanılmaz.
+#define CHARGE_DETECT_CURRENT_CENTI_A 200
+
+// Tek örneklik gürültü/geçici tepe ile şarj bayrağının açılıp kapanmaması
+// için ardışık örnek sayısı. CAN task periyodunda 3 ardışık E000 örneği.
+#define CHARGE_DETECT_DEBOUNCE_SAMPLES 3
+
+// GÜVENLİK KAPISI — REJENERATİF FRENLEME KARIŞIKLIĞI: motor sürücüsü
+// geldiğinde rejen de bataryaya POZİTİF akım basar. Rejeni "şarj" sanmamak
+// için akım tabanlı tespit yalnızca araç fiilen DURURKEN geçerlidir.
+// VCU_RESET_MAX_RPM (50 RPM ≈ 0.5 km/h) ile aynı "hareketsiz" ölçütü
+// kullanılır — iki yerde iki farklı durma tanımı olmasın.
+#define CHARGE_DETECT_MAX_RPM VCU_RESET_MAX_RPM
+
 // UKS'in aralik-disi alan sanitizasyonu (yalnizca vTask_LoRa_UKS icindeki uplink asamasinda yapilir)
 // tetiklendiginde ayni durum tekrar tekrar olussa bile log spam'ini
 // onlemek icin alan basina en fazla 1 WARN / bu sure.
 #define TEL_SANITIZE_WARN_THROTTLE_MS 10000
+
+// --- Sürüm Kimliği (AKS-18) ---
+// Nextion'a gönderilecek getter. Ekran projesi hazır olduğunda kullanılacak.
+// TODO: DisplayHMI üzerinden Nextion'a FW_VERSION göndermek için alan ekle.
+inline const char* AKS_getFirmwareVersion() {
+#ifdef FW_VERSION
+    return FW_VERSION;
+#else
+    return "dev";
+#endif
+}
+
+extern esp_reset_reason_t g_bootResetReason;
+
+// Nextion'a gonderilecek sekilde hazirla (EKRAN PROJESI HAZIR DEGIL)
+// TODO: DisplayHMI uzerinden Nextion'a boot_reason gondermek icin alan ekle.
+inline esp_reset_reason_t AKS_getBootResetReason() {
+    return g_bootResetReason;
+}
 
 #endif  // SYSTEM_CONFIG_H

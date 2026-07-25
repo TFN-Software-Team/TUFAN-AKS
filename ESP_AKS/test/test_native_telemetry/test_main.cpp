@@ -13,6 +13,7 @@ extern void test_motor_valid_renders_as_one(void);
 extern void test_motor_timeout_renders_as_one(void);
 extern void test_bms_valid_renders_as_one(void);
 extern void test_full_format_with_distinct_values(void);
+extern void test_snprintf_truncation(void);
 extern void test_two_packets_have_separator(void);
 // v2 yeni alanlar
 extern void test_ts_ms_is_encoded(void);
@@ -33,8 +34,8 @@ extern void test_impl_realistic_range_sweep_stays_within_bounds(void);
 
 // TelemetrySanitize (UKS aralik-disi alan sanitizasyonu) birim testleri
 extern void test_sanitize_system_state_valid_passthrough(void);
-extern void test_sanitize_system_state_zero_becomes_fault(void);
-extern void test_sanitize_system_state_five_becomes_fault(void);
+extern void test_sanitize_system_state_zero_becomes_idle(void);
+extern void test_sanitize_system_state_five_becomes_idle(void);
 extern void test_sanitize_soc_within_range_passthrough(void);
 extern void test_sanitize_soc_at_max_passthrough(void);
 extern void test_sanitize_soc_above_max_clamped(void);
@@ -44,6 +45,12 @@ extern void test_sanitize_current_normal_passthrough(void);
 extern void test_sanitize_for_uplink_passthrough_when_all_valid(void);
 extern void test_sanitize_for_uplink_corrects_invalid_system_state(void);
 extern void test_sanitize_for_uplink_corrects_soc_and_current_together(void);
+
+extern void test_sanitize_rpm_negative_becomes_zero(void);
+extern void test_sanitize_rpm_zero_passthrough(void);
+extern void test_sanitize_rpm_positive_passthrough(void);
+extern void test_sanitize_rpm_above_max_clamped(void);
+extern void test_rpmToSpeedKmhX10Impl_nan_protection(void);
 
 // TelemetrySanitize::sanitizeMotorVoltForTorqueField (torque alanı semantik
 // uyumsuzluk clamp'i — bkz. Documents/TORQUE_ALAN_KARAR_NOTU.md) testleri
@@ -59,9 +66,10 @@ extern void test_replay_output_sanitizes_corrupted_system_state(void);
 extern void test_replay_output_sanitizes_zero_system_state(void);
 extern void test_replay_then_live_seq_is_sequential_and_monotonic(void);
 
-// SysStateDerive (HİPOTEZ — akımdan türetilmiş sysState) çekirdek matematiği
-// + flag=0 (varsayılan) no-op testleri. flag=1 davranışı ayrı bir derleme
-// birimindedir (bkz. test_native_sysstate_derive_enabled).
+// SysStateDerive (Y33 — akımdan türetilmiş sysState) çekirdek matematiği +
+// varsayılan derlemede (flag=1) türetmenin gerçekten uygulandığı testi.
+// Ezmeme kuralı ve bayat-veri koruması ayrı derleme biriminde ele alınır
+// (bkz. test_native_sysstate_derive_enabled).
 extern void test_derive_impl_zero_current_is_idle(void);
 extern void test_derive_impl_at_positive_band_boundary_is_idle(void);
 extern void test_derive_impl_at_negative_band_boundary_is_idle(void);
@@ -70,7 +78,7 @@ extern void test_derive_impl_just_below_negative_band_is_discharge(void);
 extern void test_derive_impl_large_positive_current_is_charge(void);
 extern void test_derive_impl_large_negative_current_is_discharge(void);
 extern void test_derive_production_wrapper_matches_impl_at_production_band(void);
-extern void test_apply_is_noop_when_flag_disabled_even_if_sysstate_zero(void);
+extern void test_apply_derives_from_current_in_default_build(void);
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -90,6 +98,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_motor_timeout_renders_as_one);
     RUN_TEST(test_bms_valid_renders_as_one);
     RUN_TEST(test_full_format_with_distinct_values);
+    RUN_TEST(test_snprintf_truncation);
     RUN_TEST(test_two_packets_have_separator);
     RUN_TEST(test_ts_ms_is_encoded);
     RUN_TEST(test_spd_x10_is_encoded);
@@ -105,10 +114,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_impl_motor_rpm_false_applies_gear_ratio);
     RUN_TEST(test_impl_applies_clamp);
     RUN_TEST(test_impl_realistic_range_sweep_stays_within_bounds);
+    RUN_TEST(test_rpmToSpeedKmhX10Impl_nan_protection);
 
     RUN_TEST(test_sanitize_system_state_valid_passthrough);
-    RUN_TEST(test_sanitize_system_state_zero_becomes_fault);
-    RUN_TEST(test_sanitize_system_state_five_becomes_fault);
+    RUN_TEST(test_sanitize_system_state_zero_becomes_idle);
+    RUN_TEST(test_sanitize_system_state_five_becomes_idle);
     RUN_TEST(test_sanitize_soc_within_range_passthrough);
     RUN_TEST(test_sanitize_soc_at_max_passthrough);
     RUN_TEST(test_sanitize_soc_above_max_clamped);
@@ -118,6 +128,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_sanitize_for_uplink_passthrough_when_all_valid);
     RUN_TEST(test_sanitize_for_uplink_corrects_invalid_system_state);
     RUN_TEST(test_sanitize_for_uplink_corrects_soc_and_current_together);
+
+    RUN_TEST(test_sanitize_rpm_negative_becomes_zero);
+    RUN_TEST(test_sanitize_rpm_zero_passthrough);
+    RUN_TEST(test_sanitize_rpm_positive_passthrough);
+    RUN_TEST(test_sanitize_rpm_above_max_clamped);
 
     RUN_TEST(test_sanitize_motor_volt_for_torque_field_within_range_passthrough);
     RUN_TEST(test_sanitize_motor_volt_for_torque_field_at_boundary_passthrough);
@@ -138,7 +153,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_derive_impl_large_positive_current_is_charge);
     RUN_TEST(test_derive_impl_large_negative_current_is_discharge);
     RUN_TEST(test_derive_production_wrapper_matches_impl_at_production_band);
-    RUN_TEST(test_apply_is_noop_when_flag_disabled_even_if_sysstate_zero);
+    RUN_TEST(test_apply_derives_from_current_in_default_build);
 
     return UNITY_END();
 }

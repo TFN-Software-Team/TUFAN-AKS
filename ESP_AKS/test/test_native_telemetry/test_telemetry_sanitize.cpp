@@ -7,8 +7,9 @@
 #include "TelemetrySanitize.h"
 #include "fake_uart.h"
 
-// UKS Decode_Line: Parse_Int(f[12], 1, 4). Aralik disi sysState guvenlik
-// acisindan FAULT (4) sayilmali; UKS aksi halde tum frame'i reddeder.
+// UKS Decode_Line: Parse_Int(f[12], 1, 4). Aralik disi sysState eskiden guvenlik
+// acisindan FAULT (4) sayilirdi. AKS-17 kapsaminda gercek bir kaynak bulunana
+// kadar 0 -> 2 (IDLE) olarak sanitize edilecek, boylece UKS'te yaniltici FAULT gorunumu onlenir.
 
 void test_sanitize_system_state_valid_passthrough(void) {
     TEST_ASSERT_EQUAL_UINT8(1, TelemetrySanitize::sanitizeSystemState(1));
@@ -17,12 +18,14 @@ void test_sanitize_system_state_valid_passthrough(void) {
     TEST_ASSERT_EQUAL_UINT8(4, TelemetrySanitize::sanitizeSystemState(4));
 }
 
-void test_sanitize_system_state_zero_becomes_fault(void) {
-    TEST_ASSERT_EQUAL_UINT8(4, TelemetrySanitize::sanitizeSystemState(0));
+// AKS-17: 0 artik FAULT(4) degil, notr IDLE(2) olarak raporlaniyor
+// cunku TEL_bmsSystemState hicbir CAN ID'den parse edilmiyor.
+void test_sanitize_system_state_zero_becomes_idle(void) {
+    TEST_ASSERT_EQUAL_UINT8(2, TelemetrySanitize::sanitizeSystemState(0));
 }
 
-void test_sanitize_system_state_five_becomes_fault(void) {
-    TEST_ASSERT_EQUAL_UINT8(4, TelemetrySanitize::sanitizeSystemState(5));
+void test_sanitize_system_state_five_becomes_idle(void) {
+    TEST_ASSERT_EQUAL_UINT8(2, TelemetrySanitize::sanitizeSystemState(5));
 }
 
 // UKS Decode_Line: Parse_Int(f[15], 0, 10000).
@@ -90,6 +93,27 @@ void test_sanitize_motor_volt_for_torque_field_uint16_max_clamped(void) {
 }
 
 // ---------------------------------------------------------------------------
+// sanitizeRpm: RPM negatifse 0, TEL_RPM_MAX üzerinde ise TEL_RPM_MAX'a kırpar.
+// ---------------------------------------------------------------------------
+void test_sanitize_rpm_negative_becomes_zero(void) {
+    TEST_ASSERT_EQUAL_INT16(0, TelemetrySanitize::sanitizeRpm(-1));
+    TEST_ASSERT_EQUAL_INT16(0, TelemetrySanitize::sanitizeRpm(-32768));
+}
+
+void test_sanitize_rpm_zero_passthrough(void) {
+    TEST_ASSERT_EQUAL_INT16(0, TelemetrySanitize::sanitizeRpm(0));
+}
+
+void test_sanitize_rpm_positive_passthrough(void) {
+    TEST_ASSERT_EQUAL_INT16(500, TelemetrySanitize::sanitizeRpm(500));
+}
+
+void test_sanitize_rpm_above_max_clamped(void) {
+    TEST_ASSERT_EQUAL_INT16(20000, TelemetrySanitize::sanitizeRpm(25000));
+    TEST_ASSERT_EQUAL_INT16(20000, TelemetrySanitize::sanitizeRpm(32767));
+}
+
+// ---------------------------------------------------------------------------
 // sanitizeForUplink (S4): tek ortak sanitize kapısı — üç alanı da birlikte
 // düzeltir, geçerli değerleri değiştirmeden bırakır.
 // ---------------------------------------------------------------------------
@@ -123,16 +147,16 @@ void test_sanitize_for_uplink_clamps_motor_volt_above_torque_range(void) {
 }
 
 // ---------------------------------------------------------------------------
-// sanitizeForUplink: aralık dışı sysState (0 veya 7 gibi) FAULT(4)'e
+// sanitizeForUplink: aralik disi sysState (0 veya 7 gibi) IDLE(2)'ye
 // düzeltilmeli — buffer'a bozuk veri girse bile replay çıktısı UKS'in
-// kabul aralığında olur (S4).
+// kabul aralığında olur (S4). AKS-17: kaynak bulunana kadar 4 yerine 2.
 // ---------------------------------------------------------------------------
 void test_sanitize_for_uplink_corrects_invalid_system_state(void) {
     TelemetryData d = {};
     d.TEL_bmsSystemState = 7;  // aralık dışı
 
     const TelemetryData out = TelemetrySanitize::sanitizeForUplink(d);
-    TEST_ASSERT_EQUAL_UINT8(4, out.TEL_bmsSystemState);
+    TEST_ASSERT_EQUAL_UINT8(2, out.TEL_bmsSystemState);
 }
 
 // ---------------------------------------------------------------------------
@@ -140,13 +164,13 @@ void test_sanitize_for_uplink_corrects_invalid_system_state(void) {
 // ---------------------------------------------------------------------------
 void test_sanitize_for_uplink_corrects_soc_and_current_together(void) {
     TelemetryData d = {};
-    d.TEL_bmsSystemState = 0;             // -> 4
+    d.TEL_bmsSystemState = 0;             // -> 2
     d.TEL_bmsSocHundredths = 65535;       // -> 10000
     d.TEL_bmsCurrentCentiA = INT32_MIN;  // -> INT32_MIN + 1
 
     const TelemetryData out = TelemetrySanitize::sanitizeForUplink(d);
 
-    TEST_ASSERT_EQUAL_UINT8(4, out.TEL_bmsSystemState);
+    TEST_ASSERT_EQUAL_UINT8(2, out.TEL_bmsSystemState);
     TEST_ASSERT_EQUAL_UINT16(10000, out.TEL_bmsSocHundredths);
     TEST_ASSERT_EQUAL_INT32(INT32_MIN + 1, out.TEL_bmsCurrentCentiA);
 }

@@ -64,6 +64,9 @@ class UplinkScheduler {
     // Döner: bu tick tampona bir örnek yazıldı mı.
     bool offlineSample(uint64_t nowMs, const TelemetryData& live);
 
+    // --- Look-back: link UP iken de sürekli 1 Hz ile en son örnekleri sakla ---
+    void recordLookback(uint64_t nowMs, const TelemetryData& live);
+
     // --- NORMAL mod TX tick: <=burst replay (başarılı gönderimde düşür) + 1 canlı ---
     // Döner: bu tick fiilen gönderilen paket sayısı.
     int onTxTickLinkUp(bool haveLive, const TelemetryData& live, SendFn send,
@@ -96,4 +99,10 @@ class UplinkScheduler {
     uint32_t m_offlineFirstTs = 0u;
     uint32_t m_offlineLastTs = 0u;
     bool m_offlineHasSamples = false;
+
+    // Look-back tamponu (16 kayıtlık dairesel tampon)
+    TelemetryData m_lookbackBuf[16];
+    int m_lookbackHead = 0;
+    int m_lookbackCount = 0;
+    uint64_t m_lastLookbackSampleMs = 0u;
 };

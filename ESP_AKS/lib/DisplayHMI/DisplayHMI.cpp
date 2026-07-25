@@ -1,6 +1,8 @@
 #include "DisplayHMI.h"
 #include "SystemConfig.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
+#include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,6 +18,10 @@ DisplayHMI::DisplayHMI()
       HMI_resetWarnLoggedOnce(false),
       HMI_lastResetWarnTick(0),
       HMI_resetCount(0),
+      m_lastRxTimeMs(0),
+      m_aliveWarnLoggedOnce(false),
+      m_lastAliveWarnTick(0),
+      m_lastSendmeTick(0),
       HMI_lastResyncTick(0),
       HMI_nextResyncField(0),
       HMI_lastScreenData({}) {}
@@ -24,7 +30,7 @@ bool DisplayHMI::begin() {
     if (HMI_isInitialized) return true;
 
     uart_config_t HMI_uartConfig = {
-        .baud_rate = 9600,
+        .baud_rate = HMI_UART_BAUD,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -43,7 +49,7 @@ bool DisplayHMI::begin() {
         return false;
     }
 
-    if (uart_driver_install(HMI_UART_NUM, 256, 256, 0, nullptr, 0) != ESP_OK) {
+    if (uart_driver_install(HMI_UART_NUM, 1024, 1024, 0, nullptr, 0) != ESP_OK) {
         ESP_LOGE(TAG, "UART driver install failed");
         return false;
     }
@@ -87,6 +93,22 @@ bool DisplayHMI::consumeResetFlag() {
     return HMI_was;
 }
 
+bool DisplayHMI::isDisplayAlive() {
+    uint32_t nowMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    bool alive = (nowMs - m_lastRxTimeMs) < HMI_LINK_TIMEOUT_MS;
+    
+    if (!alive) {
+        if (!m_aliveWarnLoggedOnce || (nowMs - m_lastAliveWarnTick) >= 5000) {
+            ESP_LOGE(TAG, "Nextion ekran ile baglanti koptu! (Son yanit: %lu ms once)", (unsigned long)(nowMs - m_lastRxTimeMs));
+            m_lastAliveWarnTick = nowMs;
+            m_aliveWarnLoggedOnce = true;
+        }
+    } else {
+        m_aliveWarnLoggedOnce = false;
+    }
+    return alive;
+}
+
 // Startup event (00 00 00 FF FF FF) yakalandı: Nextion brown-out/reset attı,
 // tüm component'ler Editor varsayılanına döndü. Kurtarma:
 //   (a) bkcmd=0'ı yeniden gönder (reset ile kaybolur),
@@ -119,6 +141,13 @@ void DisplayHMI::HMI_handleNextionReset() {
 
 void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
     if (!HMI_isInitialized) return;
+
+    uint32_t nowMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    if (nowMs - m_lastSendmeTick >= 1000) {
+        m_lastSendmeTick = nowMs;
+        const char cmd[9] = {'s','e','n','d','m','e', (char)0xFF, (char)0xFF, (char)0xFF};
+        uart_write_bytes(HMI_UART_NUM, cmd, 9);
+    }
 
     const bool HMI_forceRefresh = !HMI_hasCachedScreen;
 
@@ -204,7 +233,7 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
 bool DisplayHMI::readTouchCommand(uint8_t& HMI_command) {
     if (!HMI_isInitialized) return false;
 
-    // --- HMI Command Frame Format ---
+// --- HMI Command Frame Format ---
     // The HMI must send commands as a 3-byte frame to ensure integrity:
     // [HEADER] [COMMAND] [CHECKSUM]
     // HEADER   = 0x5A
@@ -213,9 +242,6 @@ bool DisplayHMI::readTouchCommand(uint8_t& HMI_command) {
     // 
     // Example START frame: 0x5A 0x01 0xFE
     
-    static int rxState = 0;
-    static uint8_t pendingCmd = 0;
-
     uint8_t rxByte;
     // Timeout pdMS_TO_TICKS(10) ile en az 1 byte bekler (eski davranis),
     // ardindan bufferdaki kalan bytelari 0 timeout ile ceker.
@@ -223,6 +249,10 @@ bool DisplayHMI::readTouchCommand(uint8_t& HMI_command) {
     if (rxBytes <= 0) return false;
 
     do {
+        if (rxByte == 0x65 || rxByte == 0x66 || rxByte == 0x5A) {
+            m_lastRxTimeMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+        }
+
         // Nextion reset dedektörü ham byte akışını PARALEL gözler — aşağıdaki
         // 0x5A çerçeve mantığından tamamen bağımsızdır (Startup event'inin
         // 0x00/0xFF byte'ları zaten çerçeve parser'ında atlanıyor).
@@ -230,29 +260,8 @@ bool DisplayHMI::readTouchCommand(uint8_t& HMI_command) {
             HMI_handleNextionReset();
         }
 
-        if (rxByte == 0xFF || rxByte == 0x00) {
-            // Nextion invalid/ack artiklari - guvenle atla ve state resetle
-            rxState = 0;
-            continue;
-        }
-
-        if (rxState == 0) {
-            if (rxByte == 0x5A) {
-                rxState = 1;
-            }
-        } else if (rxState == 1) {
-            pendingCmd = rxByte;
-            rxState = 2;
-        } else if (rxState == 2) {
-            uint8_t expectedChecksum = (uint8_t)(~pendingCmd);
-            rxState = 0; // reset state for next command
-            if (rxByte == expectedChecksum) {
-                HMI_command = pendingCmd;
-                return true;
-            } else {
-                ESP_LOGW(TAG, "HMI command checksum mismatch: cmd=0x%02X, csum=0x%02X, expected=0x%02X",
-                         pendingCmd, rxByte, expectedChecksum);
-            }
+        if (HMI_parseTouchByte(rxByte, HMI_touchParserState, HMI_command)) {
+            return true;
         }
     } while (uart_read_bytes(HMI_UART_NUM, &rxByte, 1, 0) == 1);
 

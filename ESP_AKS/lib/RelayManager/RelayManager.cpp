@@ -2,6 +2,8 @@
 #include "SystemConfig.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static constexpr const char* TAG = "RelayManager";
 
@@ -38,6 +40,14 @@ bool RelayManager::begin() {
         ESP_LOGE(TAG, "SPI device add failed: %s", esp_err_to_name(ret));
         return false;
     }
+
+    // Y31 — HER ŞEYDEN ÖNCE: IOCON'u bilinen bir değere (BANK=0, sequential
+    // mod) çek. Diğer tüm register adresleri (OLAT/IODIR) BANK=0 haritasına
+    // göredir; chip beklenmedik bir sebeple BANK=1'e düşmüşse o adresler
+    // YANLIŞ register'lara yazar ve kontaktörler komut edildiği gibi
+    // davranmaz. Bkz. RelayManager.h'deki iki-adres açıklaması.
+    writeRegister(MCP23S17_IOCON_BANK1, 0x00);
+    writeRegister(MCP23S17_IOCON_BANK0, 0x00);
 
     // CRITICAL: Write OLAT registers BEFORE setting pins as output.
     // MCP23S17 defaults OLAT to 0x00 (LOW).  In our active-low hardware
@@ -107,6 +117,24 @@ void RelayManager::allOn() {
 
     verifyOutputs();  // G3: kontaktörler gerçekten kapandı mı geri-oku
 }
+
+void RelayManager::setBankStaggered(uint16_t mask, uint32_t stepDelayMs) {
+    if (!s_initialized) {
+        ESP_LOGW(TAG, "setBankStaggered called before begin()");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Staggered closing bank mask=0x%03X, step=%u ms",
+             (unsigned)mask, (unsigned)stepDelayMs);
+
+    for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
+        if (mask & (1u << ch)) {
+            setRelay(ch, true);
+            vTaskDelay(pdMS_TO_TICKS(stepDelayMs));
+        }
+    }
+}
+
 
 void RelayManager::allOff(bool silent) {
     // Kontaktör BANK maskesini açar (GÜVENLİK — şartname 8.2.a.vi: güvenlik
@@ -194,6 +222,14 @@ bool RelayManager::readRegister(uint8_t reg, uint8_t& out) {
 }
 
 void RelayManager::reinitAndReassert() {
+    // Y31 — İLK İŞ: IOCON'u BANK=0'a çek. Bu yol zaten bir uyuşmazlık
+    // (muhtemel brown-out / kısmi reset) sonrası çağrılıyor; chip'in BANK
+    // bitinin bozulmuş olması tam da burada beklenmesi gereken bir durumdur.
+    // IOCON düzeltilmeden yapılan OLAT/IODIR yazımları yanlış register'lara
+    // gider ve re-assert sessizce ETKİSİZ kalır.
+    writeRegister(MCP23S17_IOCON_BANK1, 0x00);
+    writeRegister(MCP23S17_IOCON_BANK0, 0x00);
+
     // Güvenli sıra (bkz. begin()): önce OLAT'ı emniyetli HIGH'a al, sonra
     // pinleri output yap, en son gerçek gölge-durumu re-assert et.
     writeRegister(MCP23S17_OLATA, 0xFF);
@@ -214,22 +250,29 @@ bool RelayManager::verifyOutputs() {
     const uint8_t expOlatA = hw & 0xFF;
     const uint8_t expOlatB = (hw >> 8) & 0xFF;
 
-    uint8_t olatA = 0, olatB = 0, iodirA = 0, iodirB = 0;
+    uint8_t olatA = 0, olatB = 0, iodirA = 0, iodirB = 0, iocon = 0;
     bool readOk = readRegister(MCP23S17_OLATA, olatA) &&
                   readRegister(MCP23S17_OLATB, olatB) &&
                   readRegister(MCP23S17_IODIRA, iodirA) &&
-                  readRegister(MCP23S17_IODIRB, iodirB);
+                  readRegister(MCP23S17_IODIRB, iodirB) &&
+                  readRegister(MCP23S17_IOCON_BANK0, iocon);
+
+    // Y31: IOCON.BANK (bit 7) geri-okuması. BANK=1'e düşmüş bir chip'te
+    // yukarıdaki OLAT/IODIR okumaları BAŞKA register'lardan gelir — yani
+    // "eşleşiyor" sonucu da güvenilmez olur. Bu yüzden BANK biti ayrıca
+    // kontrol edilir; set ise uyuşmazlık sayılır ve re-init tetiklenir.
+    const bool banksSane = (iocon & 0x80) == 0x00;
 
     // IODIR default'u 0xFF (tüm pinler input) — brown-out/reset işareti.
-    bool match = readOk && olatA == expOlatA && olatB == expOlatB &&
+    bool match = readOk && banksSane && olatA == expOlatA && olatB == expOlatB &&
                  iodirA == 0x00 && iodirB == 0x00;
     if (match)
         return true;
 
     ESP_LOGE(TAG,
              "Actuator verify MISMATCH: OLAT=%02X/%02X (exp %02X/%02X) "
-             "IODIR=%02X/%02X readOk=%d — re-init + re-assert",
-             olatA, olatB, expOlatA, expOlatB, iodirA, iodirB, readOk);
+             "IODIR=%02X/%02X IOCON=%02X readOk=%d — re-init + re-assert",
+             olatA, olatB, expOlatA, expOlatB, iodirA, iodirB, iocon, readOk);
 
     // (a) chip'i yeniden init et ve çıkışları re-assert et
     reinitAndReassert();

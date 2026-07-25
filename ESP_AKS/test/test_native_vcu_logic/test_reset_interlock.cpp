@@ -26,8 +26,8 @@ void test_reset_interlock_motor_error_blocks(void) {
 
 void test_reset_interlock_bms_error_blocks(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsSystemState = 4;  // FAULT
-    TEST_ASSERT_FALSE(isResetInterlockSatisfied(d, VcuState::FAULT));
+    d.TEL_bmsSystemState = 4;  // FAULT (devre disi: AKS-17)
+    TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }
 
 void test_reset_interlock_unverified_bms_system_state_does_not_block(void) {
@@ -99,5 +99,37 @@ void test_reset_interlock_bms_timeout_in_fault_blocks(void) {
 void test_reset_interlock_warning_level_passes(void) {
     TelemetryData d = makeTelemetryDataValid();
     d.TEL_bmsPackVoltageDeciV = 720;  // warn eşiğinde ama critical değil
+    TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
+}
+
+// AKS-04: Hareket halinde RESET'e izin verme
+void test_reset_interlock_rpm_zero_fresh_passes(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorRpm = 0;
+    d.TEL_motorDataValid = true;
+    d.TEL_motorTimeoutActive = false;
+    TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
+}
+
+void test_reset_interlock_rpm_high_blocks(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorRpm = 500;
+    d.TEL_motorDataValid = true;
+    d.TEL_motorTimeoutActive = false;
+    TEST_ASSERT_FALSE(isResetInterlockSatisfied(d, VcuState::FAULT));
+}
+
+void test_reset_interlock_rpm_zero_stale_blocks(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorRpm = 0;
+    d.TEL_motorTimeoutActive = true;
+    TEST_ASSERT_FALSE(isResetInterlockSatisfied(d, VcuState::FAULT));
+}
+
+void test_reset_interlock_rpm_noise_passes(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorRpm = -30; // |30| < 50
+    d.TEL_motorDataValid = true;
+    d.TEL_motorTimeoutActive = false;
     TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }

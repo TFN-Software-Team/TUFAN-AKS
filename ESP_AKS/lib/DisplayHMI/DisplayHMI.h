@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "HMIHelpers.h"
+#include "HMITouchParser.h"
 #include "NextionResetDetect.h"
 #include "ResyncPolicy.h"
 
@@ -37,12 +38,17 @@ class DisplayHMI {
     bool HMI_resetWarnLoggedOnce;
     uint32_t HMI_lastResetWarnTick;
     uint32_t HMI_resetCount;
+    uint32_t m_lastRxTimeMs;
+    bool m_aliveWarnLoggedOnce;
+    uint32_t m_lastAliveWarnTick;
+    uint32_t m_lastSendmeTick;
     // Round-robin resync durumu (bkz. ResyncPolicy.h — Startup event'i RX
     // hattında kaybolursa devreye giren periyodik emniyet katmanı).
     uint32_t HMI_lastResyncTick;
     uint8_t HMI_nextResyncField;
     HMI_DisplayData HMI_lastScreenData;
     HMI_NextionResetDetect HMI_resetDetect;
+    HMI_TouchParserState HMI_touchParserState;
 
     void HMI_drainRxBuffer();
     void HMI_sendBkcmd0();
@@ -61,4 +67,6 @@ class DisplayHMI {
     // Tüketici SADECE BmsNextionCache/BMS_firstRun tarafıdır — DisplayHMI'nin
     // kendi cache'i forceFullRefresh() ile zaten dahili olarak sıfırlanır.
     bool consumeResetFlag();
+
+    bool isDisplayAlive();
 };

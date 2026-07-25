@@ -145,6 +145,11 @@ static void DIAG_decodeReg3(uint8_t reg3) {
 // app_main — tek giriş noktası (sadece bu env derleniyor)
 // ---------------------------------------------------------------------------
 extern "C" void app_main() {
+    for (int i = 0; i < 5; ++i) {
+        ESP_LOGE(TAG, "*** DIAGNOSTIC BUILD - ARAC KONTROLU YOK - PISTE CIKARMAYIN ***");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+
     ESP_LOGI(TAG, "================================================");
     ESP_LOGI(TAG, "  E22-400T30D-V2 DIAGNOSTIC — READ ONLY + TX SMOKE");
     ESP_LOGI(TAG, "  Hicbir kalici yazma komutu gonderilmeyecek.");

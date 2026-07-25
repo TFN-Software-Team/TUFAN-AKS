@@ -68,6 +68,7 @@ extern void test_e033_stub_accepts_valid_dlc(void);
 extern void test_stubs_do_not_write_telemetry(void);
 
 // Cell voltage parsing (E015-E020) and E001 min/max/avg
+extern void test_decimvtomv_consistency(void);
 extern void test_e015_dlc_too_short(void);
 extern void test_e015_parses_four_cells_correctly(void);
 extern void test_e015_cells_in_lifepo4_range(void);
@@ -103,6 +104,11 @@ extern void test_both_flags_true_no_retry(void);
 extern void test_tick_wraparound_within_window_no_retry(void);
 extern void test_tick_wraparound_at_threshold_retries(void);
 extern void test_post_reception_timeout_is_out_of_scope(void);
+
+// Motor timeout debounce
+extern void test_motor_timeout_debounce_normal(void);
+extern void test_motor_timeout_debounce_recovered(void);
+extern void test_motor_timeout_debounce_rate_limiting(void);
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -171,6 +177,7 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_stubs_do_not_write_telemetry);
 
     // Cell voltage parsing (E015-E020) and E001 min/max/avg
+    RUN_TEST(test_decimvtomv_consistency);
     RUN_TEST(test_e015_dlc_too_short);
     RUN_TEST(test_e015_parses_four_cells_correctly);
     RUN_TEST(test_e015_cells_in_lifepo4_range);
@@ -205,6 +212,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_tick_wraparound_within_window_no_retry);
     RUN_TEST(test_tick_wraparound_at_threshold_retries);
     RUN_TEST(test_post_reception_timeout_is_out_of_scope);
+
+    // Motor timeout debounce
+    RUN_TEST(test_motor_timeout_debounce_normal);
+    RUN_TEST(test_motor_timeout_debounce_recovered);
+    RUN_TEST(test_motor_timeout_debounce_rate_limiting);
 
     return UNITY_END();
 }

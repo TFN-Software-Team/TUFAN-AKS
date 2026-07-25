@@ -1,19 +1,17 @@
 """Gorev 2: 60 sn kesinti provasi (sanal saat, gercek bekleme YOK).
 
-5 Hz canli -> 60 sn kesinti -> 1 Hz offline ornekleme (P6 davranisi,
-aks_loop_sim.run_outage_simulation) -> link up -> tik basina
-<=REPLAY_BURST_PER_TICK replay + 1 canli TX. Her emitted paket GERCEK UKS
-kabul kurallarindan (contract.parse_uks_frame) ve ardindan Monitor'un
-GERCEK csv_logger fonksiyonlarindan (monitor.py'nin serial_worker() CSV
-isleme yolunun bire bir Python izdüsümü) gecirilir.
+5 Hz canli -> 60 sn kesinti (1 Hz offline ornekleme) -> link up ->
+tik basina <=REPLAY_BURST_PER_TICK replay + 1 canli TX. Her emitted paket
+GERCEK UKS kabul kurallarindan (contract.parse_uks_frame) ve ardindan
+Monitor'un GERCEK csv_logger fonksiyonlarindan (monitor.py'nin serial_worker()
+CSV isleme yolunun bire bir Python izdüsümü) gecirilir.
 
-Uc kabul asserti (kabul kriterleri listesindeki sirayla):
+Kabul olcutleri (sartname 9.2.h):
   1) Kesinti/replay boyunca yeni log dosyasi hic ACILMADI.
-  2) Kesinti araligina ait tum ts_ms degerleri dosyada mevcut.
-  3) Dosyadaki (sirali, essiz) ts_ms degerleri arasinda hicbir ardisik
-     fark 5000 ms'yi asmiyor (9.2.h "en fazla 5 sn" kuralinin, replay
-     nedeniyle TX-sirasinda dogal olarak geriye siçrayan ts'ler yerine
-     GERCEK ZAMAN CIZELGESI uzerinde denetlenmesi — bkz. asagidaki not).
+  2) Kesinti penceresindeki (outage_start..outage_end) maksimum ardisik
+     zaman damgasi farki <= 5000 ms (ANA OLCUT).
+  3) Kesinti penceresi bastan sona kapsanmis (ilk ve son ts kontrolleri).
+  4) En az 60 paket buffer'a girmis (look-back dahil).
 """
 
 from __future__ import annotations
@@ -60,10 +58,10 @@ def _monitor_ingest(forward_lines: list[str], csv_logger_module):
 def test_60s_outage_replay_preserves_single_file_and_coverage(csv_logger_module):
     sim = run_outage_simulation()
 
-    assert len(sim.buffered_outage_ts) == 60, (
-        "60 sn kesinti x 1 Hz orneklem = 60 paket beklenir (AKS'in kendi "
-        "test_60s_outage_simulation_stays_within_capacity testiyle ayni "
-        f"beklenti); gelen: {len(sim.buffered_outage_ts)}"
+    # ---- SAYI KONTROLU: look-back dahil en az 60 paket (>= 60, == degil) ----
+    assert len(sim.buffered_outage_ts) >= 60, (
+        "60 sn kesinti x 1 Hz orneklem + look-back = en az 60 paket beklenir; "
+        f"gelen: {len(sim.buffered_outage_ts)}"
     )
     assert len(sim.buffered_outage_ts) <= contract.OB_CAPACITY, (
         "kesinti orneklemi OB_CAPACITY'yi asmamali (P6 sozlesmesi)"
@@ -107,7 +105,7 @@ def test_60s_outage_replay_preserves_single_file_and_coverage(csv_logger_module)
 
     recorded_ts = [int(r.split(";")[0]) for r in records]
 
-    # ---- Assert 2: kesinti araligindaki ts'ler dosyada mevcut ----
+    # ---- Assert 2 (IKINCIL): kesinti penceresi bastan sona kapsanmis ----
     recorded_ts_set = set(recorded_ts)
     missing = [t for t in sim.buffered_outage_ts if t not in recorded_ts_set]
     assert not missing, (
@@ -115,7 +113,7 @@ def test_60s_outage_replay_preserves_single_file_and_coverage(csv_logger_module)
         f"{missing[:10]}..."
     )
 
-    # ---- Assert 3: sirali/essiz ts_ms'ler arasinda 5000 ms'yi asan bosluk yok ----
+    # ---- Assert 3 (ANA OLCUT, 9.2.h): maksimum ardisik ts farki <= 5000 ms ----
     # NOT: written_lines/records TX SIRASINDADIR (replay eski ts'leri, canli
     # guncel ts'yi tasir — bu ikisi TX aninda kasitli olarak iç ice gecer,
     # bkz. UKS Monitor csv_logger.detect_new_boot dokumantasyonu: "ts geriye
@@ -129,7 +127,8 @@ def test_60s_outage_replay_preserves_single_file_and_coverage(csv_logger_module)
     gaps = [
         b - a for a, b in zip(sorted_unique_ts, sorted_unique_ts[1:])
     ]
-    assert all(g <= 5000 for g in gaps), (
+    max_gap = max(gaps) if gaps else 0
+    assert max_gap <= 5000, (
         f"zaman cizelgesinde 5000 ms'yi asan bosluk(lar) var: "
-        f"{[g for g in gaps if g > 5000]}"
+        f"max_gap={max_gap} ms, tumu: {[g for g in gaps if g > 5000]}"
     )

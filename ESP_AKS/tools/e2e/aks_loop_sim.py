@@ -9,11 +9,19 @@ her "TX edilen" paket icin GERCEK UKS kabul kurallarindan (contract.
 parse_uks_frame) ve GERCEK Monitor csv_logger fonksiyonlarindan gecirir.
 
 Gercek zaman beklenmez — nowMs bir Python int sayaci olarak ilerletilir.
+
+AKS-07 look-back tamponlamasi: firmware (UplinkScheduler.cpp recordLookback +
+becameDown dali) link UP iken de her ornekleme periyodunda (1 Hz) canli
+okumayi 16 slotluk dairesel tampona yazar. Link DOWN'a gecis ANINDA
+(LINK_TIMEOUT_MS/1000)+2 = 11 kaydı offline buffer'in BASINA aktarir. Bu
+mekanizma, link-down tespitinin LINK_TIMEOUT_MS kadar gecikmesinden kaynaklanan
+zaman cizelgesi boşluğunu kapatir.
 """
 
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass, field
 
 import contract
@@ -33,6 +41,46 @@ class SimResult:
     buffered_outage_ts: list = field(default_factory=list)  # kesintide buffer'a giren ts_ms'ler
     outage_start_ms: int = 0
     outage_end_ms: int = 0
+
+
+class _LookbackRing:
+    """UplinkScheduler::m_lookbackBuf'in Python eslenigi (16 slotluk dairesel
+    tampon). Kaynak: UplinkScheduler.h satir 103-107, .cpp recordLookback()."""
+    CAPACITY = 16
+
+    def __init__(self, sample_period_ms: int):
+        self._buf = [None] * self.CAPACITY
+        self._head = 0
+        self._count = 0
+        self._last_sample_ms = 0
+        self._sample_period_ms = sample_period_ms
+
+    def record(self, now_ms: int, reading: dict) -> None:
+        """UplinkScheduler::recordLookback eslenigi."""
+        if self._last_sample_ms == 0 or (now_ms - self._last_sample_ms) >= self._sample_period_ms:
+            self._last_sample_ms = now_ms
+            self._buf[self._head] = dict(reading)  # kopya
+            self._head = (self._head + 1) % self.CAPACITY
+            if self._count < self.CAPACITY:
+                self._count += 1
+
+    @property
+    def last_sample_ms(self) -> int:
+        return self._last_sample_ms
+
+    def drain(self, n: int) -> list[dict]:
+        """Halkadaki son min(n, count) kaydi kronolojik sirada doner
+        (UplinkScheduler::updateLink becameDown dalindaki aktarim
+        mantigi — .cpp satir 47-64)."""
+        items_to_take = min(n, self._count)
+        if items_to_take == 0:
+            return []
+        start_idx = (self._head - items_to_take + self.CAPACITY) % self.CAPACITY
+        result = []
+        for i in range(items_to_take):
+            idx = (start_idx + i) % self.CAPACITY
+            result.append(self._buf[idx])
+        return result
 
 
 def _sensor_reading(now_ms: int) -> dict:
@@ -81,6 +129,12 @@ def run_outage_simulation(
     LORA_TX_PERIOD_MS) turetilir (+%50 marj) — REPLAY_BURST_PER_TICK ileride
     tekrar degisirse sabit bir varsayimin sessizce bayatlamasini onler.
 
+    Look-back tamponlamasi (AKS-07): firmware (UplinkScheduler.cpp) link UP
+    iken de her offlineSamplePeriodMs'de canli okumayi 16 slotluk dairesel
+    tampona yazar. Link DOWN'a GECIS ANINDA (LINK_TIMEOUT_MS/1000)+2 kaydi
+    offline buffer'in BASINA aktarir — boylece link-down tespitindeki
+    LINK_TIMEOUT_MS gecikme boslugu zaman cizelgesinde kapatilir.
+
     Donus: TX SIRASINA GORE tum emitted paketler (her biri gercek
     contract.parse_uks_frame() kabulunden gecmis, UKS'in kabul edecegi
     field dict'i tasir) + kesinti sirasinda buffer'a giren ts listesi.
@@ -105,9 +159,36 @@ def run_outage_simulation(
     last_offline_sample_ms = 0
     has_offline_sample = False
 
+    # --- Look-back halka tamponu (firmware eslenigi) ---
+    lookback = _LookbackRing(contract.OFFLINE_SAMPLE_PERIOD_MS)
+    link_was_down = False  # onceki tik'te link durumu
+
+    # Link-down tespit anini firmware ile ayni sekilde hesapla:
+    # link DOWN'a gecis, outage_start_ms + LINK_TIMEOUT_MS aninda olur.
+    link_down_detect_ms = outage_start_ms + contract.LINK_TIMEOUT_MS
+
     now_ms = 0
     while now_ms < total_ms:
-        link_down = outage_start_ms <= now_ms < outage_end_ms
+        link_down = link_down_detect_ms <= now_ms < outage_end_ms
+
+        # --- Look-back: link UP iken her ornekleme periyodunda tampona yaz ---
+        if not link_down:
+            reading = _sensor_reading(now_ms)
+            lookback.record(now_ms, reading)
+
+        # --- becameDown: link UP -> DOWN gecisi, look-back'i offline buffer'a aktar ---
+        if link_down and not link_was_down:
+            # Firmware: int lookbackItems = (m_linkTimeoutMs / 1000) + 2;
+            lookback_items = (contract.LINK_TIMEOUT_MS // 1000) + 2
+            drained = lookback.drain(lookback_items)
+            for entry in drained:
+                buffer.push(entry)
+                result.buffered_outage_ts.append(entry["ts_ms"])
+            if drained:
+                last_offline_sample_ms = lookback.last_sample_ms
+                has_offline_sample = True
+
+        link_was_down = link_down
 
         if not link_down:
             # --- NORMAL MOD: throttled replay + canli paket (S1) ---

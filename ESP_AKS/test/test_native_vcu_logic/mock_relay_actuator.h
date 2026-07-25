@@ -11,7 +11,12 @@
 // Sayaç ADLARI ve semantiği bilerek korunmuştur (g_fake_relay_*) — böylece
 // test SENARYOLARI değişmeden kalır, yalnız kurulum (init çağrısı) değişir.
 // ---------------------------------------------------------------------------
+// "Bank kapatma yolu cagrildi" — allOn() VE setBankStaggered() ikisini de sayar
+// (READY girisinde bankin kapandigini dogrulayan testler icin).
 extern unsigned g_fake_relay_allOn_count;
+// YALNIZ allOn() — RELAY_ROLES_ASSIGNED=1'de bu 0 KALMALIDIR (allOn tum bank
+// maskesini, S1 dahil, kapatirdi; sartname 8.2.a.vii suruste S1 ACIK ister).
+extern unsigned g_fake_relay_allOnDirect_count;
 extern unsigned g_fake_relay_allOff_count;
 extern unsigned g_fake_relay_allOff_silent_count;
 extern unsigned g_fake_relay_setRelay_count;
@@ -43,6 +48,7 @@ void fake_relay_reset(void);
 class MockRelayActuator : public IRelayActuator {
    public:
     void allOn() override;
+    void setBankStaggered(uint16_t mask, uint32_t stepDelayMs = RELAY_STAGGER_STEP_MS) override;
     void allOff(bool silent) override;
     void setRelay(uint8_t channel, bool state) override;
     void verifyIfDue(uint32_t nowMs) override;

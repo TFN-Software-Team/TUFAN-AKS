@@ -13,16 +13,18 @@ extern void test_getRelayState_reflects_setRelay(void);
 extern void test_getRelayState_out_of_range_returns_false(void);
 extern void test_setRelay_multiple_channels_accumulates_state(void);
 
-// allOn / allOff
+// allOn / allOff / setBankStaggered
 extern void test_allOn_drives_all_active_low(void);
 extern void test_allOn_sets_all_state_bits(void);
 extern void test_allOff_drives_all_high(void);
 extern void test_allOff_clears_state(void);
 extern void test_allOff_before_begin_clears_state_but_no_spi(void);
 extern void test_allOn_before_begin_is_noop(void);
+extern void test_setBankStaggered_drives_selected_channels(void);
 
 // init sequence (safety-critical)
 extern void test_begin_writes_in_safe_order(void);
+extern void test_begin_writes_iocon_before_any_output_register(void);
 extern void test_begin_returns_true_on_success(void);
 extern void test_begin_initializes_state_to_zero(void);
 
@@ -33,6 +35,10 @@ extern void test_verify_detects_iodir_reset_to_input(void);
 extern void test_clear_actuator_fault(void);
 extern void test_verifyIfDue_throttles_to_period(void);
 extern void test_readRegister_returns_written_values(void);
+extern void test_verify_spi_error_sets_fault(void);
+extern void test_verify_detects_iocon_bank_corruption_and_restores(void);
+extern void test_reassert_writes_iocon_before_output_registers(void);
+
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -56,8 +62,10 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_allOff_clears_state);
     RUN_TEST(test_allOff_before_begin_clears_state_but_no_spi);
     RUN_TEST(test_allOn_before_begin_is_noop);
+    RUN_TEST(test_setBankStaggered_drives_selected_channels);
 
     RUN_TEST(test_begin_writes_in_safe_order);
+    RUN_TEST(test_begin_writes_iocon_before_any_output_register);
     RUN_TEST(test_begin_returns_true_on_success);
     RUN_TEST(test_begin_initializes_state_to_zero);
 
@@ -67,6 +75,9 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_clear_actuator_fault);
     RUN_TEST(test_verifyIfDue_throttles_to_period);
     RUN_TEST(test_readRegister_returns_written_values);
+    RUN_TEST(test_verify_spi_error_sets_fault);
+    RUN_TEST(test_verify_detects_iocon_bank_corruption_and_restores);
+    RUN_TEST(test_reassert_writes_iocon_before_output_registers);
 
     return UNITY_END();
 }

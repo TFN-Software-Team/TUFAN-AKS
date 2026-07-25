@@ -1,6 +1,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -33,9 +34,20 @@
 #include "CanParse.h"  // CanParse::deciMvToMv — E001 deci-mV → mV yuvarlama
 #include "BmsNextionPacket.h"
 #include "HMIHelpers.h"
+#include "HMIMappings.h"
 #include "ResyncPolicy.h"  // hmi_resync_due_field — BMS panel resync de aynı saf politikayı kullanır
 
 static constexpr const char *TAG = "APP_MAIN";
+
+#ifndef FW_VERSION
+#define FW_VERSION "dev"
+#endif
+#ifndef GIT_HASH
+#define GIT_HASH "unknown"
+#endif
+#ifndef BUILD_DATE
+#define BUILD_DATE __DATE__ " " __TIME__
+#endif
 
 // Stack high-water-mark logging interval (ticks)
 static constexpr uint32_t STACK_LOG_INTERVAL_MS = 30000;
@@ -68,50 +80,6 @@ extern "C" bool LoRa_IsTelemetryDisabled(void) {
     return s_loraTelemetryDisabled.load(std::memory_order_relaxed);
 }
 
-static HMI_VcuState HMI_mapVcuState(VcuLogic::VcuState HMI_state) {
-  switch (HMI_state) {
-  case VcuLogic::VcuState::INIT:
-    return HMI_VcuState::INIT;
-  case VcuLogic::VcuState::IDLE:
-    return HMI_VcuState::IDLE;
-  case VcuLogic::VcuState::READY:
-    return HMI_VcuState::READY;
-  case VcuLogic::VcuState::DRIVE:
-    return HMI_VcuState::DRIVE;
-  case VcuLogic::VcuState::EMERGENCY_STOP:
-    return HMI_VcuState::EMERGENCY_STOP;
-  case VcuLogic::VcuState::FAULT:
-    return HMI_VcuState::FAULT;
-  default:
-    return HMI_VcuState::FAULT;
-  }
-}
-
-// 24-hücre BMS Nextion komutlarını HMI UART'ına yazan emit callback'i.
-static void BMS_emitNextionCommand(const char* BMS_cmd, size_t BMS_len,
-                                   void* BMS_ctx) {
-  (void)BMS_ctx;
-  uart_write_bytes(HMI_UART_NUM, BMS_cmd, BMS_len);
-  HMI_sendEndBytes();
-}
-
-// "Kapalı" göstergesi = BANK MASKESİNDEKİ kanalların tamamı kapalı
-// (RELAY_CONTACTOR_BANK_MASK, SystemConfig.h). Flaşör kanalı roller
-// atandığında maskenin dışındadır — uyarı flaşörünün durumu kontaktör
-// göstergesini etkilemez. RELAY_ROLES_ASSIGNED=0 iken maske 10 kanalın
-// tamamı olduğundan davranış eskisiyle birebir aynıdır.
-static bool HMI_areAllContactorsClosed() {
-  for (uint8_t REL_channel = 0; REL_channel < RELAY_TOTAL_CHANNELS;
-       ++REL_channel) {
-    if (!(RELAY_CONTACTOR_BANK_MASK & (1u << REL_channel))) {
-      continue;  // maske dışı kanal (flaşör) gösterge kapsamına girmez
-    }
-    if (!RelayManager::instance().getRelayState(REL_channel)) {
-      return false;
-    }
-  }
-  return true;
-}
 
 static void CAN_handleEvent(CAN_Event CAN_event, void* CAN_context) {
   (void)CAN_context;
@@ -254,6 +222,19 @@ void vTask_VCU_Logic(void *pvParameters) {
     if (TEL_sensorDataQueue != nullptr) {
       TelemetryData TEL_data = {};
       if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
+        uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+        uint32_t dataAgeMs = nowMs - TEL_data.TEL_timestampMs;
+        bool isDataStale = (dataAgeMs > SENSOR_DATA_MAX_AGE_MS);
+
+        if (isDataStale) {
+          static uint32_t s_staleCount = 0;
+          if ((s_staleCount++ % 50) == 0) {
+            ESP_LOGW(TAG, "VCU: Sensor data is stale (age: %lu ms), marking as invalid", (unsigned long)dataAgeMs);
+          }
+          TEL_data.TEL_motorDataValid = false;
+          TEL_data.TEL_bmsDataValid = false;
+        }
+
         VcuLogic::setTelemetryData(TEL_data);
       }
     }
@@ -299,10 +280,11 @@ void vTask_HMI_Display(void *pvParameters) {
 
   uint8_t HMI_incomingCommand = 0;
 
-  // EMA (Üstel Hareketli Ortalama) filtresi değişkenleri (İbrenin akıcı hareket etmesi için)
-  float HMI_smoothedRpm = 0.0f;
-  float HMI_smoothedSpeed = 0.0f;
-  const float HMI_EMA_ALPHA = 0.15f; // Bu değer (0.0 ile 1.0 arası) küçüldükçe ibre daha yavaş ve yumuşak kalkar.
+  // Katsayı 0.40f seçildi: 0.15f (~0.7 sn) çok yavaş kalıyordu,
+  // 0.40f ile yaklaşık 0.3 sn yanıt süresi elde ediliyor.
+  const float HMI_EMA_ALPHA = 0.40f; 
+  HmiEmaFilter HMI_rpmFilter(HMI_EMA_ALPHA);
+  HmiEmaFilter HMI_speedFilter(HMI_EMA_ALPHA);
 
   while (true) {
     esp_task_wdt_reset();
@@ -315,17 +297,30 @@ void vTask_HMI_Display(void *pvParameters) {
     if (TEL_sensorDataQueue != nullptr) {
         TelemetryData TEL_data = {};
         if (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE) {
+            uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+            uint32_t dataAgeMs = nowMs - TEL_data.TEL_timestampMs;
+            bool isDataStale = (dataAgeMs > SENSOR_DATA_MAX_AGE_MS);
+
+            if (isDataStale) {
+                TEL_data.TEL_motorDataValid = false;
+                TEL_data.TEL_bmsDataValid = false;
+            }
+
             // TEL_motorRpm işaretsiz büyüklük (uint16_t) — geri yön dönüşü
             // zaten CanManager'da mutlak değere çevrildi, doğrudan kullanılır.
             float targetRpm = (float)TEL_data.TEL_motorRpm;
             // Gerçek hızı km/h cinsinden hesaplıyoruz (Teknofest Şartnamesi)
             float targetSpeed = (float)TEL_data.TEL_speedKmhX10 / 10.0f;
             
-            // İbreler için EMA hesaplaması: (Yeni Değer * Alpha) + (Eski Değer * (1 - Alpha))
-            HMI_smoothedRpm = (HMI_EMA_ALPHA * targetRpm) + ((1.0f - HMI_EMA_ALPHA) * HMI_smoothedRpm);
-            HMI_smoothedSpeed = (HMI_EMA_ALPHA * targetSpeed) + ((1.0f - HMI_EMA_ALPHA) * HMI_smoothedSpeed);
+            bool HMI_motorDataValid = TEL_data.TEL_motorDataValid && !TEL_data.TEL_motorTimeoutActive;
 
-            HMI_screenData.HMI_currentSpeed = static_cast<uint16_t>(HMI_smoothedSpeed);
+            // İbreler için EMA hesaplaması: (Yeni Değer * Alpha) + (Eski Değer * (1 - Alpha))
+            // Bayat/geçersiz veride hızı sıfırlayıp eski değere takılı kalmasını engelleriz.
+            float currentSmoothedRpm = HMI_rpmFilter.update(targetRpm, HMI_motorDataValid);
+            float currentSmoothedSpeed = HMI_speedFilter.update(targetSpeed, HMI_motorDataValid);
+
+            // Çift kesmeyi önlemek için roundf ile tek noktada tam sayıya yuvarlıyoruz
+            HMI_screenData.HMI_currentSpeed = static_cast<uint16_t>(std::roundf(currentSmoothedSpeed));
             // SOC ve sıcaklık kaynak sinyalleri DOĞRULANDI:
             //   SoC → 0xE000 byte[4:5], Temp → 0xE001 byte[6:7].
             // HMI_SOC_SOURCE_VERIFIED=true ve HMI_TEMP_SOURCE_VERIFIED=true.
@@ -333,7 +328,7 @@ void vTask_HMI_Display(void *pvParameters) {
             HMI_screenData.HMI_currentBattery = HMI_batteryDisplayValue(
                 HMI_SOC_SOURCE_VERIFIED, TEL_data.TEL_bmsDataValid,
                 TEL_data.TEL_bmsSocHundredths);
-            HMI_screenData.HMI_motorRpm = static_cast<uint16_t>(HMI_smoothedRpm);
+            HMI_screenData.HMI_motorRpm = static_cast<uint16_t>(std::roundf(currentSmoothedRpm));
          //   HMI_screenData.HMI_motorTorqueFeedback =
        //         TEL_data.TEL_motorTorqueFeedback;
             HMI_screenData.HMI_motorErrorFlags = TEL_data.TEL_motorErrorFlags;
@@ -351,7 +346,11 @@ void vTask_HMI_Display(void *pvParameters) {
     }
 
     HMI_screenData.HMI_vcuState = HMI_mapVcuState(VcuLogic::getState());
-    HMI_screenData.HMI_contactorClosed = HMI_areAllContactorsClosed();
+    HMI_screenData.HMI_contactorClosed = HMI_areAllContactorsClosed(
+        VcuLogic::getState(),
+        [](uint8_t channel) {
+            return RelayManager::instance().getRelayState(channel);
+        });
     // Far durumu göstergesi (şartname B2 9.19.c): ekran farı KONTROL ETMEZ,
     // yalnız GÖSTERİR. Durumun tek sahibi VcuLogic'tir (fiziksel düğmeden sürer);
     // isHeadlightOn() RELAY_ROLES_ASSIGNED=0 iken DAİMA false döner (dürüst durum).
@@ -363,6 +362,16 @@ void vTask_HMI_Display(void *pvParameters) {
     if (TEL_sensorDataQueue != nullptr) {
         TelemetryData TEL_data = {};
         bool hasData = (xQueuePeek(TEL_sensorDataQueue, &TEL_data, 0) == pdTRUE);
+        
+        if (hasData) {
+            uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+            uint32_t dataAgeMs = nowMs - TEL_data.TEL_timestampMs;
+            if (dataAgeMs > SENSOR_DATA_MAX_AGE_MS) {
+                TEL_data.TEL_bmsDataValid = false;
+                TEL_data.TEL_motorDataValid = false;
+            }
+        }
+        
         bool bmsValid = hasData && TEL_data.TEL_bmsDataValid;
 
         BmsPackData BMS_raw = {};
@@ -485,26 +494,30 @@ void vTask_HMI_Display(void *pvParameters) {
 
     if (HMI_display.readTouchCommand(HMI_incomingCommand)) {
         switch (HMI_incomingCommand) {
-            case HMI_CMD_START:
-                ESP_LOGI(TAG, "HMI command: START request");
-                VcuLogic::postEvent(VcuLogic::VcuEvent::START_REQUEST);
+            case 5: // HMI_CMD_HEADLIGHT_TOGGLE
+                ESP_LOGI(TAG, "HMI command: FAR (Headlight) toggle request");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::HEADLIGHT_TOGGLE);
                 break;
-            case HMI_CMD_RESET:
-                ESP_LOGI(TAG, "HMI command: RESET request");
-                VcuLogic::postEvent(VcuLogic::VcuEvent::RESET);
+            case HMI_CMD_STOP:
+                // Ekran "DUR" butonu (çerçeve 0x5A 0x06 0xF9) — READY/DRIVE'dan
+                // IDLE'a KONTROLLÜ dönüş.
+                //
+                // Bu, 438de39'daki "ekran aracı KONTROL EDEMEZ" kararının
+                // BİLİNÇLİ ve TEK istisnasıdır. Gerekçe: o karar ekranın aracı
+                // ÇALIŞTIRMASINI/SÜRMESİNİ engellemek içindi. STOP tersi
+                // yöndedir — aracı yalnızca DAHA GÜVENLİ bir duruma (kontaktörler
+                // açık, IDLE) götürebilir; hiçbir koşulda enerjilendiremez veya
+                // sürüşe sokamaz. Bu komuttan önce READY/DRIVE'dan çıkmanın tek
+                // yolu E-STOP'a basmaktı ve normal bir duruş için bu aşırı
+                // tepkiydi. E-STOP'un yerini TUTMAZ (bkz. VcuEvent::STOP_REQUEST).
+                ESP_LOGI(TAG, "HMI command: STOP (kontrollu durdurma) request");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::STOP_REQUEST);
                 break;
-            case HMI_CMD_EMERGENCY_STOP:
-                ESP_LOGE(TAG, "HMI command: EMERGENCY STOP triggered");
-                VcuLogic::postEvent(VcuLogic::VcuEvent::EMERGENCY_STOP);
-                break;
-            case HMI_CMD_DRIVE_ENABLE:
-                ESP_LOGI(TAG, "HMI command: DRIVE ENABLE request");
-                VcuLogic::postEvent(VcuLogic::VcuEvent::DRIVE_ENABLE);
-                break;
-            // Komut 5 (eski far toggle) KALDIRILDI — far artık fiziksel düğmeyle
-            // kontrol edilir (HEADLIGHT_SWITCH_PIN); ekran farı KONTROL ETMEZ.
             default:
-                ESP_LOGW(TAG, "Unknown HMI command received: %d", HMI_incomingCommand);
+                // DİĞER TÜM EKRAN KOMUTLARI İPTAL EDİLDİ! Ekran aracı KONTROL EDEMEZ
+                // (START/RESET/E-STOP/DRIVE_ENABLE ekrandan GELMEZ — 438de39).
+                // VcuLogic otomatik geçiş yapar.
+                ESP_LOGW(TAG, "Ignored/Unknown HMI command received: %d", HMI_incomingCommand);
                 break;
         }
     }
@@ -683,9 +696,10 @@ static bool LoRa_txSend(const TelemetryData &pkt, bool isReplay, void *ctxv) {
     }
     return false;
   }
-  // HİPOTEZ (bkz. SysStateDerive.h, Documents/CAN_Message_Table.md "0x0000E003"):
-  // sanitize'DAN ÖNCE — sanitizeSystemState(0) çalışırsa 0'ı zaten FAULT(4)
-  // yapar, türetilmiş 1/2/3 değeri o noktadan sonra uygulanırsa etkisiz kalır.
+  // Y33 (bkz. SysStateDerive.h): sysState alanı, DOĞRULANMIŞ akımdan türetilen
+  // ÇALIŞMA MODUNU (1=Deşarj 2=Boşta 3=Şarj) taşır. SIRA ÖNEMLİ — sanitize'DAN
+  // ÖNCE: sanitizeSystemState(0) çalışırsa 0'ı nötr 2 yapar (AKS-17) ve
+  // türetme (yalnız ham 0 iken uygulandığından) bir daha devreye giremez.
   // Yalnızca LoRa TX paketleme kopyası (pktForUplink) değişir; VcuLogic'in
   // okuduğu paylaşılan TelemetryData (pkt / TEL_sensorDataQueue) DOKUNULMADAN
   // kalır (EK B güven kuralı — bu türetilmiş değer VCU karar mantığına
@@ -808,15 +822,19 @@ void vTask_LoRa_UKS(void *pvParameters) {
         pdMS_TO_TICKS(LORA_TX_PERIOD_MS)) {
       LO_lastTelemetryTick = LO_nowTick;
       if (TEL_sensorDataQueue != nullptr) {
+        TelemetryData LO_current = {};
+        const bool LO_haveData =
+            (xQueuePeek(TEL_sensorDataQueue, &LO_current, 0) == pdTRUE);
+
+        if (LO_haveData) {
+            LO_sched.recordLookback(LO_hal.nowMs(), LO_current);
+        }
+
         if (!LO_sched.isLinkDown()) {
-          TelemetryData LO_live = {};
-          const bool LO_haveLive =
-              (xQueuePeek(TEL_sensorDataQueue, &LO_live, 0) == pdTRUE);
-          LO_sched.onTxTickLinkUp(LO_haveLive, LO_live, &LoRa_txSend, &LO_txCtx);
+          LO_sched.onTxTickLinkUp(LO_haveData, LO_current, &LoRa_txSend, &LO_txCtx);
         } else {
-          TelemetryData LO_buffered = {};
-          if (xQueuePeek(TEL_sensorDataQueue, &LO_buffered, 0) == pdTRUE) {
-            LO_sched.offlineSample(LO_hal.nowMs(), LO_buffered);
+          if (LO_haveData) {
+            LO_sched.offlineSample(LO_hal.nowMs(), LO_current);
           }
         }
       }
@@ -830,8 +848,20 @@ void vTask_LoRa_UKS(void *pvParameters) {
 // ---------------------------------------------------------------------------
 // Main application entry point
 // ---------------------------------------------------------------------------
+esp_reset_reason_t g_bootResetReason = ESP_RST_UNKNOWN;
+
 #ifndef E22_DIAGNOSTIC_MODE
 extern "C" void app_main() {
+    g_bootResetReason = esp_reset_reason();
+    ESP_LOGW(TAG, "RESET SEBEBI: %d%s", (int)g_bootResetReason,
+             (g_bootResetReason == ESP_RST_BROWNOUT) ? " (BROWNOUT!)" :
+             (g_bootResetReason == ESP_RST_PANIC)    ? " (PANIC/WDT!)" : "");
+
+    ESP_LOGI(TAG, "============================================");
+    ESP_LOGI(TAG, "TUFAN-AKS %s (%s)", FW_VERSION, GIT_HASH);
+    ESP_LOGI(TAG, "Built: %s", BUILD_DATE);
+    ESP_LOGI(TAG, "============================================");
+
   // A) Log görünürlüğü: ESP-IDF'in ÇALIŞMA-ZAMANI log seviyesini INFO'ya ayarla
   // (doğru IDF mekanizması — Arduino'ya özgü CORE_DEBUG_LEVEL kaldırıldı). IDF
   // varsayılan derleme seviyesi de INFO'dur; bu çağrı niyeti açık kılar ve HWM
@@ -849,12 +879,14 @@ extern "C" void app_main() {
 
   // BMS durumu: 0xE000 ve 0xE001 DOĞRULANDI (packV, current, SoC, temp,
   // hücre min/max/avg). 24 hücrenin tekil voltajları (E015-E020) da
-  // DOĞRULANDI. Açık iş: TEL_bmsSystemState hiçbir CAN ID'den parse
-  // EDİLMİYOR — TelemetrySanitize::sanitizeSystemState(0) bunu FAULT(4)
-  // yapar → UKS ekranında BMS her zaman FAULT görünür. Hücre sıcaklığı
-  // (E032-E033) alan anlamı hâlâ BİLİNMİYOR (stub).
+  // DOĞRULANDI. Y33 (24.07.2026): BMS'in SAĞLIK durumunu (OK/FAULT) yayınladığı
+  // bir CAN ID'ye ULAŞILAMADI ve aranmayacak — sysState alanı artık DOĞRULANMIŞ
+  // akımdan türetilen ÇALIŞMA MODUNU taşır (bkz. SysStateDerive.h). FAULT
+  // ARTIK ÜRETİLMEZ; "BMS verisi yok" bilgisi ayrı alandan (bmsValid) gider.
+  // E032/E033 alan anlamı hâlâ BİLİNMİYOR (bkz. BENI_OKU.md 5.1).
   // Bkz. Documents/CAN_Message_Table.md.
-  ESP_LOGW(TAG, "BMS: sysState henuz parse edilmiyor (E002-E006 stub). "
+  ESP_LOGI(TAG, "BMS: sysState = akimdan turetilen calisma modu "
+                "(1=Desarj 2=Bosta 3=Sarj); BMS saglik durumu icin CAN ID YOK. "
                 "Hucre voltajlari (E015-E020) DOGRULANDI ve aktif.");
 
   // --- Hardware initialization (before any tasks) ---
@@ -862,7 +894,10 @@ extern "C" void app_main() {
   // 1. Initialize relay hardware (SPI + MCP23S17)
   if (!RelayManager::instance().begin()) {
     ESP_LOGE(TAG, "RelayManager init failed — HALTING");
-    return;
+    RelayManager::instance().allOff(false);
+    ESP_LOGE(TAG, "Kritik init hatasi! 3 saniye sonra yeniden baslatiliyor...");
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    esp_restart();
   }
 
   // 2. Initialize VCU state machine (event queue, safety allOff, INIT→IDLE).
@@ -892,7 +927,10 @@ extern "C" void app_main() {
   TEL_sensorDataQueue = xQueueCreate(1, sizeof(TelemetryData));
   if (TEL_sensorDataQueue == nullptr) {
     ESP_LOGE(TAG, "Failed to create TEL_sensorDataQueue");
-    return;
+    RelayManager::instance().allOff(false);
+    ESP_LOGE(TAG, "Kritik init hatasi! 3 saniye sonra yeniden baslatiliyor...");
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    esp_restart();
   }
 
   ESP_LOGI(TAG, "All subsystems initialized — starting tasks");

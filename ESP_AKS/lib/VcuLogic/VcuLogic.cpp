@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cmath>
 
 #include "VcuLogic.h"
 #include "DeratingPolicy.h"
@@ -9,9 +10,20 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#ifndef NATIVE_BUILD
+#include "esp_timer.h"   // AKS-10: gercek ms tabani (esp_timer_get_time)
+#endif
 
 static constexpr const char* TAG = "VCU_LOGIC";
 static constexpr uint32_t TASK_PERIOD_MS = 20;
+
+#if MOTOR_DRIVER_PRESENT
+#warning "STOP_REQUEST yolu (run() icindeki kontrollu durdurma) sifir-tork ile \
+kontaktor acma arasinda VCU_CONTACTOR_OPEN_DELAY_MS BEKLEMIYOR. \
+handleEmergencyStop/handleFault bu beklemeyi yapar; motor surucusu artik \
+mevcut oldugundan STOP yolu da ayni sirayi izlemeli, yoksa kontaktorler yuk \
+altinda acilir (ark/kontak kaynagi riski). Bkz. Documents/MOTOR_ENTEGRASYON_NOTU.md."
+#endif
 
 namespace VcuLogic {
 
@@ -25,6 +37,7 @@ static uint32_t s_stateTimer = 0;
 // zamanlaması için (s_stateTimer state geçişinde sıfırlandığından periyot
 // ölçümüne uygun değil).
 static uint32_t s_uptimeMs = 0;
+static uint32_t s_lastTimeMs = 0;
 static TelemetryData s_TEL_latestData = {};
 static bool s_VCU_warningLogged = false;
 static SemaphoreHandle_t s_TEL_dataMutex = nullptr;
@@ -48,6 +61,7 @@ static bool s_relaysOpenedInEstop = false;
 static bool s_relaysOpenedInFault = false;
 static uint32_t s_lastEstopLogMs = 0;
 static uint32_t s_lastFaultLogMs = 0;
+static uint32_t s_autoResetTimer = 0;
 
 // READY girişi reddedildiğinde log spam'ini önlemek için: aynı ret nedeni her
 // tick değil, neden değiştiğinde veya en fazla 1 sn'de bir loglanır. Neden
@@ -100,6 +114,7 @@ static bool hasCriticalCondition();
 static const char* readyRejectReason(const TelemetryData& VCU_data);
 static TelemetryData getTelemetrySnapshot();
 
+static void handleInit();
 static void handleIdle();
 static void handleReady();
 static void handleDrive();
@@ -112,27 +127,54 @@ static void handleFault();
 void init(IRelayActuator& relays) {
     s_relays = &relays;
 
+    // Safety first — ensure all relays are off at startup, even if init fails
+    s_relays->allOff(false);
+
     s_eventQueue = xQueueCreate(8, sizeof(VcuEvent));
     if (s_eventQueue == nullptr) {
         ESP_LOGE(TAG, "Failed to create event queue");
+        s_relays->allOff(false);
         return;
     }
 
     s_TEL_dataMutex = xSemaphoreCreateMutex();
     if (s_TEL_dataMutex == nullptr) {
         ESP_LOGE(TAG, "Failed to create telemetry mutex");
+        s_relays->allOff(false);
         return;
     }
 
-    // Safety first — ensure all relays are off at startup
-    s_relays->allOff(false);
-
+#ifdef NATIVE_BUILD
+    s_lastTimeMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+#else
+    s_lastTimeMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+#endif
     transitionTo(VcuState::IDLE);
 }
 
+#ifdef NATIVE_BUILD
+extern "C" void fake_freertos_advance_time(uint32_t);
+#endif
+
 void run() {
-    s_stateTimer += TASK_PERIOD_MS;
-    s_uptimeMs += TASK_PERIOD_MS;
+#ifdef NATIVE_BUILD
+    fake_freertos_advance_time(TASK_PERIOD_MS);
+    // Native testlerde esp_timer_get_time yok — tik sayacı ms tabanli
+    // (portTICK_PERIOD_MS=1) oldugundan xTaskGetTickCount() zaten ms verir.
+    uint32_t nowMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+#else
+    // AKS-10: Gercek ms tabani — esp_timer_get_time() mikrosaniye verir,
+    // /1000 ile ms'e cevirilir. xTaskGetTickCount()*portTICK_PERIOD_MS
+    // yalnizca 10ms cozunurlugu (100 Hz tik) sagliyordu; bu, 20ms VCU
+    // dongusu icin yeterli ama zamanlamaya bagli kararlarda drift riski
+    // tasiyordu. Isaresiz cikarma idiomu uint32_t sarmasi ile dogru calisir.
+    uint32_t nowMs = (uint32_t)(esp_timer_get_time() / 1000ULL);
+#endif
+    uint32_t delta = nowMs - s_lastTimeMs;
+    s_lastTimeMs = nowMs;
+
+    s_stateTimer += delta;
+    s_uptimeMs += delta;
 
 #if RELAY_ROLES_ASSIGNED
     // Flaşör (şartname 6.e.ii): sıcaklık uyarısına bağlı sesli+ışıklı ikaz.
@@ -204,7 +246,11 @@ void run() {
     // FAULT ise re-entry yok (timer sıfırlanmaz); değilse FAULT'a geç. Bayrak her
     // durumda exchange ile tüketilir (temizlenme kuralı — bkz. tanım).
     if (s_faultPending.exchange(false, std::memory_order_acquire)) {
-        if (s_state.load(std::memory_order_relaxed) != VcuState::FAULT) {
+        VcuState currentSt = s_state.load(std::memory_order_relaxed);
+        if (currentSt == VcuState::EMERGENCY_STOP) {
+            ESP_LOGE(TAG, "Fault detected during E-STOP. Fault registered.");
+            // Guvenlik durumu ASLA dusurulmez: E-STOP > FAULT (AKS-05)
+        } else if (currentSt != VcuState::FAULT) {
             ESP_LOGE(TAG, "FAULT pending (atomic bypass) — entering FAULT");
             transitionTo(VcuState::FAULT);
             return;
@@ -232,8 +278,7 @@ void run() {
     }
 
     VcuState currentState = s_state.load(std::memory_order_relaxed);
-    if ((currentState == VcuState::IDLE || currentState == VcuState::READY ||
-         currentState == VcuState::DRIVE) &&
+    if ((currentState == VcuState::READY || currentState == VcuState::DRIVE) &&
         hasCriticalCondition()) {
         ESP_LOGE(TAG, "Critical safety threshold exceeded, entering FAULT");
         transitionTo(VcuState::FAULT);
@@ -279,8 +324,13 @@ void run() {
         if (event == VcuEvent::FAULT_DETECTED) {
             // R1: FAULT normalde atomic bayrak yoluyla (kuyruk bypass) işlenir;
             // bu dal savunma amaçlı fallback'tir. Zaten FAULT ise re-entry yok.
-            if (s_state.load(std::memory_order_relaxed) != VcuState::FAULT)
+            VcuState currentSt = s_state.load(std::memory_order_relaxed);
+            if (currentSt == VcuState::EMERGENCY_STOP) {
+                ESP_LOGE(TAG, "Fault detected during E-STOP. Fault registered.");
+                // Guvenlik durumu ASLA dusurulmez: E-STOP > FAULT (AKS-05)
+            } else if (currentSt != VcuState::FAULT) {
                 transitionTo(VcuState::FAULT);
+            }
             return;
         }
 
@@ -289,7 +339,9 @@ void run() {
             (currentState == VcuState::FAULT ||
              currentState == VcuState::EMERGENCY_STOP)) {
             if (!isResetInterlockSatisfied()) {
-                ESP_LOGW(TAG, "RESET rejected: safety interlock still active");
+                TelemetryData VCU_snap = getTelemetrySnapshot();
+                ESP_LOGW("VCU", "RESET reddedildi: rpm=%d, timeout=%d",
+                         std::abs(VCU_snap.TEL_motorRpm), VCU_snap.TEL_motorTimeoutActive);
                 return;
             }
             // Actuator fault'u temizle; donanım hâlâ bozuksa bir sonraki
@@ -299,38 +351,89 @@ void run() {
             return;
         }
 
+#if RELAY_ROLES_ASSIGNED
+        if (event == VcuEvent::HEADLIGHT_TOGGLE) {
+            bool hlDesired = !s_headlightOn.load(std::memory_order_relaxed);
+            s_relays->setRelay(RELAY_CH_HEADLIGHT, hlDesired);
+            ESP_LOGI(TAG, "Far %s (ekran uzerinden toggle)", hlDesired ? "ACILDI" : "KAPANDI");
+            s_headlightOn.store(hlDesired, std::memory_order_relaxed);
+            // return yok, asagidaki isleme devam et
+        }
+#endif
+
+        // KONTROLLÜ DURDURMA (ekran "DUR" butonu — HMI_CMD_STOP).
+        //
+        // E-STOP'un YERİNİ TUTMAZ: E-STOP yukarıda, kuyruğu bypass eden atomic
+        // bayrak yoluyla ve HER durumda işlenir; bu dal yalnız READY/DRIVE'da
+        // anlamlıdır ve bir arıza kaydı BIRAKMAZ. Diğer tüm durumlarda
+        // (INIT/IDLE/FAULT/EMERGENCY_STOP) YOK SAYILIR — özellikle FAULT'u
+        // TEMİZLEMEZ (fault'tan çıkış yalnız RESET + interlock ile olur).
+        //
+        // HIZ KONTROLÜ YOK (bilinçli karar): RESET'in aksine STOP, araç
+        // hareket halindeyken de kabul edilir. Gerekçe: sürücü bilinçli olarak
+        // durduruyor; hız şartı koymak, tam da durdurulması istenen anda
+        // komutu reddederdi. (RESET'te VCU_RESET_MAX_RPM şartı vardır çünkü o,
+        // bir arızadan ÇIKIŞTIR — farklı bir güvenlik sorusudur.)
+        if (event == VcuEvent::STOP_REQUEST) {
+            if (currentState == VcuState::READY || currentState == VcuState::DRIVE) {
+                // (1) Güvenli kapanış sırasının ilk adımı: sıfır tork iste.
+                //     MOTOR_DRIVER_PRESENT=0 iken gerçek frame ÜRETİLMEZ
+                //     (requestZeroTorque no-op'a düşer) — sıra yine de burada
+                //     kurulu ki motor entegrasyonunda eklenmesi unutulmasın.
+                requestZeroTorque();
+
+                // (2) Kontaktörleri AÇ. Açma her zaman ANINDA olmalıdır —
+                //     setBankStaggered (kademeli KAPATMA, inrush içindir)
+                //     BURADA KULLANILMAZ. allOff bank maskesini (S1 + S2 +
+                //     sürüş bankı) açar; flaşör/fan/far maske DIŞINDA olduğu
+                //     için etkilenmez (FAULT/E-STOP ile aynı davranış).
+                s_relays->allOff(false);
+
+                // (3) IDLE'a dön. transitionTo(IDLE) s_s1LastCmdInIdle'ı
+                //     "bilinmiyor" yapar; bir sonraki handleIdle tick'i S1'i
+                //     chargerActive durumuna göre deterministik olarak yeniden
+                //     yazar (şartname 8.2.a.iii).
+                ESP_LOGI(TAG, "STOP: kontrollu durdurma (%s -> IDLE)",
+                         currentState == VcuState::DRIVE ? "DRIVE" : "READY");
+                transitionTo(VcuState::IDLE);
+            } else {
+                ESP_LOGW(TAG, "STOP yok sayildi (durum %d — yalniz READY/DRIVE)",
+                         static_cast<int>(currentState));
+            }
+            return;
+        }
+
         // State-specific event handling
         switch (currentState) {
             case VcuState::IDLE:
+            {
                 if (event == VcuEvent::START_REQUEST) {
-                    // READY 10 kontaktörü kapatıp HV bus'ı enerjilendirir;
-                    // batarya hakkında doğrulanmış/taze veri yoksa geçme.
-                    // Actuator fault guard'ı isReadyEntryPermitted'ın DIŞINDA
-                    // tutuldu: o predicate saf/donanımsız (yalnız TelemetryData);
-                    // röle donanım sağlığı ayrı bir enjekte edilmiş sorgu
-                    // olduğundan burada ayrı guard olarak kontrol edilir.
                     TelemetryData VCU_snap = getTelemetrySnapshot();
                     bool actuatorFault = s_relays->hasActuatorFault();
                     if (isReadyEntryPermitted(VCU_snap) && !actuatorFault) {
+                        if (hasWarningCondition(VCU_snap)) {
+                            ESP_LOGW("VCU", "READY girildi ama WARN kosulu aktif!");
+                        }
                         transitionTo(VcuState::READY);
                     } else {
-                        const char* reason =
-                            actuatorFault ? "actuator fault"
-                                          : readyRejectReason(VCU_snap);
-                        if (reason != s_lastReadyRejectReason ||
-                            s_stateTimer - s_lastReadyRejectLogMs >= 1000) {
-                            ESP_LOGW(TAG, "READY reddedildi: %s", reason);
+                        const char* reason = actuatorFault ? "actuator fault" : readyRejectReason(VCU_snap);
+                        if (reason != s_lastReadyRejectReason || s_stateTimer - s_lastReadyRejectLogMs >= 1000) {
+                            ESP_LOGW(TAG, "READY gecisi reddedildi: %s", reason);
                             s_lastReadyRejectReason = reason;
                             s_lastReadyRejectLogMs = s_stateTimer;
                         }
                     }
                 }
                 break;
+            }
 
             case VcuState::READY:
-                if (event == VcuEvent::DRIVE_ENABLE)
+            {
+                if (event == VcuEvent::DRIVE_ENABLE) {
                     transitionTo(VcuState::DRIVE);
+                }
                 break;
+            }
 
             default:
                 break;
@@ -339,6 +442,9 @@ void run() {
 
     // Periodic state logic
     switch (s_state.load(std::memory_order_relaxed)) {
+        case VcuState::INIT:
+            handleInit();
+            break;
         case VcuState::IDLE:
             handleIdle();
             break;
@@ -360,8 +466,6 @@ void run() {
 }
 
 void postEvent(VcuEvent event) {
-    if (s_eventQueue == nullptr)
-        return;
     if (event == VcuEvent::EMERGENCY_STOP) {
         // Bypass the queue so a full queue cannot swallow an E-STOP.
         // The flag is checked at the top of run() before any queue drain.
@@ -381,6 +485,8 @@ void postEvent(VcuEvent event) {
         s_faultPending.store(true, std::memory_order_release);
         return;
     }
+    if (s_eventQueue == nullptr)
+        return;
     if (xQueueSend(s_eventQueue, &event, 0) != pdTRUE) {
         ESP_LOGW(TAG, "Event queue full, dropped event %d",
                  static_cast<int>(event));
@@ -395,7 +501,11 @@ void setTelemetryData(const TelemetryData& TEL_data) {
     if (s_TEL_dataMutex == nullptr)
         return;
 
-    xSemaphoreTake(s_TEL_dataMutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_TEL_dataMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_TEL_dataMutex timeout in setTelemetryData");
+        return;
+    }
     s_TEL_latestData = TEL_data;
     xSemaphoreGive(s_TEL_dataMutex);
 }
@@ -422,6 +532,29 @@ void setHeadlightSwitchReader(HeadlightSwitchReader reader) {
 // ---------------------------------------------------------------------------
 // State handlers
 // ---------------------------------------------------------------------------
+static bool s_relaysOpenedInInit = false;
+static uint32_t s_lastInitLogMs = 0;
+
+static void handleInit() {
+    if (s_stateTimer <= TASK_PERIOD_MS) {
+        requestZeroTorque();
+    }
+
+    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+        if (!s_relaysOpenedInInit) {
+            s_relays->allOff(false);
+            s_relaysOpenedInInit = true;
+        } else if (s_stateTimer - s_lastInitLogMs >= 1000) {
+            s_relays->allOff(true);
+        }
+    }
+
+    if (s_stateTimer - s_lastInitLogMs >= 1000) {
+        ESP_LOGE(TAG, "INIT state — init() failed or incomplete!");
+        s_lastInitLogMs = s_stateTimer;
+    }
+}
+
 static void handleIdle() {
     // All contactors off — safe resting state
     // Waiting for START_REQUEST from LoRa/UKS
@@ -454,16 +587,13 @@ static void handleReady() {
         // zaten reddedildiğinden S1 normalde açıktır; bu yazım sırayı
         // şartname durumuna deterministik kilitler.
         s_relays->setRelay(RELAY_CH_S1_CHARGE, false);
-        for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
-            if (RELAY_DRIVE_BANK_MASK & (1u << ch))
-                s_relays->setRelay(ch, true);
-        }
-        ESP_LOGI(TAG, "Surus banki kapatildi (S1 acik) — system READY");
+        s_relays->setBankStaggered(RELAY_DRIVE_BANK_MASK, RELAY_STAGGER_STEP_MS);
+        ESP_LOGI(TAG, "Surus banki kademeli kapatildi (S1 acik) — system READY");
 #else
         // Roller atanmadı: eski tek-bank davranışı — bank maskesi (10 kanalın
-        // tamamı) kapatılır, bayt-bayt bugünkü allOn ile aynı.
-        s_relays->allOn();
-        ESP_LOGI(TAG, "All contactors closed — system READY");
+        // tamamı) kademeli kapatılır.
+        s_relays->setBankStaggered(RELAY_CONTACTOR_BANK_MASK, RELAY_STAGGER_STEP_MS);
+        ESP_LOGI(TAG, "All contactors closed staggered — system READY");
 #endif
     }
     // DRIVE is entered only after an explicit DRIVE_ENABLE command.
@@ -538,6 +668,17 @@ static void handleFault() {
         ESP_LOGE(TAG, "FAULT state — send RESET event to recover");
         s_lastFaultLogMs = s_stateTimer;
     }
+
+    if (isResetInterlockSatisfied()) {
+        s_autoResetTimer += TASK_PERIOD_MS;
+        if (s_autoResetTimer >= VCU_AUTO_RESET_DELAY_MS) {
+            ESP_LOGW(TAG, "Otomatik FAULT reset (ekran kopuklugu telafisi)");
+            postEvent(VcuEvent::RESET);
+            s_autoResetTimer = 0;
+        }
+    } else {
+        s_autoResetTimer = 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +705,7 @@ static void transitionTo(VcuState next) {
     } else if (next == VcuState::FAULT) {
         s_relaysOpenedInFault = false;
         s_lastFaultLogMs = (uint32_t)-1000;
+        s_autoResetTimer = 0;
     }
 
 #if RELAY_ROLES_ASSIGNED
@@ -587,7 +729,11 @@ static TelemetryData getTelemetrySnapshot() {
         return s_TEL_latestData;
 
     TelemetryData VCU_dataCopy = {};
-    xSemaphoreTake(s_TEL_dataMutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_TEL_dataMutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_TEL_dataMutex timeout in getTelemetrySnapshot");
+        return VCU_dataCopy;
+    }
     VCU_dataCopy = s_TEL_latestData; // <-- V HARFİ DÜZELTİLDİ
     xSemaphoreGive(s_TEL_dataMutex);
     return VCU_dataCopy;
@@ -618,8 +764,9 @@ static const char* readyRejectReason(const TelemetryData& VCU_data) {
 #endif
     if (hasCriticalCondition(VCU_data, VcuState::IDLE))
         return "kritik kosul aktif";
-    if (hasWarningCondition(VCU_data))
-        return "uyari kosulu aktif";
+    // AKS-14: Uyari kosullari READY girisini bloklamaz.
+    // if (hasWarningCondition(VCU_data))
+    //     return "uyari kosulu aktif";
 #if MOTOR_DRIVER_PRESENT
     if (!VCU_data.TEL_motorDataValid)
         return "motorDataValid=0";
@@ -637,16 +784,20 @@ void resetForTest() {
     s_state.store(VcuState::INIT, std::memory_order_relaxed);
     s_stateTimer = 0;
     s_uptimeMs = 0;
+    s_lastTimeMs = 0;
     s_TEL_latestData = {};
     s_VCU_warningLogged = false;
     s_eStopPending.store(false, std::memory_order_relaxed);
     s_faultPending.store(false, std::memory_order_relaxed);
     s_relays = nullptr;  // init() yeniden bağlar
 
+    s_relaysOpenedInInit = false;
     s_relaysOpenedInEstop = false;
     s_relaysOpenedInFault = false;
+    s_lastInitLogMs = 0;
     s_lastEstopLogMs = 0;
     s_lastFaultLogMs = 0;
+    s_autoResetTimer = 0;
     s_lastReadyRejectReason = nullptr;
     s_lastReadyRejectLogMs = 0;
     s_torqueSink = nullptr;

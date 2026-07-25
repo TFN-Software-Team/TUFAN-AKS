@@ -59,6 +59,21 @@ void runTicks(int n) {
         VcuLogic::run();
 }
 
+// IDLE'dan READY'ye geç (sağlıklı telemetriyle START_REQUEST).
+//
+// NEDEN GEREKLİ: kritik eşik aşımı FAULT'a YALNIZ READY/DRIVE'da düşürür
+// (VcuLogic::run — "currentState == READY || DRIVE" guard'ı). IDLE'da kritik
+// koşul FAULT üretmez, yalnızca isReadyEntryPermitted üzerinden READY girişini
+// bloklar; bu bilinçli bir karardır (HV bus ölüyken zorla FAULT'a düşmek
+// gereksizdir). Bu yüzden "FAULT'ta X davranışı" test eden senaryolar önce
+// READY'ye geçmek ZORUNDADIR — primeIdle() + setTemp(70) yeterli DEĞİLDİR.
+void primeReadyFrom(/*already primed IDLE*/) {
+    VcuLogic::postEvent(VcuEvent::START_REQUEST);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::READY),
+                          static_cast<int>(VcuLogic::getState()));
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -157,6 +172,7 @@ void test_roles_flasher_unchanged_on_bms_timeout(void) {
 // kalır (şartname 6.e.ii + 8.2.a.vi birlikte).
 void test_roles_flasher_stays_on_in_fault_with_bank_open(void) {
     primeIdle();
+    primeReadyFrom();  // kritik eşik yalnız READY/DRIVE'da FAULT üretir
     setTemp(70);
     VcuLogic::run();  // flaşör ON + kritik → FAULT'a geçiş
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
@@ -194,7 +210,7 @@ void test_roles_charger_active_closes_s1_and_rejects_ready(void) {
     VcuLogic::run();  // READY reddi (isReadyEntryPermitted: chargerActive)
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
                           static_cast<int>(VcuLogic::getState()));
-    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOn_count);
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOnDirect_count);
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_S2_DRIVE]);
 }
@@ -225,7 +241,11 @@ void test_roles_ready_closes_drive_bank_keeps_s1_open(void) {
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::READY),
                           static_cast<int>(VcuLogic::getState()));
 
-    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOn_count);  // allOn kullanılmadı
+    // READY girişi allOn() KULLANMAZ (allOn S1'i de kapatırdı); bank
+    // setBankStaggered(RELAY_DRIVE_BANK_MASK) ile kademeli kapatılır — bu
+    // maskede S1 YOKTUR. Not: g_fake_relay_allOn_count iki yolu da saydığından
+    // bu ayrımı yapamaz, bu yüzden allOn'a ÖZEL sayaç kullanılır.
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOnDirect_count);
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);  // açık
     for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
         if (RELAY_DRIVE_BANK_MASK & (1u << ch)) {
@@ -345,6 +365,7 @@ void test_roles_fan_unchanged_when_bms_invalid(void) {
 // (sıcak batarya soğutması + uyarı kesilmez).
 void test_roles_fan_and_flasher_on_in_fault(void) {
     primeIdle();
+    primeReadyFrom();  // kritik eşik yalnız READY/DRIVE'da FAULT üretir
     setTemp(70);
     VcuLogic::run();  // fan+flaşör ON + kritik → FAULT'a geçiş
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
@@ -466,6 +487,7 @@ void test_roles_headlight_preserved_in_fault(void) {
     runTicks(3);
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_HEADLIGHT]);
 
+    primeReadyFrom();  // kritik eşik yalnız READY/DRIVE'da FAULT üretir
     setTemp(70);
     VcuLogic::run();  // → FAULT
     VcuLogic::run();  // t=20 → allOff (bank)

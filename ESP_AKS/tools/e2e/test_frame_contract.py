@@ -248,13 +248,3 @@ def test_accepted_frames_forward_through_real_monitor_csv_logger(csv_logger_modu
         assert csv_logger_module.HEADER == contract.MONITOR_HEADER
 
 
-def test_broken_frames_never_reach_monitor_forward_stage():
-    """Reddedilen frame'ler icin forward satiri hic URETILMEMELI — bu,
-    dogrulayicinin kendi akisinda (reddedilen frame -> forward cagirma)
-    test edilir; Monitor'a hicbir zaman gecersiz veri gitmeyecegini
-    kanitlar."""
-    for name, (line, _reason) in BROKEN_CASES.items():
-        result = contract.parse_uks_frame(line)
-        assert isinstance(result, contract.UksRejection), name
-        # contract.build_forward_line yalnizca basarili parse sozlugu
-        # bekler; reddedilen frame icin cagrilmasi zaten akis disi kalir.

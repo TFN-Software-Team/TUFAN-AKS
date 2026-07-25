@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "AutobaudPolicy.h"  // Saf autobaud retry karar mantığı (autobaud_should_retry)
 #include "CanParse.h"
+#include "ChargeDetect.h"  // Y20: akım tabanlı şarj tespiti (chargerActive yedeği)
 #include "TorqueRequestQueue.h"  // G2: VCU task -> CAN task tork isteği kuyruğu
 #include "VehicleData.h"  // TelemetryData (M3: LoRa Telemetry class'ına ihtiyaç yok)
 #include "TelemetrySanitize.h"
@@ -109,13 +110,14 @@ class CanManager {
     bool CAN_hasSeenMotorStatus = false;
     bool CAN_motorTimeoutLogged = false;
 
-    // G9: motor errorFlags debounce sayacı — ardışık hatalı frame sayısı. Temiz
-    // frame gelince sıfırlanır (bkz. MotorFaultDebounce.h). Yalnız handleMotorStatus
-    // yazar/okur (CAN task'ine yerel; ek mutex gerektirmez).
     uint16_t CAN_motorErrorConsecutive = 0;
 
-    bool CAN_busOffLogged = false;
-    bool CAN_busRecoveredLogged = false;
+    TickType_t CAN_lastMotorTimeoutCheckTick = 0;
+    uint8_t CAN_motorTimeoutDebounceCount = 0;
+
+    uint8_t CAN_busOffRecoveryAttempts = 0;
+    TickType_t CAN_lastBusOffRecoveryTick = 0;
+    TickType_t CAN_lastStatusCheckTick = 0;
 
     // Autobaud yeniden-deneme durumu (bkz. AutobaudPolicy.h / BRING_UP_
     // CHECKLIST.md bölüm 4). CAN_bitrateVerified: begin()'de auto-detect
@@ -172,6 +174,12 @@ class CanManager {
     bool CAN_hasSeenCharger = false;
     bool CAN_chargerValid = false;
     bool CAN_chargerStaleLogged = false;
+
+    // Akım tabanlı şarj tespiti (Y20) — charger CAN akışı YOKKEN devreye giren
+    // YEDEK gösterge. Debounce durumu; karar saf ChargeDetect::update'te.
+    // getTelemetryData() bunu CAN_chargerValid ile OR'lar (CAN birincil).
+    ChargeDetect::State CAN_chargeDetect = ChargeDetect::makeState();
+    bool CAN_chargeDetectLogged = false;
 
 
     CAN_EventCallback CAN_eventCallback = nullptr;

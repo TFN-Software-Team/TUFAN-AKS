@@ -1,4 +1,5 @@
 #include "BmsAlgo.h"
+#include "esp_log.h"
 
 // Saf C++; <cstdint> dışında bağımlılık yok. IDF/Arduino çağrısı YAPMAZ.
 
@@ -70,8 +71,14 @@ BmsComputed computePack(const BmsPackData& in) {
         if (in.bmsReportedCellMaxMv != 0 && in.bmsReportedCellMinMv != 0) {
             c.cellMaxMv = in.bmsReportedCellMaxMv;
             c.cellMinMv = in.bmsReportedCellMinMv;
-            c.cellDeltaMv = static_cast<uint16_t>(in.bmsReportedCellMaxMv -
-                                                  in.bmsReportedCellMinMv);
+        if (in.bmsReportedCellMinMv > in.bmsReportedCellMaxMv) {
+            ESP_LOGW("BMS", "Hucre min(%u) > max(%u), veri gecersiz",
+                     in.bmsReportedCellMinMv, in.bmsReportedCellMaxMv);
+            // Delta'yı 0 yap, swap YAPMA — veri bozuksa takas da yanlış olabilir
+            c.cellDeltaMv = 0;
+        } else {
+            c.cellDeltaMv = in.bmsReportedCellMaxMv - in.bmsReportedCellMinMv;
+        }
         }
         return c;
     }
@@ -116,8 +123,14 @@ BmsComputed computePack(const BmsPackData& in) {
     if (in.bmsReportedCellMaxMv != 0 && in.bmsReportedCellMinMv != 0) {
         c.cellMaxMv = in.bmsReportedCellMaxMv;
         c.cellMinMv = in.bmsReportedCellMinMv;
-        c.cellDeltaMv = static_cast<uint16_t>(in.bmsReportedCellMaxMv -
-                                              in.bmsReportedCellMinMv);
+        if (in.bmsReportedCellMinMv > in.bmsReportedCellMaxMv) {
+            ESP_LOGW("BMS", "Hucre min(%u) > max(%u), veri gecersiz",
+                     in.bmsReportedCellMinMv, in.bmsReportedCellMaxMv);
+            // Delta'yı 0 yap, swap YAPMA — veri bozuksa takas da yanlış olabilir
+            c.cellDeltaMv = 0;
+        } else {
+            c.cellDeltaMv = in.bmsReportedCellMaxMv - in.bmsReportedCellMinMv;
+        }
     } else {
         c.cellMaxMv = scanMaxMv;
         c.cellMinMv = scanMinMv;

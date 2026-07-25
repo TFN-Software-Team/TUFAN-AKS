@@ -58,10 +58,18 @@ void Telemetry::sendStatus(const TelemetryData& TEL_data) {
     if (TEL_payloadLength <= 0)
         return;
 
-    const int TEL_txLength =
-        (TEL_payloadLength < static_cast<int>(sizeof(TEL_payload)))
-            ? TEL_payloadLength
-            : static_cast<int>(sizeof(TEL_payload) - 1);
+    if (TEL_payloadLength >= static_cast<int>(sizeof(TEL_payload))) {
+        static uint32_t s_truncCount = 0;
+        ++s_truncCount;
+        if (s_truncCount <= 3 || (s_truncCount % 100) == 0) {
+            ESP_LOGE(TAG, "TEL frame truncated (%d >= %u), dropped (total: %lu)",
+                     TEL_payloadLength, (unsigned)sizeof(TEL_payload),
+                     (unsigned long)s_truncCount);
+        }
+        return;  // seq artırılmaz, frame gönderilmez
+    }
+
+    const int TEL_txLength = TEL_payloadLength;
 
     const int TEL_written =
         uart_write_bytes(LORA_UART_NUM, TEL_payload, TEL_txLength);

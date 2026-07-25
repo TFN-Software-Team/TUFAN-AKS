@@ -49,11 +49,19 @@ E000 veya E001'den biri kesilirse `TEL_bmsDataValid` düşer ve IDLE dışında
 BMS timeout kritik sayılır.
 
 **AÇIK İŞ (Kalan Alanlar)**: 24 hücre voltajı (E015-E020) ÇÖZÜLDÜ ve firmware'e entegre edildi.
-Kalan açık iş: TEL_bmsSystemState (E002-E006 stub, sysState parse edilmiyor) ve hücre fiziksel sıralama sahada teyit edilecek. Sonuç:
+Kalan açık iş: hücre fiziksel sıralaması sahada teyit edilecek. Sonuç:
 
-- `TEL_bmsSystemState` hep `0` kalır; `TelemetrySanitize::sanitizeSystemState(0)`
-  bunu `4` (FAULT) yapar — **UKS ekranında BMS her zaman FAULT görünür**,
-  gerçek bir arıza olmasa bile.
+- **BMS sistem durumu — KAPANDI (Y33, 24.07.2026).** BMS'in sağlık durumunu
+  (OK/FAULT) yayınladığı bir CAN ID'ye **ULAŞILAMADI** ve aranmayacak.
+  Eskiden `TEL_bmsSystemState` hep `0` kalıyor, sanitizer bunu `4` (FAULT)
+  yapıyor ve **UKS ekranında BMS her zaman FAULT görünüyordu** — gerçek bir
+  arıza olmadığı halde. Artık alan, **doğrulanmış akımdan türetilen çalışma
+  modunu** taşıyor (1=Deşarj, 2=Boşta, 3=Şarj; bkz.
+  `lib/Telemetry/SysStateDerive.h`) ve **FAULT ÜRETİLMİYOR**. "BMS verisi yok"
+  bilgisi ayrı bir alandan (`bmsValid`) gidiyor.
+  **Jüriye söylenecek:** "BMS'in kendi arıza bayrağını yayınladığı bir CAN
+  ID'si üreticide yok; bu yüzden o alanda bataryanın çalışma modunu
+  gösteriyoruz, arıza durumunu değil. Bağlantı canlılığı ayrı bir alanda."
 - Sıcaklık eşikleri (`BMS_WARN_MAX_TEMP_C`=55 / `BMS_CRITICAL_MAX_TEMP_C`=70,
   SystemConfig.h) artık `VcuLogic::isTempWarning`/`isTempCritical` üzerinden
   karar mantığına BAĞLI — 55 °C ve üzeri UYARI, 70 °C ve üzeri FAULT. Akım
@@ -62,11 +70,12 @@ Kalan açık iş: TEL_bmsSystemState (E002-E006 stub, sysState parse edilmiyor) 
   deşarj WARN 9 A / CRITICAL 15 A. Nihai değerler BMS/şarj cihazı spec'iyle
   ekip onayı bekliyor (CONFIG).
 
-Boot logunda `ESP_LOGW(TAG, "BMS: sysState henuz parse edilmiyor ...")` uyarısı
-bu durumu görünür kılar. Teknik kontrol sırasında 24 hücre voltajı (E015-E020), 
-sıcaklık, akım ve SoC'un **gerçek** olduğu, ancak BMS hata durumunun (sysState) 
-geçici olduğu belirtilmelidir. Kalan CAN ID'leri (E002-E006) araç yola çıktıktan 
-sonra sniffer loglarıyla çözülmeye devam edilecektir (bkz. `Documents/CAN_Message_Table.md`).
+Boot logunda `ESP_LOGI(TAG, "BMS: sysState = akimdan turetilen calisma modu ...")`
+satırı bu kararı görünür kılar. Teknik kontrol sırasında 24 hücre voltajı
+(E015-E020), sıcaklık, akım ve SoC'un **gerçek ve doğrulanmış** olduğu
+belirtilmelidir. Kalan CAN ID'leri (E002-E006, E032, E033) araç yola çıktıktan
+sonra sniffer loglarıyla çözülmeye devam edilecektir (bkz.
+`Documents/CAN_Message_Table.md`, `BENI_OKU.md` 5.1).
 
 ---
 

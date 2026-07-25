@@ -1,6 +1,7 @@
 #include "CanManager.h"
 #include "BmsFreshness.h"         // G12: E000+E001 birleşik tazelik (saf)
 #include "MotorFaultDebounce.h"  // G9: motorErrorFaultConfirmed (saf debounce)
+#include "MotorTimeoutDebounce.h" // Motor timeout debounce
 #include "SystemConfig.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -67,6 +68,7 @@ bool CanManager::begin() {
     const char* t_names[] = {"500kbps", "125kbps", "250kbps"};
     
     bool baudFound = false;
+    g_config.mode = TWAI_MODE_LISTEN_ONLY;
     for (int i = 0; i < 3; i++) {
         ESP_LOGI(TAG, "CAN bitrate auto-detect deneniyor: %s", t_names[i]);
         if (twai_driver_install(&g_config, &t_configs[i], &f_config) == ESP_OK) {
@@ -78,6 +80,8 @@ bool CanManager::begin() {
                     baudFound = true;
                     CAN_bitrateVerified = true;
                     CAN_hasReceivedAnyFrame = true;
+                    twai_stop();
+                    twai_driver_uninstall();
                     break;
                 }
                 twai_stop();
@@ -86,25 +90,29 @@ bool CanManager::begin() {
         }
     }
 
+    g_config.mode = TWAI_MODE_NORMAL;
     if (!baudFound) {
         ESP_LOGW(TAG, "CAN bitrate auto-detect basarisiz oldu! Fallback: 500kbps");
         t_config = TWAI_TIMING_CONFIG_500KBITS();
-        esp_err_t err = twai_driver_install(&g_config, &t_config, &f_config);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "twai_driver_install failed: %s", esp_err_to_name(err));
-            vSemaphoreDelete(s_mutex);
-            s_mutex = nullptr;
-            return false;
-        }
-        err = twai_start();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "twai_start failed: %s", esp_err_to_name(err));
-            twai_driver_uninstall();
-            vSemaphoreDelete(s_mutex);
-            s_mutex = nullptr;
-            return false;
-        }
+    }
+    
+    esp_err_t err = twai_driver_install(&g_config, &t_config, &f_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "twai_driver_install failed: %s", esp_err_to_name(err));
+        vSemaphoreDelete(s_mutex);
+        s_mutex = nullptr;
+        return false;
+    }
+    err = twai_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "twai_start failed: %s", esp_err_to_name(err));
+        twai_driver_uninstall();
+        vSemaphoreDelete(s_mutex);
+        s_mutex = nullptr;
+        return false;
+    }
 
+    if (!baudFound) {
         // CAN_bitrateVerified=false (varsayılan) — retryAutobaudIfNeeded bu
         // andan CAN_AUTOBAUD_RETRY_INTERVAL_MS sonra ilk yeniden denemeyi
         // tetikleyecek.
@@ -168,19 +176,20 @@ void CanManager::retryAutobaudIfNeeded() {
     twai_driver_uninstall();
 
     bool CAN_found = false;
+    g_config.mode = TWAI_MODE_LISTEN_ONLY;
     if (twai_driver_install(&g_config, &t_configs[CAN_candidateIdx],
                             &f_config) == ESP_OK) {
         if (twai_start() == ESP_OK) {
             twai_message_t msg;
             if (twai_receive(&msg, pdMS_TO_TICKS(1000)) == ESP_OK) {
                 CAN_found = true;
-            } else {
-                twai_stop();
             }
+            twai_stop();
         }
-        if (!CAN_found)
-            twai_driver_uninstall();
+        twai_driver_uninstall();
     }
+
+    g_config.mode = TWAI_MODE_NORMAL;
 
     if (CAN_found) {
         t_config = t_configs[CAN_candidateIdx];
@@ -188,19 +197,15 @@ void CanManager::retryAutobaudIfNeeded() {
         CAN_hasReceivedAnyFrame = true;
         ESP_LOGI(TAG, "CAN bitrate GEC de olsa bulundu: %s",
                  t_names[CAN_candidateIdx]);
-        isInitialized = true;
-        return;
     }
 
-    // Bulunamadı — çalışmaya devam edebilmek için fallback'e (mevcut
-    // t_config, her zaman 500kbps) geri dön; bir sonraki retry'de rotasyon
-    // devam eder.
+    // Bulunsa da bulunmasa da (fallback), NORMAL modda yeniden kur ve başlat.
     esp_err_t err = twai_driver_install(&g_config, &t_config, &f_config);
     if (err == ESP_OK)
         err = twai_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG,
-                 "Autobaud retry: fallback surucusu yeniden kurulamadi: %s",
+                 "Autobaud retry: surucu yeniden kurulamadi: %s",
                  esp_err_to_name(err));
         // isInitialized false kalir; s_mutex hala gecerli oldugundan bir
         // sonraki interval'da tekrar denenecek (kalici sagirlik yok).
@@ -279,37 +284,51 @@ void CanManager::processRxMessages() {
     if (!isInitialized)
         return;
 
+    const TickType_t CAN_nowTick = xTaskGetTickCount();
+    if (CAN_nowTick - CAN_lastStatusCheckTick >= pdMS_TO_TICKS(1000)) {
+        CAN_lastStatusCheckTick = CAN_nowTick;
+        twai_status_info_t status_info;
+        if (twai_get_status_info(&status_info) == ESP_OK) {
+            if (status_info.state == TWAI_STATE_BUS_OFF) {
+                if (CAN_nowTick - CAN_lastBusOffRecoveryTick >= pdMS_TO_TICKS(5000)) {
+                    CAN_busOffRecoveryAttempts = 0;
+                }
+                
+                if (CAN_busOffRecoveryAttempts < 3) {
+                    CAN_busOffRecoveryAttempts++;
+                    CAN_lastBusOffRecoveryTick = CAN_nowTick;
+                    ESP_LOGE(TAG, "CAN BUS-OFF detected (attempt %d). Initiating recovery...", CAN_busOffRecoveryAttempts);
+                    twai_initiate_recovery();
+                } else {
+                    ESP_LOGW(TAG, "CAN BUS-OFF recovery cooldown (waiting 5s)...");
+                }
+            } else if (status_info.state == TWAI_STATE_STOPPED) {
+                if (CAN_busOffRecoveryAttempts > 0) {
+                    ESP_LOGI(TAG, "CAN driver stopped (recovered). Starting driver...");
+                }
+                twai_start();
+            } else if (status_info.state == TWAI_STATE_RUNNING) {
+                if (CAN_nowTick - CAN_lastBusOffRecoveryTick >= pdMS_TO_TICKS(5000)) {
+                    CAN_busOffRecoveryAttempts = 0;
+                }
+            }
+        }
+    }
+
     uint32_t alerts;
     if (twai_read_alerts(&alerts, 0) == ESP_OK) {
-        if (alerts & TWAI_ALERT_BUS_OFF) {
-            if (!CAN_busOffLogged) {
-                ESP_LOGE(TAG, "CAN BUS-OFF detected, initiating recovery");
-                CAN_busOffLogged = true;
-                CAN_busRecoveredLogged = false;
-            }
-            twai_initiate_recovery();
-        }
-        if (alerts & TWAI_ALERT_BUS_RECOVERED) {
-            if (!CAN_busRecoveredLogged) {
-                ESP_LOGI(TAG, "CAN BUS RECOVERED, restarting driver");
-                CAN_busRecoveredLogged = true;
-                CAN_busOffLogged = false;
-            }
-            twai_start();
-        }
         if (alerts & TWAI_ALERT_RX_QUEUE_FULL) {
             // Kuyruk taştı → donanım frame düşürdü. Sayaç tut, oran-sınırlı
             // özet logla (her olayda değil, en fazla 1 WARN / interval).
             CAN_rxQueueFullCount++;
-            TickType_t CAN_now = xTaskGetTickCount();
-            if (CAN_now - CAN_lastRxQueueFullLogTick >=
+            if (CAN_nowTick - CAN_lastRxQueueFullLogTick >=
                 pdMS_TO_TICKS(CAN_RX_STATS_LOG_INTERVAL_MS)) {
                 ESP_LOGW(TAG,
                          "RX queue full — frame düştü (toplam olay=%lu, "
                          "atlanan remote=%lu)",
                          (unsigned long)CAN_rxQueueFullCount,
                          (unsigned long)CAN_rxRemoteFrameCount);
-                CAN_lastRxQueueFullLogTick = CAN_now;
+                CAN_lastRxQueueFullLogTick = CAN_nowTick;
             }
         }
     }
@@ -418,7 +437,11 @@ MotorStatus CanManager::getMotorStatus() const {
         return s_motorStatus;
 
     MotorStatus CAN_statusCopy = {};
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return CAN_statusCopy;
+    }
     CAN_statusCopy = s_motorStatus;
     xSemaphoreGive(s_mutex);
     return CAN_statusCopy;
@@ -429,11 +452,27 @@ TelemetryData CanManager::getTelemetryData() const {
         return s_telemetryData;
 
     TelemetryData CAN_telemetryCopy = {};
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return CAN_telemetryCopy;
+    }
     CAN_telemetryCopy = s_telemetryData;
-    // Charger freshness (updateChargerValidity) → dahili S1/S2 mod girdisi.
+    // Şarj durumu → dahili S1/S2 mod girdisi (şartname 8.2.a.iii).
     // Wire formatına serialize edilmez (bkz. VehicleData.h TEL_chargerActive).
-    CAN_telemetryCopy.TEL_chargerActive = CAN_chargerValid;
+    //
+    // İKİ BAĞIMSIZ GÖSTERGE, OR'lanır (Y20):
+    //   1. CAN_chargerValid — charger komut frame'i (0x1806E5F4) TAZE mi.
+    //      BİRİNCİL kaynak, ama OPSİYONEL bir akış: charger CAN'e hiç
+    //      konuşmuyorsa bu bayrak asla true olmaz.
+    //   2. CAN_chargeDetect.detected — akım işareti (pozitif = batarya akım
+    //      ALIYOR). Birinci gösterge sessiz kaldığında şarjı yine de yakalar.
+    // OR seçildi çünkü şarjı KAÇIRMAK (S1 açık kalır, araç şarjdayken sürüşe
+    // izin verilir) yanlış pozitiften (S1 gereksiz kapanır, START reddedilir)
+    // daha tehlikelidir. Yanlış pozitif riski ChargeDetect'teki üç koruma
+    // katmanıyla (eşik + debounce + hareketsizlik) zaten sınırlanmıştır.
+    CAN_telemetryCopy.TEL_chargerActive =
+        CAN_chargerValid || CAN_chargeDetect.detected;
     xSemaphoreGive(s_mutex);
 
     return CAN_telemetryCopy;
@@ -454,7 +493,11 @@ void CanManager::handleMotorStatus(const twai_message_t& msg) {
     uint8_t CAN_previousConfirmedFlags = 0;
     uint8_t CAN_confirmedErrorFlags = 0;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
 
     // Önceki ONAYLANMIŞ (debounce sonrası) errorFlags — edge-trigger için.
     CAN_previousConfirmedFlags = s_telemetryData.TEL_motorErrorFlags;
@@ -462,6 +505,7 @@ void CanManager::handleMotorStatus(const twai_message_t& msg) {
     CAN_lastMotorStatusTick = xTaskGetTickCount();
     CAN_hasSeenMotorStatus = true;
     CAN_motorTimeoutLogged = false;
+    CAN_motorTimeoutDebounceCount = 0;
 
     // G9: geçici (tek/çift frame) errorFlags kontaktör açtırmasın — N ardışık
     // frame onayı (bkz. MotorFaultDebounce.h + MOTOR_ERROR_DEBOUNCE_FRAMES).
@@ -471,14 +515,10 @@ void CanManager::handleMotorStatus(const twai_message_t& msg) {
         parsed.errorFlags, CAN_motorErrorConsecutive, MOTOR_ERROR_DEBOUNCE_FRAMES);
     CAN_confirmedErrorFlags = CAN_motorFaultConfirmed ? parsed.errorFlags : 0;
 
-    // Motor rpm CAN'da işaretli (int16_t) gelir; geri yön dönüşü negatif
-    // olabilir. Telemetri/HMI/LoRa sözleşmesi ise rpm'i işaretsiz büyüklük
-    // (0..65535, sanity ≤ TEL_RPM_MAX) bekler — bkz. tools/e2e/contract.py.
-    // Negatifi doğrudan uint16_t'ye atamak sarmalanıp (~64k) UKS paketini
-    // reddettirirdi; bu yüzden mutlak değeri (büyüklüğü) alıyoruz.
-    s_telemetryData.TEL_motorRpm = static_cast<uint16_t>(
-        s_motorStatus.rpm < 0 ? -static_cast<int32_t>(s_motorStatus.rpm)
-                              : static_cast<int32_t>(s_motorStatus.rpm));
+    // Motor rpm CAN'da işaretli (int16_t) gelir; geri yön dönüşü negatif olabilir.
+    // Güvenlik: INT16_MIN (-32768) gibi değerler için doğrudan saklıyoruz; 
+    // TelemetrySanitize::sanitizeRpm() negatif değerleri güvenli bir şekilde 0'a kırpar.
+    s_telemetryData.TEL_motorRpm = s_motorStatus.rpm;
     s_telemetryData.TEL_motorVoltageDeciV = s_motorStatus.motorVoltageDeciV;
     s_telemetryData.TEL_motorErrorFlags = CAN_confirmedErrorFlags;
     s_telemetryData.TEL_motorDataValid = s_motorStatus.isValid;
@@ -524,7 +564,11 @@ void CanManager::handleLbBmsE000(const twai_message_t& msg) {
 
     uint8_t CAN_previousPackFaultFlags = 0;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
 
     // DOĞRULANDI: packV
     s_telemetryData.TEL_bmsPackVoltageDeciV = parsed.TEL_bmsPackVoltageDeciV;
@@ -579,7 +623,11 @@ void CanManager::handleLbBmsE001(const twai_message_t& msg) {
         return;
     }
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     // YENİ — byte[0:5] min/max/avg
     s_telemetryData.TEL_bmsCellVoltageMinDeciMv = parsed.TEL_bmsCellVoltageMinDeciMv;
     s_telemetryData.TEL_bmsCellVoltageMaxDeciMv = parsed.TEL_bmsCellVoltageMaxDeciMv;
@@ -599,7 +647,11 @@ void CanManager::handleLbBmsE001(const twai_message_t& msg) {
 void CanManager::handleLbBmsE015(const twai_message_t& msg) {
     TelemetryData parsed{};
     if (!CanParse::parseLbBmsE015(msg, parsed)) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     for (int i=0;i<4;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
@@ -610,7 +662,11 @@ void CanManager::handleLbBmsE015(const twai_message_t& msg) {
 void CanManager::handleLbBmsE016(const twai_message_t& msg) {
     TelemetryData parsed{};
     if (!CanParse::parseLbBmsE016(msg, parsed)) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     for (int i=4;i<8;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
@@ -621,7 +677,11 @@ void CanManager::handleLbBmsE016(const twai_message_t& msg) {
 void CanManager::handleLbBmsE017(const twai_message_t& msg) {
     TelemetryData parsed{};
     if (!CanParse::parseLbBmsE017(msg, parsed)) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     for (int i=8;i<12;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
@@ -632,7 +692,11 @@ void CanManager::handleLbBmsE017(const twai_message_t& msg) {
 void CanManager::handleLbBmsE018(const twai_message_t& msg) {
     TelemetryData parsed{};
     if (!CanParse::parseLbBmsE018(msg, parsed)) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     for (int i=12;i<16;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
@@ -643,7 +707,11 @@ void CanManager::handleLbBmsE018(const twai_message_t& msg) {
 void CanManager::handleLbBmsE019(const twai_message_t& msg) {
     TelemetryData parsed{};
     if (!CanParse::parseLbBmsE019(msg, parsed)) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     for (int i=16;i<20;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
@@ -654,7 +722,11 @@ void CanManager::handleLbBmsE019(const twai_message_t& msg) {
 void CanManager::handleLbBmsE020(const twai_message_t& msg) {
     TelemetryData parsed{};
     if (!CanParse::parseLbBmsE020(msg, parsed)) return;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     for (int i=20;i<24;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
@@ -679,7 +751,11 @@ void CanManager::handleCharger1806E5F4(const twai_message_t& msg) {
         return;
     }
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     s_chargerCommand = parsed;
     CAN_lastChargerTick = xTaskGetTickCount();
     CAN_hasSeenCharger = true;
@@ -749,17 +825,29 @@ void CanManager::updateMotorStatusValidity() {
     const TickType_t CAN_nowTick = xTaskGetTickCount();
     bool CAN_shouldLogTimeout = false;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
 
-    if (CanParse::isMotorStatusTimedOut(
-            CAN_hasSeenMotorStatus, s_motorStatus.isValid, CAN_nowTick,
-            CAN_lastMotorStatusTick,
-            pdMS_TO_TICKS(CAN_MOTOR_STATUS_TIMEOUT_MS))) {
-        s_motorStatus.isValid = false;
-        s_telemetryData.TEL_motorDataValid = false;
-        s_telemetryData.TEL_motorTimeoutActive = true;
-        CAN_shouldLogTimeout = !CAN_motorTimeoutLogged;
-        CAN_motorTimeoutLogged = true;
+    if (CAN_hasSeenMotorStatus) {
+        bool debouncedTimeout = motor_timeout_debounce_evaluate(
+            CAN_motorTimeoutDebounceCount,
+            (uint32_t)CAN_nowTick,
+            (uint32_t&)CAN_lastMotorTimeoutCheckTick,
+            (uint32_t)CAN_lastMotorStatusTick,
+            (uint32_t)pdMS_TO_TICKS(CAN_MOTOR_STATUS_TIMEOUT_MS),
+            2
+        );
+
+        if (debouncedTimeout && !s_telemetryData.TEL_motorTimeoutActive) {
+            s_motorStatus.isValid = false;
+            s_telemetryData.TEL_motorDataValid = false;
+            s_telemetryData.TEL_motorTimeoutActive = true;
+            CAN_shouldLogTimeout = !CAN_motorTimeoutLogged;
+            CAN_motorTimeoutLogged = true;
+        }
     }
 
     xSemaphoreGive(s_mutex);
@@ -778,7 +866,11 @@ void CanManager::updateBmsValidity() {
     const TickType_t CAN_timeoutTicks = pdMS_TO_TICKS(CAN_BMS_STATUS_TIMEOUT_MS);
     bool CAN_shouldLogTimeout = false;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
 
     // G12: BMS verisi packV (E000) VE sıcaklık (E001) iki ayrı ID'den beslenir;
     // biri akıp diğeri kesilirse bayat alan maskelenmesin diye freshness'i ID
@@ -820,7 +912,11 @@ void CanManager::updateCellVoltageValidity() {
     if (s_mutex == nullptr) return;
     const TickType_t CAN_nowTick = xTaskGetTickCount();
     bool CAN_shouldLogTimeout = false;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
     
     if (CAN_hasSeen_CellVoltage && static_cast<TickType_t>(CAN_nowTick - CAN_lastCellVoltageTick) >= pdMS_TO_TICKS(CAN_CELL_VOLTAGE_TIMEOUT_MS)) {
         if (s_telemetryData.TEL_cellVoltageDataValid) {
@@ -848,8 +944,14 @@ void CanManager::updateChargerValidity() {
 
     const TickType_t CAN_nowTick = xTaskGetTickCount();
     bool CAN_shouldLogStale = false;
+    bool CAN_shouldLogCurrentDetect = false;
+    bool CAN_currentDetected = false;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return;
+    }
 
     // Timeout mantığı E000 ile aynı saf yardımcıyı kullanır; fark, sonucun
     // eskalasyonudur: charger akışı OPSİYONEL olduğundan (araç sürüşteyken
@@ -863,11 +965,31 @@ void CanManager::updateChargerValidity() {
         CAN_chargerStaleLogged = true;
     }
 
+    // Y20 — AKIM TABANLI ŞARJ TESPİTİ (yedek gösterge).
+    // Charger komut akışı (0x1806E5F4) opsiyoneldir: charger CAN'e hiç
+    // konuşmuyorsa CAN_chargerValid ASLA true olmaz ve şarj fark edilmez.
+    // Bu bağımsız gösterge (pozitif akım = batarya akım ALIYOR) o boşluğu
+    // kapatır. Karar saf ChargeDetect::update'te (eşik + debounce +
+    // hareketsizlik kapısı, rejen karışıklığına karşı).
+    CAN_currentDetected = ChargeDetect::update(
+        CAN_chargeDetect, s_telemetryData.TEL_bmsCurrentCentiA,
+        s_telemetryData.TEL_bmsDataValid, s_telemetryData.TEL_motorRpm);
+
+    if (CAN_currentDetected != CAN_chargeDetectLogged) {
+        CAN_shouldLogCurrentDetect = true;
+        CAN_chargeDetectLogged = CAN_currentDetected;
+    }
+
     xSemaphoreGive(s_mutex);
 
     if (CAN_shouldLogStale) {
         ESP_LOGD(TAG, "Charger frame stale after %d ms (opsiyonel akış — FAULT üretmez)",
                  CAN_CHARGER_TIMEOUT_MS);
+    }
+    if (CAN_shouldLogCurrentDetect) {
+        ESP_LOGI(TAG, "Akim tabanli sarj tespiti %s (esik %+d centi-A, Y20)",
+                 CAN_currentDetected ? "AKTIF" : "PASIF",
+                 (int)CHARGE_DETECT_CURRENT_CENTI_A);
     }
 }
 
@@ -877,7 +999,11 @@ bool CanManager::getChargerCommand(ChargerCommand& out) const {
         return false;
     }
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
+        ESP_LOGE(TAG, "s_mutex timeout!");
+        return false;
+    }
     out = s_chargerCommand;
     const bool CAN_isFresh = CAN_chargerValid;
     xSemaphoreGive(s_mutex);

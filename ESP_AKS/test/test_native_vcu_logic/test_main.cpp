@@ -61,6 +61,12 @@ extern void test_bms_timeout_in_idle_is_safe(void);
 extern void test_bms_timeout_in_ready_is_critical(void);
 extern void test_bms_timeout_in_drive_is_critical(void);
 
+// Faz 1 — cell voltage timeout
+extern void test_cell_voltage_timeout_idle_warning(void);
+extern void test_cell_voltage_timeout_ready_critical(void);
+extern void test_cell_voltage_timeout_drive_critical(void);
+extern void test_cell_voltage_timeout_inactive_no_warning(void);
+
 // Faz 1 — bms data invalid
 extern void test_warning_bms_invalid_skips_thresholds(void);
 extern void test_critical_bms_invalid_with_motor_error_still_critical(void);
@@ -83,12 +89,19 @@ extern void test_reset_interlock_bms_timeout_in_fault_blocks(void);
 extern void test_reset_interlock_warning_level_passes(void);
 extern void test_reset_interlock_unverified_bms_system_state_does_not_block(void);
 
+// AKS-04
+extern void test_reset_interlock_rpm_zero_fresh_passes(void);
+extern void test_reset_interlock_rpm_high_blocks(void);
+extern void test_reset_interlock_rpm_zero_stale_blocks(void);
+extern void test_reset_interlock_rpm_noise_passes(void);
+
 // Faz 2 — state machine geçişleri
 extern void test_init_transitions_to_idle_and_calls_allOff(void);
 extern void test_idle_to_ready_on_start_request(void);
 extern void test_idle_start_rejected_when_bms_never_valid(void);
 extern void test_idle_start_permitted_when_bms_valid_and_clean(void);
-extern void test_idle_start_rejected_when_warning_active(void);
+extern void test_idle_start_permitted_when_warning_active(void);
+extern void test_idle_start_rejected_when_critical_active(void);
 extern void test_idle_to_ready_with_charger_active_when_roles_unassigned(void);
 extern void test_ready_to_drive_on_drive_enable(void);
 extern void test_idle_to_emergency_stop(void);
@@ -121,6 +134,10 @@ extern void test_estop_without_torque_sink_still_opens_contactors(void);
 extern void test_estop_zero_torque_reaches_can_queue_before_contactor_open(void);
 extern void test_flag0_torque_frame_disabled(void);
 
+extern void test_post_event_estop_without_queue_enters_estop(void);
+extern void test_estop_keeps_state_when_fault_arrives(void);
+extern void test_fault_transitions_to_estop_when_estop_arrives(void);
+extern void test_fault_auto_reset_after_delay(void);
 // G2 — TorqueRequestQueue (VCU task -> CAN task tork isteği kuyruğu)
 extern void test_torque_queue_drain_empty_returns_false(void);
 extern void test_torque_queue_push_then_drain_returns_value_once(void);
@@ -155,6 +172,17 @@ extern void test_derating_cell_overvoltage_at_approach_boundary_is_approaching_t
 extern void test_derating_cell_voltage_realistic_nominal_is_nominal(void);
 extern void test_derating_multiple_warnings_worst_case_wins(void);
 extern void test_derating_two_warning_tier_signals_stay_at_warning_tier(void);
+
+// BOLUM C — kontrollu durdurma / ekran "DUR" butonu (test_stop_request.cpp)
+extern void test_stop_from_ready_returns_to_idle(void);
+extern void test_stop_from_drive_returns_to_idle(void);
+extern void test_stop_opens_contactors(void);
+extern void test_stop_does_not_use_staggered_bank_close(void);
+extern void test_stop_in_idle_is_ignored(void);
+extern void test_stop_in_fault_does_not_clear_fault(void);
+extern void test_stop_in_estop_does_not_downgrade_safety_state(void);
+extern void test_start_works_again_after_stop(void);
+extern void test_estop_still_works_from_drive_after_stop_feature(void);
 
 // Faz 0 sanity
 static void test_smoke_arithmetic(void) {
@@ -221,6 +249,12 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_bms_timeout_in_ready_is_critical);
     RUN_TEST(test_bms_timeout_in_drive_is_critical);
 
+    // Faz 1 — cell voltage timeout
+    RUN_TEST(test_cell_voltage_timeout_idle_warning);
+    RUN_TEST(test_cell_voltage_timeout_ready_critical);
+    RUN_TEST(test_cell_voltage_timeout_drive_critical);
+    RUN_TEST(test_cell_voltage_timeout_inactive_no_warning);
+
     // Faz 1 — bms invalid
     RUN_TEST(test_warning_bms_invalid_skips_thresholds);
     RUN_TEST(test_critical_bms_invalid_with_motor_error_still_critical);
@@ -242,13 +276,18 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_reset_interlock_bms_timeout_in_fault_blocks);
     RUN_TEST(test_reset_interlock_warning_level_passes);
     RUN_TEST(test_reset_interlock_unverified_bms_system_state_does_not_block);
+    RUN_TEST(test_reset_interlock_rpm_zero_fresh_passes);
+    RUN_TEST(test_reset_interlock_rpm_high_blocks);
+    RUN_TEST(test_reset_interlock_rpm_zero_stale_blocks);
+    RUN_TEST(test_reset_interlock_rpm_noise_passes);
 
     // Faz 2 — state machine
     RUN_TEST(test_init_transitions_to_idle_and_calls_allOff);
     RUN_TEST(test_idle_to_ready_on_start_request);
     RUN_TEST(test_idle_start_rejected_when_bms_never_valid);
     RUN_TEST(test_idle_start_permitted_when_bms_valid_and_clean);
-    RUN_TEST(test_idle_start_rejected_when_warning_active);
+    RUN_TEST(test_idle_start_permitted_when_warning_active);
+    RUN_TEST(test_idle_start_rejected_when_critical_active);
     RUN_TEST(test_idle_to_ready_with_charger_active_when_roles_unassigned);
     RUN_TEST(test_ready_to_drive_on_drive_enable);
     RUN_TEST(test_idle_to_emergency_stop);
@@ -278,6 +317,11 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_estop_without_torque_sink_still_opens_contactors);
     RUN_TEST(test_estop_zero_torque_reaches_can_queue_before_contactor_open);
     RUN_TEST(test_flag0_torque_frame_disabled);
+    
+    RUN_TEST(test_post_event_estop_without_queue_enters_estop);
+    RUN_TEST(test_estop_keeps_state_when_fault_arrives);
+    RUN_TEST(test_fault_transitions_to_estop_when_estop_arrives);
+    RUN_TEST(test_fault_auto_reset_after_delay);
 
     RUN_TEST(test_torque_queue_drain_empty_returns_false);
     RUN_TEST(test_torque_queue_push_then_drain_returns_value_once);
@@ -311,6 +355,17 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_derating_cell_voltage_realistic_nominal_is_nominal);
     RUN_TEST(test_derating_multiple_warnings_worst_case_wins);
     RUN_TEST(test_derating_two_warning_tier_signals_stay_at_warning_tier);
+
+    // BOLUM C — kontrollu durdurma (ekran "DUR" butonu, HMI_CMD_STOP)
+    RUN_TEST(test_stop_from_ready_returns_to_idle);
+    RUN_TEST(test_stop_from_drive_returns_to_idle);
+    RUN_TEST(test_stop_opens_contactors);
+    RUN_TEST(test_stop_does_not_use_staggered_bank_close);
+    RUN_TEST(test_stop_in_idle_is_ignored);
+    RUN_TEST(test_stop_in_fault_does_not_clear_fault);
+    RUN_TEST(test_stop_in_estop_does_not_downgrade_safety_state);
+    RUN_TEST(test_start_works_again_after_stop);
+    RUN_TEST(test_estop_still_works_from_drive_after_stop_feature);
 
     return UNITY_END();
 }

@@ -11,6 +11,33 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cmath>
+
+class HmiEmaFilter {
+public:
+    HmiEmaFilter(float alpha) : alpha_(alpha), smoothedValue_(0.0f) {}
+
+    float update(float targetValue, bool isValid) {
+        if (!isValid) {
+            smoothedValue_ = 0.0f;
+            return 0.0f;
+        }
+        smoothedValue_ = (alpha_ * targetValue) + ((1.0f - alpha_) * smoothedValue_);
+        return smoothedValue_;
+    }
+
+    void reset() {
+        smoothedValue_ = 0.0f;
+    }
+
+    float getSmoothed() const {
+        return smoothedValue_;
+    }
+
+private:
+    float alpha_;
+    float smoothedValue_;
+};
 
 enum class HMI_VcuState : uint8_t {
     INIT = 0,

@@ -82,7 +82,7 @@ def test_uks_tel_link_timeout_matches_contract(uks_telemetry_dir):
     )
 
 
-def test_uks_tel_link_timeout_has_enough_margin_over_tx_period(uks_telemetry_dir):
+def test_uks_tel_link_timeout_has_enough_margin_over_tx_period(uks_telemetry_dir, aks_root):
     """Invariant: TEL_LINK_TIMEOUT_MS >= 3 x LORA_TX_PERIOD_MS.
 
     Bkz. Documents/LoRa_Link_Analysis.md 'UKS-side TEL Timeout Margin': bu
@@ -95,9 +95,12 @@ def test_uks_tel_link_timeout_has_enough_margin_over_tx_period(uks_telemetry_dir
     header = read(uks_telemetry_dir / "Core/Inc/telemetry.h")
     uks_timeout = extract_define_int(header, "TEL_LINK_TIMEOUT_MS", source="UKS telemetry.h")
 
-    assert uks_timeout >= 3 * contract.LORA_TX_PERIOD_MS, (
+    sys_config = read(aks_root / "include/SystemConfig.h")
+    lora_tx_period = extract_define_int(sys_config, "LORA_TX_PERIOD_MS", source="AKS SystemConfig.h")
+
+    assert uks_timeout >= 3 * lora_tx_period, (
         f"UKS TEL_LINK_TIMEOUT_MS ({uks_timeout} ms) artik en az 3x AKS "
-        f"LORA_TX_PERIOD_MS'i ({contract.LORA_TX_PERIOD_MS} ms) karsilamiyor "
+        f"LORA_TX_PERIOD_MS'i ({lora_tx_period} ms) karsilamiyor "
         "— ardisik tik atlama toleransi (bkz. Documents/LoRa_Link_Analysis.md "
         "'UKS-side TEL Timeout Margin' tablosu) 3'un altina dusmus olabilir. "
         "LORA_TX_PERIOD_MS degistiyse TEL_LINK_TIMEOUT_MS'i (UKS telemetry.h) "
@@ -140,7 +143,13 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     assert "sanitizeSystemState" in text
     assert "sanitizeSoc" in text
     assert "sanitizeCurrent" in text
-    # sysState disi -> 4 (FAULT) kurali kaynakta hala mevcut mu?
+    # sysState disi -> 2 (BOSTA) kurali kaynakta hala mevcut mu?
+    # AKS-17: TEL_bmsSystemState gercek bir kaynaktan gelmiyor; 0 -> 2
+    # raporlanir (onceki davranis 0 -> 4/FAULT'tu, yaniltici gosterime yol aciyordu).
+    # Y33 (24.07.2026): fallback 2 KALDI, ama alan artik sabit 2 DEGIL — gercek
+    # deger akimdan turetiliyor (bkz. test_aks_sysstate_derived_from_current).
+    # 1..4 araligi UKS Decode_Line kapisidir (Parse_Int(f[12], 1, 4)) ve
+    # DARALTILAMAZ: aralik disi bir deger TUM frame'i reddettirir.
     m = re.search(
         r"sanitizeSystemState[^{]*\{[^}]*\}", strip_c_comments(text), re.DOTALL
     )
@@ -148,8 +157,85 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     assert re.search(r">=\s*1U?\s*&&.*<=\s*4U?", m.group(0)) or re.search(
         r"1U?\s*<=.*<=\s*4U?", m.group(0)
     ), "sanitizeSystemState govdesinde 1..4 aralik kontrolu bulunamadi"
-    assert re.search(r":\s*4U?\s*;", m.group(0)), (
-        "sanitizeSystemState govdesinde FAULT(4) donus degeri bulunamadi"
+    assert re.search(r":\s*2U?\s*;", m.group(0)), (
+        "sanitizeSystemState govdesinde IDLE(2) donus degeri bulunamadi"
+    )
+
+
+def test_aks_single_soc_source(aks_root):
+    """Y8 (24.07.2026): ekranda ve telemetride TEK SoC gosterilir —
+    BMS'in KENDI raporladigi TEL_bmsSocHundredths (0xE000 byte[4:5],
+    DOGRULANDI). Uretici hesabi, ortalama gerilimden lineer tahminden
+    guvenilirdir (LiFePO4'un duz OCV bolgesinde tahmin KABADIR).
+
+    Sistemde SoC ureten UC yer var:
+      1. TEL_bmsSocHundredths   -> GOSTERILEN (telemetri alan 15 + Nextion)
+      2. TEL_bmsSoc2Hundredths  -> parse edilir, GOSTERILMEZ
+      3. BmsComputed::socPercent -> AKS'in tahmini, YEDEK, TUKETILMEZ
+
+    Bu bekci, 2 veya 3'un sessizce bir gosterim yoluna baglanmasini yakalar;
+    aksi halde ekranda IKI FARKLI yuzde gorunur ve operator hangisine
+    guvenecegini bilemez (Y8'in kapatmak istedigi durum).
+    """
+    tel = strip_c_comments(read(aks_root / "lib/Telemetry/Telemetry.cpp"))
+    assert "TEL_bmsSocHundredths" in tel, (
+        "Telemetry.cpp artik TEL_bmsSocHundredths gondermiyor — telemetrideki "
+        "SoC kaynagi degismis olabilir (Y8 tek-kaynak kurali)."
+    )
+    assert "TEL_bmsSoc2Hundredths" not in tel, (
+        "Telemetry.cpp SoC 2'yi (TEL_bmsSoc2Hundredths) hat formatina yazmis "
+        "gorunuyor — bu alan bilincli olarak GOSTERILMEZ (Y8). Iki farkli SoC "
+        "yayinlamak operatoru yaniltir; ayrica alan sayisi degisirse UKS "
+        "Decode_Line TUM frame'i reddeder."
+    )
+
+    main_cpp = strip_c_comments(read(aks_root / "src/main.cpp"))
+    assert "HMI_batteryDisplayValue" in main_cpp and "TEL_bmsSocHundredths" in main_cpp, (
+        "main.cpp'deki Nextion batarya gostergesi artik TEL_bmsSocHundredths'ten "
+        "beslenmiyor gorunuyor (Y8 tek-kaynak kurali)."
+    )
+    assert "socPercent" not in main_cpp, (
+        "main.cpp BmsComputed::socPercent'i (AKS'in ortalamadan lineer tahmini) "
+        "bir gosterim yoluna baglamis gorunuyor. Gosterilen SoC yalnizca BMS'in "
+        "kendi degeri olmalidir; bu alan YEDEK/tani amaclidir (bkz. BmsComputed.h). "
+        "Bilincli olarak degistirildiyse VehicleData.h'deki tek-kaynak kuralini ve "
+        "bu bekciyi AYNI COMMIT'TE guncelleyin."
+    )
+
+
+def test_aks_sysstate_derived_from_current(aks_root):
+    """Y33 (24.07.2026): BMS'in SAGLIK durumunu yayinladigi bir CAN ID'ye
+    ULASILAMADI ve aranmayacak. sysState alani (TEL 12) artik DOGRULANMIS
+    akimdan (0xE000 byte[0:1]) turetilen CALISMA MODUNU tasir:
+    1=Desarj, 2=Bosta, 3=Sarj — FAULT(4) URETILMEZ.
+
+    Bu bekci iki seyi korur:
+      1) SYSSTATE_DERIVE_FROM_CURRENT varsayilani 1 kalmali. 0'a donerse alan
+         sessizce sabit 2'ye duser ve operator ekraninda hicbir bilgi tasimaz
+         (AKS-17 sonrasi yasanan durum) — testler yine yesil gecerdi.
+      2) applyIfEnabled'daki BAYAT VERI korumasi durmali. TEL_bmsDataValid
+         kontrolu kaldirilirsa, BMS verisi kesildiginde son gorulen (bayat)
+         akimdan "SARJ EDILIYOR" gibi YANLIS bir mod raporlanir.
+    """
+    cfg = read(aks_root / "include/SystemConfig.h")
+    assert (
+        extract_define_int(cfg, "SYSSTATE_DERIVE_FROM_CURRENT", source="AKS SystemConfig.h")
+        == 1
+    ), (
+        "SYSSTATE_DERIVE_FROM_CURRENT varsayilani 1 DEGIL — sysState alani "
+        "akimdan turetilmiyor demektir; alan sabit 2 (Bosta) gonderir ve UKS/"
+        "Monitor ekraninda batarya calisma modu GORUNMEZ (Y33 gerilemesi). "
+        "Bayrak bilincli olarak kapatildiysa bu bekciyi AYNI COMMIT'TE guncelleyin."
+    )
+
+    derive = strip_c_comments(read(aks_root / "lib/Telemetry/SysStateDerive.h"))
+    m = re.search(r"applyIfEnabled[^{]*\{.*?\n\}", derive, re.DOTALL)
+    assert m, "SysStateDerive::applyIfEnabled govdesi bulunamadi"
+    assert "TEL_bmsDataValid" in m.group(0), (
+        "applyIfEnabled artik TEL_bmsDataValid'i kontrol etmiyor — BMS verisi "
+        "bayatladiginda son gorulen akimdan yanlis bir calisma modu (orn. "
+        "'SARJ') raporlanir. Bayat veride notr 2 (Bosta) yazilmalidir; gercek "
+        "'veri yok' bilgisi TEL alan 16 (bmsValid) uzerinden gider."
     )
 
 
@@ -158,9 +244,24 @@ def test_aks_p6_offline_buffer_constants(aks_root):
     assert extract_define_int(sys_config, "OFFLINE_SAMPLE_PERIOD_MS", source="AKS SystemConfig.h") == contract.OFFLINE_SAMPLE_PERIOD_MS
     assert extract_define_int(sys_config, "REPLAY_BURST_PER_TICK", source="AKS SystemConfig.h") == contract.REPLAY_BURST_PER_TICK
     assert extract_define_int(sys_config, "BOOT_LINK_GRACE_MS", source="AKS SystemConfig.h") == contract.BOOT_LINK_GRACE_MS
+    assert extract_define_int(sys_config, "LORA_TX_PERIOD_MS", source="AKS SystemConfig.h") == contract.LORA_TX_PERIOD_MS
+    assert extract_define_int(sys_config, "LINK_TIMEOUT_MS", source="AKS SystemConfig.h") == contract.LINK_TIMEOUT_MS
 
     ob_header = read(aks_root / "lib/OfflineBuffer/OfflineBuffer.h")
     assert extract_define_int(ob_header, "OB_CAPACITY", source="AKS OfflineBuffer.h") == contract.OB_CAPACITY
+
+def test_aks_telemetry_cpp_format_string_matches_contract(aks_root):
+    src = read(aks_root / "lib/Telemetry/Telemetry.cpp")
+    m = re.search(r'"TEL,([^"]+)\\r\\n"', src)
+    assert m, "Telemetry.cpp icinde TEL format stringi bulunamadi"
+    fmt = m.group(1)
+    
+    specifiers = fmt.split(",")
+    
+    assert len(specifiers) == len(contract.FIELD_ORDER), (
+        f"Telemetry.cpp icindeki format specifier sayisi ({len(specifiers)}) ile "
+        f"contract.py'deki FIELD_ORDER sayisi ({len(contract.FIELD_ORDER)}) eslesmiyor."
+    )
 
 
 # ===========================================================================
@@ -279,13 +380,15 @@ def test_uks_sends_heartbeat_0xb0(uks_telemetry_dir):
     hb_value = extract_define_int(lora_h, "LORA_HEARTBEAT_BYTE", source="UKS lora.h")
     assert hb_value == contract.LORA_HEARTBEAT_BYTE
 
-    # main.c fiilen Lora_Send(..., &hb, ...) cagirip 0xB0 gonderiyor mu?
+    # main.c fiilen Lora_SendHeartbeatFast(&lora_ctx, LORA_HEARTBEAT_BYTE)
+    # cagirip 0xB0 gonderiyor mu? (UKS-05: Lora_Send yerine
+    # Lora_SendHeartbeatFast kullanilir — RX interrupt'siz, TX-safe path.)
     assert re.search(r"LORA_HEARTBEAT_BYTE", main_c), (
         "UKS main.c LORA_HEARTBEAT_BYTE'i kullanmiyor gorunuyor — 0xB0 "
         "gonderimi POZITIF dogrulanamadi"
     )
-    assert re.search(r"Lora_Send\s*\(\s*&lora_ctx\s*,\s*&hb", main_c), (
-        "UKS main.c icinde heartbeat byte'inin Lora_Send ile TX edildigi "
+    assert re.search(r"Lora_SendHeartbeatFast\s*\(\s*&lora_ctx\s*,\s*LORA_HEARTBEAT_BYTE", main_c), (
+        "UKS main.c icinde heartbeat byte'inin Lora_SendHeartbeatFast ile TX edildigi "
         "kod bulunamadi"
     )
 
