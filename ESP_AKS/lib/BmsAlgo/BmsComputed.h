@@ -41,10 +41,30 @@ struct BmsComputed {
     uint8_t cellMinIndex;     // En düşük hücrenin indeksi [0..23]
     uint16_t cellDeltaMv;     // cellMaxMv - cellMinMv (dengesizlik göstergesi)
 
-    uint8_t socPercent;       // Tahmini şarj durumu, 0..100
+    // Ortalama hücre geriliminden LİNEER tahmin edilen şarj durumu, 0..100.
+    //
+    // *** GÖSTERİLEN SoC BU DEĞİLDİR (Y8 kararı, 24.07.2026). ***
+    // Ekranda ve telemetride gösterilen TEK SoC, BMS'in kendi raporladığı
+    // TEL_bmsSocHundredths'tir (0xE000 byte[4:5], DOĞRULANDI) — üretici hesabı
+    // daha güvenilirdir. Bu alan YEDEK/tanı amaçlıdır ve bugün hiçbir gösterim
+    // yolunda TÜKETİLMEZ (yalnız native testler okur).
+    //
+    // Neden duruyor: LiFePO4'ün düz OCV bölgesinde bu tahmin KABADIR (bkz.
+    // BmsAlgo.h), ama BMS SoC alanı bir gün kaybolursa/geçersizleşirse elde
+    // tutulacak tek yedektir. Buraya bir tüketici bağlanacaksa ÖNCE
+    // VehicleData.h'deki tek-kaynak kuralı güncellenmelidir — aksi halde
+    // ekranda İKİ FARKLI yüzde görünür ve operatör hangisine güveneceğini
+    // bilemez (Y8'in kapatmak istediği tam da budur).
+    uint8_t socPercent;
 
     // Dengeleme (pasif deşarj) bayrakları. balanceFlag[i]=true => i. hücrenin
-    // deşarj direnci aktif edilmeli (o hücre fazla dolu).
+    // deşarj direnci aktif (o hücre fazla dolu).
+    //
+    // YALNIZCA GÖSTERİM — AKS DENGELEME YAPMAZ (Y8). Dengeleme cBMS24'ün
+    // DONANIM özelliğidir (pasif/dissipative, 200 mA @ 4.2 V, datasheet) ve
+    // BMS tarafından kendi başına yürütülür. Bu bayraklar bir KOMUT değildir;
+    // BmsNextionPacket yalnızca ekranda hangi hücrenin dengelendiğini
+    // göstermek için okur. AKS'ten BMS'e dengeleme komutu GÖNDERİLMEZ.
     bool balanceFlag[BMS_CELL_COUNT];
 
     uint8_t warningLevel;  // BMS_WARN_OK / WARNING / CRITICAL

@@ -162,6 +162,47 @@ def test_aks_telemetry_sanitize_exists_with_system_state_rule(aks_root):
     )
 
 
+def test_aks_single_soc_source(aks_root):
+    """Y8 (24.07.2026): ekranda ve telemetride TEK SoC gosterilir —
+    BMS'in KENDI raporladigi TEL_bmsSocHundredths (0xE000 byte[4:5],
+    DOGRULANDI). Uretici hesabi, ortalama gerilimden lineer tahminden
+    guvenilirdir (LiFePO4'un duz OCV bolgesinde tahmin KABADIR).
+
+    Sistemde SoC ureten UC yer var:
+      1. TEL_bmsSocHundredths   -> GOSTERILEN (telemetri alan 15 + Nextion)
+      2. TEL_bmsSoc2Hundredths  -> parse edilir, GOSTERILMEZ
+      3. BmsComputed::socPercent -> AKS'in tahmini, YEDEK, TUKETILMEZ
+
+    Bu bekci, 2 veya 3'un sessizce bir gosterim yoluna baglanmasini yakalar;
+    aksi halde ekranda IKI FARKLI yuzde gorunur ve operator hangisine
+    guvenecegini bilemez (Y8'in kapatmak istedigi durum).
+    """
+    tel = strip_c_comments(read(aks_root / "lib/Telemetry/Telemetry.cpp"))
+    assert "TEL_bmsSocHundredths" in tel, (
+        "Telemetry.cpp artik TEL_bmsSocHundredths gondermiyor — telemetrideki "
+        "SoC kaynagi degismis olabilir (Y8 tek-kaynak kurali)."
+    )
+    assert "TEL_bmsSoc2Hundredths" not in tel, (
+        "Telemetry.cpp SoC 2'yi (TEL_bmsSoc2Hundredths) hat formatina yazmis "
+        "gorunuyor — bu alan bilincli olarak GOSTERILMEZ (Y8). Iki farkli SoC "
+        "yayinlamak operatoru yaniltir; ayrica alan sayisi degisirse UKS "
+        "Decode_Line TUM frame'i reddeder."
+    )
+
+    main_cpp = strip_c_comments(read(aks_root / "src/main.cpp"))
+    assert "HMI_batteryDisplayValue" in main_cpp and "TEL_bmsSocHundredths" in main_cpp, (
+        "main.cpp'deki Nextion batarya gostergesi artik TEL_bmsSocHundredths'ten "
+        "beslenmiyor gorunuyor (Y8 tek-kaynak kurali)."
+    )
+    assert "socPercent" not in main_cpp, (
+        "main.cpp BmsComputed::socPercent'i (AKS'in ortalamadan lineer tahmini) "
+        "bir gosterim yoluna baglamis gorunuyor. Gosterilen SoC yalnizca BMS'in "
+        "kendi degeri olmalidir; bu alan YEDEK/tani amaclidir (bkz. BmsComputed.h). "
+        "Bilincli olarak degistirildiyse VehicleData.h'deki tek-kaynak kuralini ve "
+        "bu bekciyi AYNI COMMIT'TE guncelleyin."
+    )
+
+
 def test_aks_sysstate_derived_from_current(aks_root):
     """Y33 (24.07.2026): BMS'in SAGLIK durumunu yayinladigi bir CAN ID'ye
     ULASILAMADI ve aranmayacak. sysState alani (TEL 12) artik DOGRULANMIS

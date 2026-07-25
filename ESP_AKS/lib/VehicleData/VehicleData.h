@@ -51,8 +51,30 @@ struct TelemetryData {
     // Lithium Balance c-BMS — CAN ID 0xE000 (DOĞRULANDI, bkz. CAN_Message_Table.md)
     uint16_t TEL_bmsPackVoltageDeciV;  // byte[2:3], raw × 0.1 = V — DOĞRULANDI
     int32_t TEL_bmsCurrentCentiA;     // byte[0:1], int16 signed, raw × 10 = centi-A — DOĞRULANDI
-    uint16_t TEL_bmsSocHundredths;     // byte[4:5], uint16, raw × 0.01 = % (SoC 1) — DOĞRULANDI
-    uint16_t TEL_bmsSoc2Hundredths;    // byte[6:7], uint16, raw × 0.01 = % (SoC 2) — DOĞRULANDI
+
+    // --- SoC: TEK GÖSTERİM KAYNAĞI KURALI (Y8 kararı, 24.07.2026) ---
+    // Sistemde SoC üreten ÜÇ ayrı yer vardır; karışıklığı önlemek için hangisinin
+    // gösterildiği burada TEK NOKTADAN tanımlanır:
+    //
+    //   1. TEL_bmsSocHundredths  (AŞAĞIDA)  → *** GÖSTERİLEN TEK SoC ***
+    //      BMS'in KENDİ raporladığı değer. Üretici hesabı, kupon sayımı/
+    //      sıcaklık düzeltmesi içerir; ortalama gerilimden tahminden daha
+    //      güvenilirdir. Kaynak DOĞRULANDI (0xE000 byte[4:5]).
+    //      Tüketiciler: Telemetry.cpp sendStatus (TEL alan 15) ve main.cpp
+    //      HMI_batteryDisplayValue (Nextion batarya göstergesi).
+    //
+    //   2. TEL_bmsSoc2Hundredths (AŞAĞIDA)  → parse edilir, GÖSTERİLMEZ.
+    //      BMS'in ikinci SoC alanı. Bilinçli olarak hiçbir ekrana/telemetriye
+    //      BAĞLANMAMIŞTIR — iki farklı yüzde göstermek operatörü yanıltırdı.
+    //      Alan, ileride anlamı netleşirse (ör. "SoC sağlık/kalibrasyon")
+    //      kullanılabilsin diye parse edilmeye devam ediyor.
+    //
+    //   3. BmsAlgo::socFromAvgMv → BmsComputed::socPercent (lib/BmsAlgo)
+    //      AKS'in ortalama hücre geriliminden LİNEER tahmini. YEDEK/tanı
+    //      amaçlıdır ve bugün hiçbir gösterim yolunda TÜKETİLMEZ.
+    //      Bkz. BmsComputed.h — oradaki uyarı da aynı kuralı tekrarlar.
+    uint16_t TEL_bmsSocHundredths;     // byte[4:5], uint16, raw × 0.01 = % (SoC 1) — DOĞRULANDI — GÖSTERİLEN
+    uint16_t TEL_bmsSoc2Hundredths;    // byte[6:7], uint16, raw × 0.01 = % (SoC 2) — DOĞRULANDI — GÖSTERİLMEZ
 
     // Lithium Balance c-BMS — CAN ID 0xE001 (kısmi DOĞRULANDI)
     int8_t TEL_bmsTempHighestC;       // max(byte[6], byte[7]), int8 °C — DOĞRULANDI
