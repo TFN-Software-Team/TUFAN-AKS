@@ -17,6 +17,14 @@
 static constexpr const char* TAG = "VCU_LOGIC";
 static constexpr uint32_t TASK_PERIOD_MS = 20;
 
+#if MOTOR_DRIVER_PRESENT
+#warning "STOP_REQUEST yolu (run() icindeki kontrollu durdurma) sifir-tork ile \
+kontaktor acma arasinda VCU_CONTACTOR_OPEN_DELAY_MS BEKLEMIYOR. \
+handleEmergencyStop/handleFault bu beklemeyi yapar; motor surucusu artik \
+mevcut oldugundan STOP yolu da ayni sirayi izlemeli, yoksa kontaktorler yuk \
+altinda acilir (ark/kontak kaynagi riski). Bkz. Documents/MOTOR_ENTEGRASYON_NOTU.md."
+#endif
+
 namespace VcuLogic {
 
 // ---------------------------------------------------------------------------
@@ -352,6 +360,48 @@ void run() {
             // return yok, asagidaki isleme devam et
         }
 #endif
+
+        // KONTROLLÜ DURDURMA (ekran "DUR" butonu — HMI_CMD_STOP).
+        //
+        // E-STOP'un YERİNİ TUTMAZ: E-STOP yukarıda, kuyruğu bypass eden atomic
+        // bayrak yoluyla ve HER durumda işlenir; bu dal yalnız READY/DRIVE'da
+        // anlamlıdır ve bir arıza kaydı BIRAKMAZ. Diğer tüm durumlarda
+        // (INIT/IDLE/FAULT/EMERGENCY_STOP) YOK SAYILIR — özellikle FAULT'u
+        // TEMİZLEMEZ (fault'tan çıkış yalnız RESET + interlock ile olur).
+        //
+        // HIZ KONTROLÜ YOK (bilinçli karar): RESET'in aksine STOP, araç
+        // hareket halindeyken de kabul edilir. Gerekçe: sürücü bilinçli olarak
+        // durduruyor; hız şartı koymak, tam da durdurulması istenen anda
+        // komutu reddederdi. (RESET'te VCU_RESET_MAX_RPM şartı vardır çünkü o,
+        // bir arızadan ÇIKIŞTIR — farklı bir güvenlik sorusudur.)
+        if (event == VcuEvent::STOP_REQUEST) {
+            if (currentState == VcuState::READY || currentState == VcuState::DRIVE) {
+                // (1) Güvenli kapanış sırasının ilk adımı: sıfır tork iste.
+                //     MOTOR_DRIVER_PRESENT=0 iken gerçek frame ÜRETİLMEZ
+                //     (requestZeroTorque no-op'a düşer) — sıra yine de burada
+                //     kurulu ki motor entegrasyonunda eklenmesi unutulmasın.
+                requestZeroTorque();
+
+                // (2) Kontaktörleri AÇ. Açma her zaman ANINDA olmalıdır —
+                //     setBankStaggered (kademeli KAPATMA, inrush içindir)
+                //     BURADA KULLANILMAZ. allOff bank maskesini (S1 + S2 +
+                //     sürüş bankı) açar; flaşör/fan/far maske DIŞINDA olduğu
+                //     için etkilenmez (FAULT/E-STOP ile aynı davranış).
+                s_relays->allOff(false);
+
+                // (3) IDLE'a dön. transitionTo(IDLE) s_s1LastCmdInIdle'ı
+                //     "bilinmiyor" yapar; bir sonraki handleIdle tick'i S1'i
+                //     chargerActive durumuna göre deterministik olarak yeniden
+                //     yazar (şartname 8.2.a.iii).
+                ESP_LOGI(TAG, "STOP: kontrollu durdurma (%s -> IDLE)",
+                         currentState == VcuState::DRIVE ? "DRIVE" : "READY");
+                transitionTo(VcuState::IDLE);
+            } else {
+                ESP_LOGW(TAG, "STOP yok sayildi (durum %d — yalniz READY/DRIVE)",
+                         static_cast<int>(currentState));
+            }
+            return;
+        }
 
         // State-specific event handling
         switch (currentState) {

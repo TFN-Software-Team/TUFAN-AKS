@@ -36,7 +36,19 @@ enum class VcuEvent : uint8_t {
     EMERGENCY_STOP = 3,
     FAULT_DETECTED = 4,
     RESET = 5,
-    HEADLIGHT_TOGGLE = 6
+    HEADLIGHT_TOGGLE = 6,
+    // READY/DRIVE -> IDLE KONTROLLÜ dönüş (ekran "DUR" butonu, HMI_CMD_STOP).
+    //
+    // E-STOP'un YERİNİ TUTMAZ. Farkları bilerek keskin tutuldu:
+    //   E-STOP : acil; HER durumda çalışır, olay kuyruğunu BYPASS eder (atomic
+    //            bayrak), EMERGENCY_STOP durumuna geçer, RESET interlock'u ister.
+    //   STOP   : normal; YALNIZ READY ve DRIVE'da anlamlıdır, kuyruktan normal
+    //            sırayla işlenir, IDLE'a döner ve arıza kaydı BIRAKMAZ.
+    //
+    // NOT: değer 6 DEĞİL 7 — 6 zaten HEADLIGHT_TOGGLE'a ait. Bu enum DAHİLİDİR
+    // (hat üzerinde görünmez); ekranın gönderdiği komut numarası ayrıdır ve
+    // SystemConfig.h'de HMI_CMD_STOP = 6 olarak tanımlıdır.
+    STOP_REQUEST = 7
 };
 
 // ---------------------------------------------------------------------------

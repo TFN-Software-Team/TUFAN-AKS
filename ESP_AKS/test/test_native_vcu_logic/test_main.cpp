@@ -173,6 +173,17 @@ extern void test_derating_cell_voltage_realistic_nominal_is_nominal(void);
 extern void test_derating_multiple_warnings_worst_case_wins(void);
 extern void test_derating_two_warning_tier_signals_stay_at_warning_tier(void);
 
+// BOLUM C — kontrollu durdurma / ekran "DUR" butonu (test_stop_request.cpp)
+extern void test_stop_from_ready_returns_to_idle(void);
+extern void test_stop_from_drive_returns_to_idle(void);
+extern void test_stop_opens_contactors(void);
+extern void test_stop_does_not_use_staggered_bank_close(void);
+extern void test_stop_in_idle_is_ignored(void);
+extern void test_stop_in_fault_does_not_clear_fault(void);
+extern void test_stop_in_estop_does_not_downgrade_safety_state(void);
+extern void test_start_works_again_after_stop(void);
+extern void test_estop_still_works_from_drive_after_stop_feature(void);
+
 // Faz 0 sanity
 static void test_smoke_arithmetic(void) {
     TEST_ASSERT_EQUAL_INT(2, 1 + 1);
@@ -344,6 +355,17 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_derating_cell_voltage_realistic_nominal_is_nominal);
     RUN_TEST(test_derating_multiple_warnings_worst_case_wins);
     RUN_TEST(test_derating_two_warning_tier_signals_stay_at_warning_tier);
+
+    // BOLUM C — kontrollu durdurma (ekran "DUR" butonu, HMI_CMD_STOP)
+    RUN_TEST(test_stop_from_ready_returns_to_idle);
+    RUN_TEST(test_stop_from_drive_returns_to_idle);
+    RUN_TEST(test_stop_opens_contactors);
+    RUN_TEST(test_stop_does_not_use_staggered_bank_close);
+    RUN_TEST(test_stop_in_idle_is_ignored);
+    RUN_TEST(test_stop_in_fault_does_not_clear_fault);
+    RUN_TEST(test_stop_in_estop_does_not_downgrade_safety_state);
+    RUN_TEST(test_start_works_again_after_stop);
+    RUN_TEST(test_estop_still_works_from_drive_after_stop_feature);
 
     return UNITY_END();
 }

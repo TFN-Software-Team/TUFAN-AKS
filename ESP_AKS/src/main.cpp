@@ -498,8 +498,24 @@ void vTask_HMI_Display(void *pvParameters) {
                 ESP_LOGI(TAG, "HMI command: FAR (Headlight) toggle request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::HEADLIGHT_TOGGLE);
                 break;
+            case HMI_CMD_STOP:
+                // Ekran "DUR" butonu (çerçeve 0x5A 0x06 0xF9) — READY/DRIVE'dan
+                // IDLE'a KONTROLLÜ dönüş.
+                //
+                // Bu, 438de39'daki "ekran aracı KONTROL EDEMEZ" kararının
+                // BİLİNÇLİ ve TEK istisnasıdır. Gerekçe: o karar ekranın aracı
+                // ÇALIŞTIRMASINI/SÜRMESİNİ engellemek içindi. STOP tersi
+                // yöndedir — aracı yalnızca DAHA GÜVENLİ bir duruma (kontaktörler
+                // açık, IDLE) götürebilir; hiçbir koşulda enerjilendiremez veya
+                // sürüşe sokamaz. Bu komuttan önce READY/DRIVE'dan çıkmanın tek
+                // yolu E-STOP'a basmaktı ve normal bir duruş için bu aşırı
+                // tepkiydi. E-STOP'un yerini TUTMAZ (bkz. VcuEvent::STOP_REQUEST).
+                ESP_LOGI(TAG, "HMI command: STOP (kontrollu durdurma) request");
+                VcuLogic::postEvent(VcuLogic::VcuEvent::STOP_REQUEST);
+                break;
             default:
-                // DİĞER TÜM EKRAN KOMUTLARI İPTAL EDİLDİ! Ekran aracı KONTROL EDEMEZ.
+                // DİĞER TÜM EKRAN KOMUTLARI İPTAL EDİLDİ! Ekran aracı KONTROL EDEMEZ
+                // (START/RESET/E-STOP/DRIVE_ENABLE ekrandan GELMEZ — 438de39).
                 // VcuLogic otomatik geçiş yapar.
                 ESP_LOGW(TAG, "Ignored/Unknown HMI command received: %d", HMI_incomingCommand);
                 break;

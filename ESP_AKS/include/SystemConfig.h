@@ -202,6 +202,19 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // GÖSTERİR (far.pic). Bu numara ileride başka bir komuta atanırsa, eski ekran
 // projelerinin hâlâ gönderdiği 0x5A 0x05 0xFA çerçevesiyle karışır; o yüzden
 // KALICI OLARAK boş bırakılır (bkz. Documents/HMI_Field_Map.md).
+//
+// READY/DRIVE'dan IDLE'a KONTROLLÜ dönüş (ekran "DUR" butonu, çerçeve
+// 0x5A 0x06 0xF9). Bu komuttan ÖNCE READY/DRIVE'dan çıkmanın tek yolu E-STOP
+// veya FAULT'tu; normal "dur / bataryayı ayır" için E-STOP'a basmak aşırı
+// tepkiydi (E-STOP kaydı düşer, RESET interlock'u gerekir).
+//
+// STOP, E-STOP'un YERİNİ TUTMAZ — ikisi karıştırılmamalıdır:
+//   E-STOP : acil, her durumda çalışır, kontaktörleri ANINDA açar, kuyruğu
+//            bypass eder (atomic bayrak), EMERGENCY_STOP durumuna geçer.
+//   STOP   : normal/kontrollü, yalnız READY ve DRIVE'da anlamlıdır, güvenli
+//            kapanış sırasını izler (önce sıfır tork, sonra kontaktör) ve
+//            IDLE'a döner — bir arıza kaydı BIRAKMAZ.
+#define HMI_CMD_STOP 6
 
 // --- LoRa E22-400T30D-V2 (SX1268, UART & Kontrol) ---
 // Pin-uyumlu E32-433T30D yerine geçti; pin atamaları DEĞİŞMEDİ. Config
