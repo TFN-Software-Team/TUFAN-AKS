@@ -18,7 +18,11 @@
 // bütçesi asla aşılmaz (bkz. SystemConfig.h static_assert). Ekran, tespit
 // edilemeyen bir reset sonrasında bile en kötü ihtimalle
 //     HMI_RESYNC_FIELD_COUNT × HMI_RESYNC_INTERVAL_MS
-// içinde kendini toparlar (12 × 500 ms = 6 sn).
+// içinde kendini toparlar (13 × 500 ms = 6.5 sn). 13 slotun 1'i (MOTOR_ERR)
+// ATIL'dır — gönderimi yoruma alındı (bkz. DisplayHMI.cpp) — yani fiilen
+// yenilenen alan sayısı 12'dir; slot yerinde bırakıldı çünkü enum sırası ile
+// updateScreen gönderim sırası arasındaki birebir eşleşme invaryantını
+// kaydırmak riskli, tam tur süresi ise değişmiyor.
 //
 // Tick birimi agnostiktir (çağıran aynı birimi verir); unsigned çıkarma
 // (now - lastResyncTick) sayaç taşmasında da doğru sonuç verir — bkz.
@@ -41,11 +45,12 @@ enum HMI_ResyncField : uint8_t {
     HMI_RESYNC_PACKV,
     HMI_RESYNC_PACKA,
     HMI_RESYNC_STATE,
-    HMI_RESYNC_MOTOR_ERR,
+    HMI_RESYNC_MOTOR_ERR,  // ATIL SLOT — gönderim yoruma alındı (bkz. DisplayHMI.cpp)
     HMI_RESYNC_VALID,
     HMI_RESYNC_CONTACTOR,
+    HMI_RESYNC_CHG,         // chg.val — şarj/deşarj durumu (ChargeState.h)
     HMI_RESYNC_HEADLIGHT,   // far.pic durum göstergesi (şartname B2 9.19.c)
-    HMI_RESYNC_FIELD_COUNT  // = 12
+    HMI_RESYNC_FIELD_COUNT  // = 13 (1'i atıl: MOTOR_ERR → fiilen 12 alan yenilenir)
 };
 
 // Resync vadesi geldiyse zorla gönderilecek alanın indeksini (0..fieldCount-1)

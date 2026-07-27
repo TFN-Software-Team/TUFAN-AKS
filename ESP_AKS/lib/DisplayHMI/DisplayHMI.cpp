@@ -162,13 +162,23 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
         return HMI_forceRefresh || HMI_resyncField == (int)HMI_field;
     };
 
-    char HMI_currentErrorText[16];
-    char HMI_lastErrorText[16];
-
-    HMI_formatErrorText(HMI_data.HMI_motorErrorFlags, HMI_currentErrorText,
-                        sizeof(HMI_currentErrorText));
-    HMI_formatErrorText(HMI_lastScreenData.HMI_motorErrorFlags,
-                        HMI_lastErrorText, sizeof(HMI_lastErrorText));
+    // DEVRE DIŞI (MOTOR_DRIVER_PRESENT=0): 0x200 frame'ini bugün hall-effect hız
+    // sensörü üretiyor ve data[7]=0x00 gönderiyor — bu alan yapısal olarak hep
+    // "0x00" basıyordu. Üstelik ham hex, bit anlamları belgelenmemiş
+    // (CAN_Message_Table.md byte 7: bit0=çalışıyor, bit[7:1]=hata, tek tek anlam
+    // BİLİNMİYOR) ve "hata yok" ile "veri yok" ayrımı bu alanda YOK — o ayrım
+    // `valid` alanında (VALID/INVALID/TIMEOUT).
+    // GERİ AÇMADAN ÖNCE: (1) sürücü dokümanından bit haritasını çıkar ve
+    // CAN_Message_Table.md'ye işle, (2) HMI_formatErrorText'i insan-okur metne
+    // çevir, (3) veri yokken "--" sentinel'i bas, (4) txt_maxl ve
+    // HMI_RESYNC_CMD_MAX_BYTES bütçesini yeni metin uzunluğuna göre kontrol et.
+    // char HMI_currentErrorText[16];
+    // char HMI_lastErrorText[16];
+    //
+    // HMI_formatErrorText(HMI_data.HMI_motorErrorFlags, HMI_currentErrorText,
+    //                     sizeof(HMI_currentErrorText));
+    // HMI_formatErrorText(HMI_lastScreenData.HMI_motorErrorFlags,
+    //                     HMI_lastErrorText, sizeof(HMI_lastErrorText));
 
     HMI_sendNumericIfChanged("speed", HMI_data.HMI_currentSpeed,
                              HMI_lastScreenData.HMI_currentSpeed,
@@ -200,8 +210,10 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
     HMI_sendTextIfChanged("state", HMI_getStateText(HMI_data.HMI_vcuState),
                           HMI_getStateText(HMI_lastScreenData.HMI_vcuState),
                           HMI_force(HMI_RESYNC_STATE));
-    HMI_sendTextIfChanged("motorErr", HMI_currentErrorText, HMI_lastErrorText,
-                          HMI_force(HMI_RESYNC_MOTOR_ERR));
+    // DEVRE DIŞI — yukarıdaki gerekçeye bakınız. HMI_RESYNC_MOTOR_ERR enum
+    // girdisi ATIL SLOT olarak yerinde bırakıldı (sıra kaydırmamak için).
+    // HMI_sendTextIfChanged("motorErr", HMI_currentErrorText, HMI_lastErrorText,
+    //                       HMI_force(HMI_RESYNC_MOTOR_ERR));
     HMI_sendTextIfChanged("valid",
                           HMI_getValidityText(HMI_data.HMI_motorDataValid,
                                               HMI_data.HMI_motorTimeoutActive),
@@ -214,6 +226,25 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
                           HMI_getContactorText(
                               HMI_lastScreenData.HMI_contactorClosed),
                           HMI_force(HMI_RESYNC_CONTACTOR));
+
+    // Şarj/deşarj durumu göstergesi: "chg.val=<0..3>" — ekrandaki tm0 timer'ı
+    // bunu chgtxt metnine çevirir (0=Bosta, 1=Sarj Oluyor, 2=Desarj, 3="--").
+    // Karar SAF hmi_chargeState'te (lib/HMIHelpers/ChargeState.h); burada
+    // yalnız mevcut ve önceki snapshot için ayrı ayrı hesaplanıp
+    // change-compare'a verilir (packv/packa deseniyle birebir aynı).
+    HMI_sendNumericIfChanged(
+        "chg",
+        hmi_chargeState(HMI_data.HMI_bmsDataValid,
+                        HMI_data.HMI_bmsTimeoutActive,
+                        HMI_data.HMI_chargerActive,
+                        HMI_data.HMI_bmsPackCurrentCentiA,
+                        HMI_CHG_DISCHARGE_DEADBAND_CENTI_A),
+        hmi_chargeState(HMI_lastScreenData.HMI_bmsDataValid,
+                        HMI_lastScreenData.HMI_bmsTimeoutActive,
+                        HMI_lastScreenData.HMI_chargerActive,
+                        HMI_lastScreenData.HMI_bmsPackCurrentCentiA,
+                        HMI_CHG_DISCHARGE_DEADBAND_CENTI_A),
+        HMI_force(HMI_RESYNC_CHG));
 
     // Far durumu göstergesi (şartname B2 9.19.c): "far.pic=<ID>" — bool durum
     // Nextion resource ID'sine eşlenir (HMI_PIC_HEADLIGHT_ON/OFF, SystemConfig.h).

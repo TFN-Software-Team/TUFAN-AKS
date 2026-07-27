@@ -92,9 +92,18 @@ struct TelemetryData {
     //      CAN_CHARGER_TIMEOUT_MS freshness dahil) — BİRİNCİL, ama opsiyonel akış.
     //   2. Akım işareti pozitif mi (Y20: şarjda +9.8 A) — YEDEK gösterge;
     //      charger CAN'e hiç konuşmuyorsa şarjı yine de yakalar.
-    // YALNIZCA DAHİLİ kullanım: VcuLogic S1/S2 mod anahtarlaması girdisi
-    // (RELAY_ROLES_ASSIGNED=1, şartname 8.2.a.iii). LoRa wire formatına
-    // (Telemetry.cpp sendStatus, 19 alan v2) ASLA serialize EDİLMEZ.
+    // YALNIZCA DAHİLİ kullanım — İKİ meşru tüketici vardır:
+    //   1. VcuLogic S1/S2 mod anahtarlaması girdisi (RELAY_ROLES_ASSIGNED=1,
+    //      şartname 8.2.a.iii),
+    //   2. HMI gösterimi: Nextion `chg` alanı (şarj/deşarj/boşta) —
+    //      src/main.cpp vTask_HMI_Display → HMI_DisplayData::HMI_chargerActive
+    //      → hmi_chargeState (lib/HMIHelpers/ChargeState.h). Yalnız GÖSTERİM;
+    //      hiçbir FAULT/kontaktör kararına girmez.
+    // "DAHİLİ" burada "yalnız tek tüketici" DEĞİL, "ESP'nin içinde kalır"
+    // demektir: LoRa wire formatına (Telemetry.cpp sendStatus, 19 alan v2)
+    // ASLA serialize EDİLMEZ. Bu ayrım kritiktir — contract-drift testleri
+    // (tools/e2e) alan sayısını kilitler; yeni bir dahili tüketici eklemek
+    // wire formatına alan eklemek DEĞİLDİR.
     // Charger akışı opsiyoneldir — false, FAULT değildir.
     bool TEL_chargerActive = false;
 

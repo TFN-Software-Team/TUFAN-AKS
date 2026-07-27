@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ChargeState.h"
 #include "HMIHelpers.h"
 #include "HMITouchParser.h"
 #include "NextionResetDetect.h"
@@ -21,6 +22,18 @@ struct HMI_DisplayData {
     int16_t HMI_bmsTemperatureC;
     uint16_t HMI_bmsPackVoltageDeciV;
     int32_t HMI_bmsPackCurrentCentiA;
+    // BMS tazeliği — `chg` (şarj/deşarj göstergesi) kararının NO_DATA dalı için
+    // ŞART (hmi_chargeState, lib/HMIHelpers/ChargeState.h). Motor tarafındaki
+    // HMI_motorDataValid/HMI_motorTimeoutActive bunun YERİNE KULLANILAMAZ:
+    // 0x200 frame'ini bugün hall-effect hız sensörü üretiyor, BMS E000/E001
+    // akışından tamamen bağımsız. Motor bayrağına bakılsaydı BMS sustuğu halde
+    // ekran bayat akımdan "Bosta"/"Desarj" türetirdi.
+    bool HMI_bmsDataValid;
+    bool HMI_bmsTimeoutActive;
+    // Araç şarjda mı (TEL_chargerActive). Ekran bunu yalnız GÖSTERİR; şarj
+    // tespitinin kendisi CanManager'da yapılır (charger frame tazeliği VEYA
+    // ChargeDetect akım-işareti tespiti, OR'lu) — burada YENİDEN ÜRETİLMEZ.
+    bool HMI_chargerActive;
     bool HMI_contactorClosed;
     HMI_VcuState HMI_vcuState;
     // Far durumu (şartname B2 9.19.c) — ekran yalnız GÖSTERİR (far.pic), farı

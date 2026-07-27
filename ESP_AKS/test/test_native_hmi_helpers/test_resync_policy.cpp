@@ -38,16 +38,25 @@ void test_resync_single_field_per_trigger(void) {
                                                    INTERVAL));
 }
 
-// Alan sayısı 12 (11 sayısal/metin + far.pic durum göstergesi) ve far.pic
-// FIELD_COUNT'tan hemen önceki (son) alandır — enum sırası updateScreen
-// gönderim sırasıyla birebir aynı olmalı (far.pic en sonda gönderilir).
-void test_resync_field_count_is_twelve_headlight_last(void) {
-    TEST_ASSERT_EQUAL_INT(12, (int)HMI_RESYNC_FIELD_COUNT);
+// Slot sayısı 13 (11 sayısal/metin + chg.val + far.pic durum göstergesi) ve
+// far.pic FIELD_COUNT'tan hemen önceki (SON) alandır — enum sırası
+// updateScreen gönderim sırasıyla birebir aynı olmalı (far.pic en sonda
+// gönderilir). "headlight last" iddiası, yeni alan eklendiğinde de KORUNUR:
+// yeni slotlar HEADLIGHT'ın ÖNÜNE eklenmelidir.
+// NOT: 13 slotun 1'i (HMI_RESYNC_MOTOR_ERR) ATIL — gönderimi yoruma alındı
+// (MOTOR_DRIVER_PRESENT=0, bkz. DisplayHMI.cpp); fiilen yenilenen alan sayısı
+// 12'dir. Slot, enum↔gönderim sırası eşleşmesini kaydırmamak için duruyor ve
+// tam tur süresini (13 × 500 ms = 6.5 sn) değiştirmiyor.
+void test_resync_field_count_is_thirteen_headlight_last(void) {
+    TEST_ASSERT_EQUAL_INT(13, (int)HMI_RESYNC_FIELD_COUNT);
     TEST_ASSERT_EQUAL_INT((int)HMI_RESYNC_FIELD_COUNT - 1,
                           (int)HMI_RESYNC_HEADLIGHT);
+    // chg, contactor ile headlight ARASINDA olmalı (updateScreen sırası).
+    TEST_ASSERT_EQUAL_INT((int)HMI_RESYNC_CONTACTOR + 1, (int)HMI_RESYNC_CHG);
+    TEST_ASSERT_EQUAL_INT((int)HMI_RESYNC_CHG + 1, (int)HMI_RESYNC_HEADLIGHT);
 }
 
-// Ardışık vadelerde alanlar updateScreen sırasıyla (0..11) döner, sonra
+// Ardışık vadelerde alanlar updateScreen sırasıyla (0..12) döner, sonra
 // başa sarar.
 void test_resync_round_robin_order_and_wrap(void) {
     uint32_t last = 0;
@@ -67,10 +76,10 @@ void test_resync_round_robin_order_and_wrap(void) {
 }
 
 // ANA GARANTİ: 10 Hz görev simülasyonunda, tam tur süresi
-// (HMI_RESYNC_FIELD_COUNT × INTERVAL) + 1 aralıklık marj içinde 12 alanın
+// (HMI_RESYNC_FIELD_COUNT × INTERVAL) + 1 aralıklık marj içinde 13 slotun
 // HER BİRİ en az bir kez zorla gönderilir — tespit edilemeyen bir Nextion
-// reset'i sonrasında ekranın kendini toparlama üst sınırı budur (12 × 500 ms
-// = 6 sn).
+// reset'i sonrasında ekranın kendini toparlama üst sınırı budur (13 × 500 ms
+// = 6.5 sn).
 void test_resync_covers_all_fields_within_full_cycle(void) {
     uint32_t last = 0;
     uint8_t next = 0;

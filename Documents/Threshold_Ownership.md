@@ -119,8 +119,37 @@ mantığı `lib/VcuLogic/HeadlightSwitch.h` (native test edilir).
 > Far durumunun tek sahibi ESP'dir (`VcuLogic::isHeadlightOn`); ekran farı
 > KONTROL ETMEZ, yalnız GÖSTERİR (`far.pic`) ve yerel durum TUTMAZ — Nextion
 > brown-out reset'inde ikon gerçek durumla ters düşmesin diye (round-robin
-> resync `far`'ı da kapsar, ≤ 6 sn içinde toparlanır). Bkz.
+> resync `far`'ı da kapsar, ≤ 6.5 sn içinde toparlanır). Bkz.
 > `Documents/RELAY_CHANNEL_TABLE.md` ve `Documents/HMI_Field_Map.md`.
+
+---
+
+## 2d. Şarj/Deşarj Göstergesi Ölü Bandı (CONFIG — gösterim, güvenlik eşiği DEĞİL)
+
+Bu satır bir FAULT/kontaktör kararı DEĞİLDİR; yalnızca Nextion `chg` alanındaki
+"Bosta" ile "Desarj" metnini birbirinden ayırır. Saf karar mantığı
+`lib/HMIHelpers/ChargeState.h::hmi_chargeState` (native test edilir:
+`test/test_native_hmi_helpers/test_charge_state.cpp`).
+
+| Sabit | Değer | Birim | Tüketici | Bağlı Sinyal | Durum |
+| --- | --- | --- | --- | --- | --- |
+| `HMI_CHG_DISCHARGE_DEADBAND_CENTI_A` | `100` (1.0 A) | centi-A | `DisplayHMI::updateScreen` → `hmi_chargeState` → `chg.val` | `TEL_bmsCurrentCentiA` | **CONFIG — saha kalibrasyonu bekliyor** — 📺 GÖSTERİM; FAULT/kontaktör DEĞİL |
+
+> **NEDEN GEREKLİ:** saha ölçümünde (Y20) boşta akım **-0.1 A = -10 centi-A**
+> ölçülüyor. Ölü bant olmadan araç dururken ekran kalıcı olarak "Desarj"
+> yazar. `100` (1.0 A) eşiği boştaki -10'un belirgin üstünde ve gözlenen sürüş
+> akımının (-560 centi-A) çok altındadır — ikisini kesin ayırır.
+>
+> **BU BİR AŞIRI AKIM KORUMASI DEĞİLDİR.** Deşarj akımının güvenlik eşikleri
+> ayrı ve otoriterdir: `BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A` (900) ve
+> `BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A` (1500) — bkz. bölüm 2 tablosu.
+> Bu ölü bandı değiştirmek hiçbir güvenlik davranışını etkilemez, yalnız
+> ekrandaki metnin eşiğini kaydırır.
+>
+> Şarj yönü için ayrı bir eşik YOKTUR ve olmamalıdır: `chg`'nin CHARGING dalı
+> `TEL_chargerActive` bayrağını doğrudan tüketir (charger frame tazeliği VEYA
+> `ChargeDetect` — eşik `CHARGE_DETECT_CURRENT_CENTI_A=200` + debounce +
+> hareketsizlik). "Şarjda mı?" sorusunun ikinci bir tanımı üretilmemelidir.
 
 ---
 

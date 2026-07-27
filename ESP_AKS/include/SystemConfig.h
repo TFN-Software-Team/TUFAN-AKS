@@ -122,19 +122,27 @@ typedef int esp_reset_reason_t;
 // --- HMI Round-Robin Resync (reset dedektörünün emniyet katmanı) ---
 // Startup event'i brown-out sırasında RX hattında bozulup KAYBOLABİLİR —
 // o durumda yukarıdaki dedektör hiç tetiklenmez ve ekran kalıcı yarı-dolu
-// kalırdı. Bu katman olaydan bağımsızdır: her bu aralıkta bir, 12 skalar
-// alandan (11 sayısal/metin + far.pic durum göstergesi) yalnızca SIRADAKİ
-// TEKİ cache'e bakılmaksızın zorla gönderilir (saf karar mantığı:
+// kalırdı. Bu katman olaydan bağımsızdır: her bu aralıkta bir, 13 skalar
+// slottan (11 sayısal/metin + chg.val + far.pic durum göstergesi) yalnızca
+// SIRADAKİ TEKİ cache'e bakılmaksızın zorla gönderilir (saf karar mantığı:
 // lib/DisplayHMI/ResyncPolicy.h::hmi_resync_due_field).
 //
+// ATIL SLOT: 13 slotun 1'i (HMI_RESYNC_MOTOR_ERR) fiilen boştur — motorErr
+// gönderimi yoruma alındı (MOTOR_DRIVER_PRESENT=0, bkz. DisplayHMI.cpp).
+// Yani GERÇEKTEN yenilenen alan sayısı 12'dir; slot, enum sırası ile
+// updateScreen gönderim sırası arasındaki birebir eşleşmeyi kaydırmamak için
+// yerinde bırakıldı. Tam tur süresi bundan ETKİLENMEZ (aşağıya bkz.).
+//
 // TOPARLANMA SÜRESİ: tam tur = HMI_RESYNC_FIELD_COUNT × bu aralık
-// = 12 × 500 ms = 6 sn — ekran, tespit edilemeyen bir reset sonrası en
+// = 13 × 500 ms = 6.5 sn — ekran, tespit edilemeyen bir reset sonrası en
 // geç bu süre içinde kendini onarır (insan/gösterge zaman ölçeğinde kabul
-// edilebilir; daha agresif değerler UART bütçesinden yer).
+// edilebilir; daha agresif değerler UART bütçesinden yer). Atıl slot turda
+// yerini korur, yalnızca o tetikte hiçbir şey gönderilmez.
 //
 // NOT: static_assert FORMÜLÜ (aşağıda) alan sayısından BAĞIMSIZDIR — tetik
-// başına TEK alan gönderildiğinden tepe UART yükü alan sayısı 11→12 olsa da
-// değişmez; yalnız toparlanma turu bir alan kadar uzar.
+// başına TEK alan gönderildiğinden tepe UART yükü alan sayısı 12→13 olsa da
+// değişmez; yalnız toparlanma turu bir alan kadar uzar. ("chg.val=3" = 12 B,
+// HMI_RESYNC_CMD_MAX_BYTES=26 sınırının çok altında.)
 #define HMI_RESYNC_INTERVAL_MS 500U
 
 // Tek resync komutunun KÖTÜ-DURUM bayt boyutu (0xFF×3 end-byte DAHİL).
@@ -806,6 +814,18 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // VCU_RESET_MAX_RPM (50 RPM ≈ 0.5 km/h) ile aynı "hareketsiz" ölçütü
 // kullanılır — iki yerde iki farklı durma tanımı olmasın.
 #define CHARGE_DETECT_MAX_RPM VCU_RESET_MAX_RPM
+
+// --- Nextion `chg` alanı: deşarj gösterimi ölü bandı ---
+// Bu bir GÖSTERİM eşiğidir, GÜVENLİK eşiği DEĞİLDİR: yalnızca ekrandaki
+// "Bosta" / "Desarj" metnini ayırır (hmi_chargeState, lib/HMIHelpers/
+// ChargeState.h). FAULT / kontaktör / READY kararlarına HİÇ girmez — aşırı akım
+// koruması ayrı ve otoriter eşiklerdedir (BMS_WARN_/CRITICAL_MAX_DISCHARGE_
+// CURRENT_CENTI_A, bkz. Documents/Threshold_Ownership.md bölüm 2).
+// NEDEN GEREKLİ: saha ölçümünde (Y20) boşta akım -0.1 A = -10 centi-A'dır.
+// Ölü bant olmadan araç dururken ekran kalıcı olarak "Desarj" yazar.
+// 1.0 A, boştaki -10'un belirgin üstünde ve gözlenen sürüş akımının
+// (-560 centi-A) çok altındadır — ikisini kesin ayırır.
+#define HMI_CHG_DISCHARGE_DEADBAND_CENTI_A 100  // 1.0 A — CONFIG, saha kalibrasyonu bekliyor
 
 // UKS'in aralik-disi alan sanitizasyonu (yalnizca vTask_LoRa_UKS icindeki uplink asamasinda yapilir)
 // tetiklendiginde ayni durum tekrar tekrar olussa bile log spam'ini

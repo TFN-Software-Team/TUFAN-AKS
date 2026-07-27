@@ -68,8 +68,21 @@ extern void test_reset_detect_prefix_backtracking(void);
 extern void test_reset_detect_mixed_with_touch_frame(void);
 extern void test_reset_detect_manual_reset_clears_progress(void);
 
+// `chg` şarj/deşarj durumu — ChargeState.h
+extern void test_chg_invalid_bms_overrides_charger_active(void);
+extern void test_chg_timeout_active_returns_no_data(void);
+extern void test_chg_charger_active_returns_charging(void);
+extern void test_chg_charger_active_wins_over_negative_current(void);
+extern void test_chg_driving_current_returns_discharging(void);
+extern void test_chg_idle_current_within_deadband_returns_idle(void);
+extern void test_chg_current_exactly_at_deadband_is_discharging(void);
+extern void test_chg_current_just_inside_deadband_is_idle(void);
+extern void test_chg_zero_current_returns_idle(void);
+extern void test_chg_positive_current_without_charger_flag_is_idle(void);
+extern void test_chg_enum_values_match_nextion_contract(void);
+
 // Round-robin resync politikası — ResyncPolicy.h
-extern void test_resync_field_count_is_twelve_headlight_last(void);
+extern void test_resync_field_count_is_thirteen_headlight_last(void);
 extern void test_resync_not_due_returns_no_field(void);
 extern void test_resync_single_field_per_trigger(void);
 extern void test_resync_round_robin_order_and_wrap(void);
@@ -148,7 +161,19 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_reset_detect_mixed_with_touch_frame);
     RUN_TEST(test_reset_detect_manual_reset_clears_progress);
 
-    RUN_TEST(test_resync_field_count_is_twelve_headlight_last);
+    RUN_TEST(test_chg_invalid_bms_overrides_charger_active);
+    RUN_TEST(test_chg_timeout_active_returns_no_data);
+    RUN_TEST(test_chg_charger_active_returns_charging);
+    RUN_TEST(test_chg_charger_active_wins_over_negative_current);
+    RUN_TEST(test_chg_driving_current_returns_discharging);
+    RUN_TEST(test_chg_idle_current_within_deadband_returns_idle);
+    RUN_TEST(test_chg_current_exactly_at_deadband_is_discharging);
+    RUN_TEST(test_chg_current_just_inside_deadband_is_idle);
+    RUN_TEST(test_chg_zero_current_returns_idle);
+    RUN_TEST(test_chg_positive_current_without_charger_flag_is_idle);
+    RUN_TEST(test_chg_enum_values_match_nextion_contract);
+
+    RUN_TEST(test_resync_field_count_is_thirteen_headlight_last);
     RUN_TEST(test_resync_not_due_returns_no_field);
     RUN_TEST(test_resync_single_field_per_trigger);
     RUN_TEST(test_resync_round_robin_order_and_wrap);

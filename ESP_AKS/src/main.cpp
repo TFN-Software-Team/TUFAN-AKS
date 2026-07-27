@@ -342,6 +342,15 @@ void vTask_HMI_Display(void *pvParameters) {
                 TEL_data.TEL_bmsPackVoltageDeciV;
             HMI_screenData.HMI_bmsPackCurrentCentiA =
                 TEL_data.TEL_bmsCurrentCentiA;
+            // `chg` (şarj/deşarj göstergesi) girdileri — karar SAF
+            // hmi_chargeState'te (lib/HMIHelpers/ChargeState.h), burada yalnız
+            // taşınır. Yukarıdaki bayatlık kontrolü (SENSOR_DATA_MAX_AGE_MS)
+            // TEL_bmsDataValid'i zaten false'a çektiğinden NO_DATA dalı
+            // kendiliğinden doğru çalışır; kuyruk hiç okunamazsa da
+            // HMI_screenData {} ile sıfırlandığı için varsayılan NO_DATA'dır.
+            HMI_screenData.HMI_bmsDataValid = TEL_data.TEL_bmsDataValid;
+            HMI_screenData.HMI_bmsTimeoutActive = TEL_data.TEL_bmsTimeoutActive;
+            HMI_screenData.HMI_chargerActive = TEL_data.TEL_chargerActive;
         }
     }
 
