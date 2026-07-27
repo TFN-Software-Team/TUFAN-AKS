@@ -199,10 +199,11 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #endif
 
 // --- HMI Command IDs ---
-#define HMI_CMD_START 1
-#define HMI_CMD_RESET 2
-#define HMI_CMD_EMERGENCY_STOP 3
-#define HMI_CMD_DRIVE_ENABLE 4
+#define HMI_CMD_START          1  // 0x5A 0x01 0xFE -> START Request
+#define HMI_CMD_DRIVE_ENABLE   2  // 0x5A 0x02 0xFD -> DRIVE Request
+#define HMI_CMD_RESET          3  // 0x5A 0x03 0xFC -> RESET Request
+#define HMI_CMD_EMERGENCY_STOP 4  // 0x5A 0x04 0xFB -> EMERGENCY STOP Request
+
 // Komut 5 — HMI_CMD_HEADLIGHT_TOGGLE (far ekran butonu, çerçeve 0x5A 0x05 0xFA).
 //
 // ⚠️ AÇIK ÇELİŞKİ (25.07.2026 tespiti — bkz. BENI_OKU.md):
