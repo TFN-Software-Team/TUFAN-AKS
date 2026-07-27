@@ -44,8 +44,8 @@ void test_allOff_preserves_flasher_channel(void) {
     }
     // Donanım seviyesi (active-low): state=0x200 → hw=~0x200 → OLATA=0xFF,
     // OLATB=0xFD (bit1=kanal9 LOW: flaşör hâlâ enerjili).
-    TEST_ASSERT_EQUAL_HEX8(0xFF, fake_spi_get_reg(MCP23S17_OLATA));
-    TEST_ASSERT_EQUAL_HEX8(0xFD, fake_spi_get_reg(MCP23S17_OLATB));
+    TEST_ASSERT_EQUAL_HEX8(0xDF, fake_spi_get_reg(MCP23S17_OLATA));
+    TEST_ASSERT_EQUAL_HEX8(0xFF, fake_spi_get_reg(MCP23S17_OLATB));
 }
 
 // allOn, sönük flaşörü/fanı/farı YAKMAZ: yalnız bank kanalları (0,1,3-6,8)
@@ -65,8 +65,8 @@ void test_allOn_does_not_energize_flasher(void) {
     }
     // state=0x17B → hw=~0x017B=0xFE84 → OLATA=0x84 (bit2 far + bit7 fan HIGH:
     // sönük), OLATB=0xFE (bit1=kanal9 flaşör HIGH: sönük).
-    TEST_ASSERT_EQUAL_HEX8(0x84, fake_spi_get_reg(MCP23S17_OLATA));
-    TEST_ASSERT_EQUAL_HEX8(0xFE, fake_spi_get_reg(MCP23S17_OLATB));
+    TEST_ASSERT_EQUAL_HEX8(0xA4, fake_spi_get_reg(MCP23S17_OLATA));
+    TEST_ASSERT_EQUAL_HEX8(0xFC, fake_spi_get_reg(MCP23S17_OLATB));
 }
 
 // allOff, yanık fan ve farı SÖNDÜRMEZ (bank DIŞI kanallar): sıcak batarya
@@ -89,7 +89,7 @@ void test_allOff_preserves_fan_and_headlight(void) {
     }
 }
 
-// HV- (HVNEG, kanal 1) S2 (kanal 0) ile BİRLİKTE açılıp kapanır: ikisi de
+// HV- (HVNEG, kanal 1) S2 (kanal 4) ile BİRLİKTE açılıp kapanır: ikisi de
 // sürüş bankı (RELAY_DRIVE_BANK_MASK) üyesi. allOn → ikisi kapalı; allOff →
 // ikisi açık.
 void test_hvneg_switches_with_s2(void) {
@@ -122,14 +122,14 @@ void test_verify_consistent_with_mask_after_allOff(void) {
 // Maske sözleşmesi (derleme sabitleri): flaşör + fan + far dışarıda, S1 + S2 +
 // HV- içeride; sürüş bankı = kontaktör bankı − S1.
 void test_mask_contract_values(void) {
-    TEST_ASSERT_EQUAL_HEX16(0x17B, RELAY_CONTACTOR_BANK_MASK);
-    TEST_ASSERT_EQUAL_HEX16(0x07B, RELAY_DRIVE_BANK_MASK);
-    TEST_ASSERT_EQUAL_UINT8(0, RELAY_CH_S2_DRIVE);
+    TEST_ASSERT_EQUAL_HEX16(0x35B, RELAY_CONTACTOR_BANK_MASK);
+    TEST_ASSERT_EQUAL_HEX16(0x35A, RELAY_DRIVE_BANK_MASK);
+    TEST_ASSERT_EQUAL_UINT8(4, RELAY_CH_S2_DRIVE);
     TEST_ASSERT_EQUAL_UINT8(1, RELAY_CH_HVNEG);
     TEST_ASSERT_EQUAL_UINT8(2, RELAY_CH_HEADLIGHT);
     TEST_ASSERT_EQUAL_UINT8(7, RELAY_CH_FAN);
-    TEST_ASSERT_EQUAL_UINT8(8, RELAY_CH_S1_CHARGE);
-    TEST_ASSERT_EQUAL_UINT8(9, RELAY_CH_FLASHER);
+    TEST_ASSERT_EQUAL_UINT8(0, RELAY_CH_S1_CHARGE);
+    TEST_ASSERT_EQUAL_UINT8(5, RELAY_CH_FLASHER);
     // Bank DIŞI: far, fan, flaşör. Bank İÇİ: S1, S2, HV-.
     TEST_ASSERT_EQUAL_UINT(0, RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_HEADLIGHT));
     TEST_ASSERT_EQUAL_UINT(0, RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_FAN));

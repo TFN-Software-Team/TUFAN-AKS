@@ -327,31 +327,32 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // açması) uyarı flaşörünü SÖNDÜRMESİN. Aynı "bank DIŞI" desen fan (soğutma,
 // şartname B3 7.a-b) ve far (şartname B2 9.19.c) için de geçerlidir.
 //
-// Kanal atamaları (donanım ekibi onaylı — bkz. RELAY_CHANNEL_TABLE.md;
-// fiziksel yük eşlemesi RELAY_ROLES_ASSIGNED bayrağının arkasında):
-//   OUT0 = S2 sürüş kontaktörü, OUT1 = HV- kontaktörü (S2 ile birlikte sürüş
-//   bankı), OUT2 = Far (bank DIŞI, ekran butonuyla toggle), OUT3-6 = boş/yedek,
-//   OUT7 = Soğutma fanı (bank DIŞI, sıcaklığa göre otomatik), OUT8 = S1 şarj
-//   kontaktörü, OUT9 = Uyarı flaşörü (bank DIŞI).
-#define RELAY_CH_S2_DRIVE 0   // OUT0 — S2 sürüş hattı kontaktörü (sürüş bankı üyesi)
-#define RELAY_CH_HVNEG 1      // OUT1 — HV- kontaktörü (sürüş bankı üyesi; S2 ile açılır/kapanır)
-#define RELAY_CH_HEADLIGHT 2  // OUT2 — Far (bank DIŞI, ekran butonuyla toggle; şartname B2 9.19.c)
-#define RELAY_CH_FAN 7        // OUT7 — Soğutma fanı (bank DIŞI, sıcaklığa göre otomatik; şartname B3 7.a-b)
-#define RELAY_CH_S1_CHARGE 8  // OUT8 — S1 şarj hattı kontaktörü
-#define RELAY_CH_FLASHER 9    // OUT9 — Uyarı flaşörü (sesli+ışıklı, şartname 6.e.ii)
+// 10 Kanalın Tamamının Donanım Eşlemesi (MCP23S17 / Altium Şematik):
+//   ch0 = OUT0 (D8 LED, TP3 - En Alt / USB tarafı) -> S1 Şarj Kontaktörü
+//   ch1 = OUT1 (D13 LED, TP5)                     -> HV- Kontaktörü
+//   ch2 = OUT2 (D19 LED, TP9)                     -> Far Rölesi (bank DIŞI)
+//   ch3 = OUT3 (D24 LED, TP11)                    -> Boş / Yedek
+//   ch4 = OUT4 (D9 LED, TP4)                      -> S2 Sürüş Kontaktörü
+//   ch5 = OUT5 (D14 LED, TP6)                     -> Uyarı Flaşörü / Siren (bank DIŞI)
+//   ch6 = OUT6 (D20 LED, TP8)                     -> Boş / Yedek
+//   ch7 = OUT7 (D25 LED, TP12 - En Üst)            -> Soğutma Fanı (bank DIŞI)
+//   ch8 = OUT8 (D15 LED, TP7)                     -> Boş / Yedek
+//   ch9 = OUT9 (D23 LED, TP10)                    -> Boş / Yedek
 
-// Kanal-yük eşlemesi iki aşamalı doğrulanır:
-//   FAZ 1 (yazılım kanalı ↔ kart klemensi): DOĞRULANDI — 2026-07-22, çıplak
-//     kartta (klemensler boş, HV ayrık) 10 kanal sırayla sürülüp durum LED'iyle
-//     eşlendi; 10/10 şemayla birebir uyuştu (bkz. RELAY_CHANNEL_TABLE.md).
-//   FAZ 2 (kart klemensi ↔ fiziksel yük kablolaması): HENÜZ DEĞİL — donanım
-//     ekibi harness'i (S2/HV−/far/fan/S1/flaşör yükleri) çekince tamamlanacak.
-// Bu bayrak FAZ 2'ye kadar 0 (varsayılan) KALIR: rol mantığının TAMAMI (flaşör,
-// S1/S2 mod anahtarlaması) derleme dışıdır ve araç davranışı eski "tek bank"
-// haliyle BAYT-BAYT aynı kalır. Kablolama teyidi gelince build flag'i ile 1
-// yapılır (ör. platformio.ini -D RELAY_ROLES_ASSIGNED=1).
+#define RELAY_CH_S1_CHARGE 0  // OUT0 — S1 şarj hattı kontaktörü
+#define RELAY_CH_HVNEG     1  // OUT1 — HV- kontaktörü (sürüş bankı üyesi; S2 ile açılır/kapanır)
+#define RELAY_CH_HEADLIGHT 2  // OUT2 — Far (bank DIŞI, ekran butonuyla toggle; şartname B2 9.19.c)
+#define RELAY_CH_SPARE_3   3  // OUT3 — Boş / Yedek
+#define RELAY_CH_S2_DRIVE  4  // OUT4 — S2 sürüş hattı kontaktörü (sürüş bankı üyesi)
+#define RELAY_CH_FLASHER   5  // OUT5 — Uyarı flaşörü (sesli+ışıklı, şartname 6.e.ii)
+#define RELAY_CH_SPARE_6   6  // OUT6 — Boş / Yedek
+#define RELAY_CH_FAN       7  // OUT7 — Soğutma fanı (bank DIŞI, sıcaklığa göre otomatik; şartname B3 7.a-b)
+#define RELAY_CH_SPARE_8   8  // OUT8 — Boş / Yedek
+#define RELAY_CH_SPARE_9   9  // OUT9 — Boş / Yedek
+
+// Fiziksel röle yük eşlemesi aktifleştirildi:
 #ifndef RELAY_ROLES_ASSIGNED
-#define RELAY_ROLES_ASSIGNED 0
+#define RELAY_ROLES_ASSIGNED 1
 #endif
 
 #if !RELAY_ROLES_ASSIGNED
@@ -370,14 +371,14 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
     (((1u << RELAY_TOTAL_CHANNELS) - 1u)              \
      & ~(1u << RELAY_CH_FLASHER)                      \
      & ~(1u << RELAY_CH_FAN)                          \
-     & ~(1u << RELAY_CH_HEADLIGHT))  // 0x17B
-// Sürüş hattı bankı = S2 (kanal 0) + HV- (kanal 1) + boş yedekler 3-6. S1,
+     & ~(1u << RELAY_CH_HEADLIGHT))  // 0x35B (Flasher:5, Fan:7, Headlight:2 haric)
+// Sürüş hattı bankı = S2 (kanal 4) + HV- (kanal 1) + boş yedekler. S1 (kanal 0),
 // fan ve far bu maskenin DIŞINDADIR (far/fan zaten kontaktör bankının da
 // dışında; S1 bilinçli olarak dışarıda): READY girişi yalnız bu maskeyi
 // kapatır, S1 açık kalır (şartname 8.2.a.vii). S1, RELAY_CONTACTOR_BANK_
 // MASK'ın İÇİNDEDİR ki allOff güvenlik açması S1'i de açsın (8.2.a.vi).
 #define RELAY_DRIVE_BANK_MASK \
-    (RELAY_CONTACTOR_BANK_MASK & ~(1u << RELAY_CH_S1_CHARGE))  // 0x07B
+    (RELAY_CONTACTOR_BANK_MASK & ~(1u << RELAY_CH_S1_CHARGE))  // 0x35A
 #ifdef __cplusplus
 static_assert((RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_FLASHER)) == 0,
               "Flasor kanali kontaktor bank maskesinin DISINDA olmali — "

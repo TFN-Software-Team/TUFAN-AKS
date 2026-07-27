@@ -298,8 +298,8 @@ void test_roles_allOff_does_not_touch_flasher_channel(void) {
     }
     // Maske sözleşmesi: flaşör+fan+far dışarıda, S1+S2+HV- içeride
     // (8.2.a.vi / 6.e.ii / B3 7.a-b / B2 9.19.c).
-    TEST_ASSERT_EQUAL_HEX16(0x17B, RELAY_CONTACTOR_BANK_MASK);
-    TEST_ASSERT_EQUAL_HEX16(0x07B, RELAY_DRIVE_BANK_MASK);
+    TEST_ASSERT_EQUAL_HEX16(0x35B, RELAY_CONTACTOR_BANK_MASK);
+    TEST_ASSERT_EQUAL_HEX16(0x35A, RELAY_DRIVE_BANK_MASK);
 }
 
 // ---------------------------------------------------------------------------
