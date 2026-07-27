@@ -328,27 +328,27 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // şartname B3 7.a-b) ve far (şartname B2 9.19.c) için de geçerlidir.
 //
 // 10 Kanalın Tamamının Donanım Eşlemesi (MCP23S17 / Altium Şematik):
-//   ch0 = OUT0 (D8 LED, TP3 - En Alt / USB tarafı) -> S1 Şarj Kontaktörü
-//   ch1 = OUT1 (D13 LED, TP5)                     -> HV- Kontaktörü
-//   ch2 = OUT2 (D19 LED, TP9)                     -> Far Rölesi (bank DIŞI)
-//   ch3 = OUT3 (D24 LED, TP11)                    -> Boş / Yedek
-//   ch4 = OUT4 (D9 LED, TP4)                      -> S2 Sürüş Kontaktörü
-//   ch5 = OUT5 (D14 LED, TP6)                     -> Uyarı Flaşörü / Siren (bank DIŞI)
-//   ch6 = OUT6 (D20 LED, TP8)                     -> Boş / Yedek
-//   ch7 = OUT7 (D25 LED, TP12 - En Üst)            -> Soğutma Fanı (bank DIŞI)
-//   ch8 = OUT8 (D15 LED, TP7)                     -> Boş / Yedek
-//   ch9 = OUT9 (D23 LED, TP10)                    -> Boş / Yedek
+//   ch0 = OUT0 (D8 LED, TP3, Q3/rl0.1, GPA0 Pin21)  -> S1 Şarj Kontaktörü
+//   ch1 = OUT1 (D13 LED, TP5, Q7/rl1.1, GPA1 Pin22) -> HV- Kontaktörü
+//   ch2 = OUT2 (D19 LED, TP9, Q13/rl2.1, GPA2 Pin23)-> Far Rölesi (bank DIŞI)
+//   ch3 = OUT3 (D24 LED, TP11, Q19/rl3.1, GPA3 Pin24)-> Boş / Yedek
+//   ch4 = OUT4 (D9 LED, TP4, Q4/rl4.1, GPA4 Pin25)  -> S2 Sürüş Kontaktörü
+//   ch5 = OUT5 (D14 LED, TP6, Q8/rl5.1, GPA5 Pin26) -> Uyarı Flaşörü / Siren (bank DIŞI)
+//   ch6 = OUT6 (D20 LED, TP8, Q14/rl6.1, GPA6 Pin27)-> Boş / Yedek
+//   ch7 = OUT7 (D25 LED, TP12, Q20/rl7.1, GPA7 Pin28)-> Soğutma Fanı (bank DIŞI)
+//   ch8 = OUT8 (D15 LED, TP7, Q11/rl8.1, GPB0 Pin1) -> Boş / Yedek
+//   ch9 = OUT9 (D23 LED, TP10, Q17/rl9.1, GPB1 Pin2)-> Boş / Yedek
 
-#define RELAY_CH_S1_CHARGE 0  // OUT0 — S1 şarj hattı kontaktörü
-#define RELAY_CH_HVNEG     1  // OUT1 — HV- kontaktörü (sürüş bankı üyesi; S2 ile açılır/kapanır)
-#define RELAY_CH_HEADLIGHT 2  // OUT2 — Far (bank DIŞI, ekran butonuyla toggle; şartname B2 9.19.c)
-#define RELAY_CH_SPARE_3   3  // OUT3 — Boş / Yedek
-#define RELAY_CH_S2_DRIVE  4  // OUT4 — S2 sürüş hattı kontaktörü (sürüş bankı üyesi)
-#define RELAY_CH_FLASHER   5  // OUT5 — Uyarı flaşörü (sesli+ışıklı, şartname 6.e.ii)
-#define RELAY_CH_SPARE_6   6  // OUT6 — Boş / Yedek
-#define RELAY_CH_FAN       7  // OUT7 — Soğutma fanı (bank DIŞI, sıcaklığa göre otomatik; şartname B3 7.a-b)
-#define RELAY_CH_SPARE_8   8  // OUT8 — Boş / Yedek
-#define RELAY_CH_SPARE_9   9  // OUT9 — Boş / Yedek
+#define RELAY_CH_S1_CHARGE 0  // OUT0 (GPA0 / Pin 21) — S1 şarj hattı kontaktörü
+#define RELAY_CH_HVNEG     1  // OUT1 (GPA1 / Pin 22) — HV- kontaktörü (sürüş bankı üyesi; S2 ile açılır/kapanır)
+#define RELAY_CH_HEADLIGHT 2  // OUT2 (GPA2 / Pin 23) — Far (bank DIŞI, ekran/düğme toggle; şartname B2 9.19.c)
+#define RELAY_CH_SPARE_3   3  // OUT3 (GPA3 / Pin 24) — Boş / Yedek
+#define RELAY_CH_S2_DRIVE  4  // OUT4 (GPA4 / Pin 25) — S2 sürüş hattı kontaktörü (sürüş bankı üyesi)
+#define RELAY_CH_FLASHER   5  // OUT5 (GPA5 / Pin 26) — Uyarı flaşörü (sesli+ışıklı, şartname 6.e.ii)
+#define RELAY_CH_SPARE_6   6  // OUT6 (GPA6 / Pin 27) — Boş / Yedek
+#define RELAY_CH_FAN       7  // OUT7 (GPA7 / Pin 28) — Soğutma fanı (bank DIŞI, sıcaklığa göre otomatik; şartname B3 7.a-b)
+#define RELAY_CH_SPARE_8   8  // OUT8 (GPB0 / Pin 1)  — Boş / Yedek
+#define RELAY_CH_SPARE_9   9  // OUT9 (GPB1 / Pin 2)  — Boş / Yedek
 
 // Fiziksel röle yük eşlemesi aktifleştirildi:
 #ifndef RELAY_ROLES_ASSIGNED
