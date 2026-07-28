@@ -363,23 +363,44 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define RELAY_CONTACTOR_BANK_MASK ((1u << RELAY_TOTAL_CHANNELS) - 1u)  // 0x3FF
 #else
 // Roller atandı: kontaktör bankı = flaşör + fan + far HARİÇ tüm kanallar
-// (S1 + S2 + HV- + boş yedekler 3-6). allOff bu maskeyi açar → şartname
+// (S1 + S2 + HV- + boş yedekler 3/6/8/9). allOff bu maskeyi açar → şartname
 // 8.2.a.vi (güvenlik probleminde S1 ve S2 dahil hepsi açılır) sağlanır;
 // flaşör (uyarı), fan (soğutma) ve far kanallarının son yazılan durumu
 // shadow'da KORUNUR — güvenlik açması bunları söndürmez (sıcak batarya
 // soğutması ve uyarı ikazı kesilmez, far sürücü kontrolünde kalır).
+// Kablosuz yedek kanallar bu maskede BİLİNÇLİ olarak DURUR: allOff'un ne
+// sürdüğü bilinmeyen bir kanalı da güvenli tarafa (açık) zorlaması istenir.
 #define RELAY_CONTACTOR_BANK_MASK                     \
     (((1u << RELAY_TOTAL_CHANNELS) - 1u)              \
      & ~(1u << RELAY_CH_FLASHER)                      \
      & ~(1u << RELAY_CH_FAN)                          \
      & ~(1u << RELAY_CH_HEADLIGHT))  // 0x35B (Flasher:5, Fan:7, Headlight:2 haric)
-// Sürüş hattı bankı = S2 (kanal 4) + HV- (kanal 1) + boş yedekler. S1 (kanal 0),
-// fan ve far bu maskenin DIŞINDADIR (far/fan zaten kontaktör bankının da
-// dışında; S1 bilinçli olarak dışarıda): READY girişi yalnız bu maskeyi
-// kapatır, S1 açık kalır (şartname 8.2.a.vii). S1, RELAY_CONTACTOR_BANK_
-// MASK'ın İÇİNDEDİR ki allOff güvenlik açması S1'i de açsın (8.2.a.vi).
+// Sürüş hattı bankı = YALNIZ S2 (kanal 4) + HV- (kanal 1). READY girişi
+// (şartname 8.2.a.vii) sadece bu iki kontaktörü kapatır. Maskeden ÇIKARILANLAR:
+//   - S1 (kanal 0): sürüşte AÇIK kalmalı (8.2.a.vii).
+//   - Far / fan / flaşör: zaten kontaktör bankının da dışında.
+//   - Boş yedekler (SPARE_3/6/8/9): hiçbir yüke KABLOLANMAMIŞ. Bunları READY'de
+//     kapatmak (a) her START'ta 4 gereksiz bobin akımı çeker, (b) kademeli
+//     kapatmayı 2 yerine 6 adıma çıkarıp READY'yi 4*RELAY_STAGGER_STEP_MS
+//     kadar geciktirir, (c) HMI kontaktör göstergesini
+//     (HMI_areAllContactorsClosed) hiç bağlı olmayan rölelere baktırır.
+//
+// ASİMETRİ (bilinçli): yedekler RELAY_CONTACTOR_BANK_MASK'ın İÇİNDE, bu
+// maskenin DIŞINDADIR. Yani KAPATMA (READY) dar, AÇMA (allOff güvenlik açması)
+// geniştir. Şartname 8.2.a.vi güvenlik probleminde her şeyin açılmasını
+// istediğinden allOff yedekler dahil bankın tamamını açmaya devam eder.
+// Asimetri bu yönde güvenlidir: fazladan AÇMAK zararsız, fazladan KAPATMAK
+// (enerjilendirmek) değildir.
+//
+// NOT — yedekler ileride kablolanırsa: kanal SÜRÜŞ hattının parçasıysa (READY'de
+// kapalı olması gerekiyorsa) aşağıdaki maskeye `| (1u << RELAY_CH_SPARE_n)`
+// olarak eklenir ve RELAY_CH_SPARE_n makrosu gerçek rolüne göre yeniden
+// adlandırılır. Sürüş hattının parçası DEĞİLSE (ör. ikinci far, korna, pompa)
+// maskeye EKLENMEZ — far/fan gibi ayrı setRelay() ile sürülür. Maskeye eklenen
+// her kanal RELAY_CONTACTOR_BANK_MASK'ın da üyesi olmalıdır ki allOff onu
+// açabilsin; aşağıdaki alt-küme static_assert'i bunu derleme zamanında zorlar.
 #define RELAY_DRIVE_BANK_MASK \
-    (RELAY_CONTACTOR_BANK_MASK & ~(1u << RELAY_CH_S1_CHARGE))  // 0x35A
+    ((1u << RELAY_CH_S2_DRIVE) | (1u << RELAY_CH_HVNEG))  // 0x012 (S2:4 + HV-:1)
 #ifdef __cplusplus
 static_assert((RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_FLASHER)) == 0,
               "Flasor kanali kontaktor bank maskesinin DISINDA olmali — "
@@ -397,6 +418,16 @@ static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S2_DRIVE)) != 0 &&
                   (RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_HVNEG)) != 0,
               "S2 ve HV- (HVNEG) surus bankinin (RELAY_DRIVE_BANK_MASK) uyesi "
               "olmali — READY girisinde birlikte kapanir, allOff birlikte acar.");
+// RELAY_DRIVE_BANK_MASK artik RELAY_CONTACTOR_BANK_MASK'tan TUREMIYOR (acikca
+// yazili), bu yuzden eskiden yapisal olarak garanti olan iki kural artik
+// derleme zamaninda ZORLANIR:
+static_assert((RELAY_DRIVE_BANK_MASK & ~(unsigned)RELAY_CONTACTOR_BANK_MASK) == 0,
+              "Surus banki kontaktor bankinin ALT KUMESI olmali — aksi halde "
+              "READY'de kapatilan bir kanali allOff (guvenlik acmasi) ACAMAZ "
+              "(sartname 8.2.a.vi).");
+static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S1_CHARGE)) == 0,
+              "S1 surus bankinin DISINDA olmali — sarj hatti kontaktoru "
+              "suruste ACIK kalir (sartname 8.2.a.vii).");
 #endif
 #endif  // RELAY_ROLES_ASSIGNED
 

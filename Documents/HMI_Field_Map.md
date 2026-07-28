@@ -23,7 +23,7 @@ Fields currently included:
 | `HMI_bmsDataValid` | `TEL_bmsDataValid` | BMS freshness — `chg` NO_DATA dalının girdisi |
 | `HMI_bmsTimeoutActive` | `TEL_bmsTimeoutActive` | BMS post-reception timeout — `chg` NO_DATA dalının girdisi |
 | `HMI_chargerActive` | `TEL_chargerActive` | Araç şarjda mı — `chg` CHARGING dalının girdisi. **Yalnız gösterim**; LoRa wire formatına serialize EDİLMEZ |
-| `HMI_contactorClosed` | `RelayManager::getRelayState()` | True if all positive contactors are closed |
+| `HMI_contactorClosed` | `RelayManager::getRelayState()` | True if every contactor in the **state-dependent** mask is closed — see `HMI_areAllContactorsClosed` below |
 | `HMI_vcuState` | `VcuLogic::getState()` | Current VCU state |
 | `HMI_headlightOn` | `VcuLogic::isHeadlightOn()` | Headlight state (physical switch). Screen only **shows** it; `false` whenever `RELAY_ROLES_ASSIGNED=0` (honest state) |
 
@@ -130,6 +130,23 @@ SLOT** — sıra kaydırmamak için yerinde).
   `RelayManager`'ın bildiği şey verilen komuttur; kontaktör yardımcı
   kontağından bağımsız geri besleme **okunmuyor**. Yapışmış/açılmamış bir
   kontaktör ekranda yine `CLOSED` görünür.
+- **`contactor` hangi kanallara bakar? Duruma göre DEĞİŞİR**
+  (`HMI_areAllContactorsClosed`, `lib/HMIHelpers/HMIMappings.cpp`):
+
+  | VCU durumu | Kullanılan maske | Bakılan kanallar |
+  | --- | --- | --- |
+  | `READY`, `DRIVE` | `RELAY_DRIVE_BANK_MASK` = **0x012** | yalnız S2 (ch4) + HV− (ch1) |
+  | diğer tüm durumlar | `RELAY_CONTACTOR_BANK_MASK` = **0x35B** | S1 + S2 + HV− + yedekler (ch0,1,3,4,6,8,9) |
+
+  READY/DRIVE'da dar maske kullanılır çünkü şartname 8.2.a.vii gereği S1 o
+  durumda AÇIK olmalıdır — geniş maskeyle gösterge sürüş boyunca `OPEN`
+  takılırdı. Kablosuz yedek kanallar (ch3/6/8/9) da sürüş maskesinin dışındadır:
+  `VcuLogic::handleReady()` onları zaten kapatmaz, gösterge onlara baksaydı
+  READY'de kalıcı `OPEN` görünürdü. Bank dışı kanallar (far ch2, flaşör ch5,
+  fan ch7) hiçbir durumda göstergeye girmez — kontaktör değildirler.
+  `RELAY_ROLES_ASSIGNED=0` iken `RELAY_DRIVE_BANK_MASK` tanımlı değildir ve her
+  durumda 10 kanalın tamamına bakılır. Maske değerleri değişirse burası ve
+  [RELAY_CHANNEL_TABLE.md](RELAY_CHANNEL_TABLE.md) aynı commit'te güncellenir.
 
 ### Float (xfloat) fields
 

@@ -338,7 +338,7 @@ void run() {
         } else if (contactorOpenDelayElapsed()) {
             // Açma her zaman ANINDA olmalıdır — setBankStaggered (kademeli
             // KAPATMA, inrush içindir) BURADA KULLANILMAZ. allOff bank
-            // maskesini (S1 + S2 + sürüş bankı) açar; flaşör/fan/far maske
+            // maskesini (S1 + S2 + HV- + yedekler) açar; flaşör/fan/far maske
             // DIŞINDA olduğu için etkilenmez (FAULT/E-STOP ile aynı davranış).
             s_relays->allOff(false);
             s_stopPendingOpen = false;
@@ -692,8 +692,9 @@ static void handleReady() {
 #if RELAY_ROLES_ASSIGNED
         // Şartname 8.2.a.vii: sürüşte S1 AÇIK + S2 KAPALI. READY girişi
         // allOn KULLANMAZ (allOn bank maskesini — S1 dahil — kapatırdı);
-        // bunun yerine yalnız SÜRÜŞ bankı (RELAY_DRIVE_BANK_MASK = S2 +
-        // kanal 1-7; S1 bilinçli olarak bu maskenin DIŞINDA) kapatılır.
+        // bunun yerine yalnız SÜRÜŞ bankı (RELAY_DRIVE_BANK_MASK = S2
+        // (kanal 4) + HV- (kanal 1); S1 ve kablosuz yedekler bilinçli
+        // olarak bu maskenin DIŞINDA) kapatılır — iki kanal, iki kademe.
         // S1 savunma amaçlı açık komutlanır: IDLE'da charger aktifken READY
         // zaten reddedildiğinden S1 normalde açıktır; bu yazım sırayı
         // şartname durumuna deterministik kilitler.

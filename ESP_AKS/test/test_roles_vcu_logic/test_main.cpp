@@ -249,10 +249,16 @@ void test_roles_ready_closes_drive_bank_keeps_s1_open(void) {
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);  // açık
     for (uint8_t ch = 0; ch < RELAY_TOTAL_CHANNELS; ++ch) {
         if (RELAY_DRIVE_BANK_MASK & (1u << ch)) {
-            TEST_ASSERT_TRUE(g_fake_relay_channelState[ch]);  // S2 + bank kapalı
+            TEST_ASSERT_TRUE(g_fake_relay_channelState[ch]);  // S2 + HV- kapalı
         }
     }
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
+    // Kablosuz yedekler READY'de ENERJİLENMEZ: sürüş bankı yalnız S2 + HV-'dir,
+    // boşuna 4 bobin akımı çekilmez ve kademeli kapatma 2 adımda biter.
+    TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_SPARE_3]);
+    TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_SPARE_6]);
+    TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_SPARE_8]);
+    TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_SPARE_9]);
 }
 
 // FAULT'ta hepsi açık (8.2.a.vi): READY'den kritik koşulla FAULT'a düş,
@@ -296,10 +302,11 @@ void test_roles_allOff_does_not_touch_flasher_channel(void) {
             TEST_ASSERT_FALSE(g_fake_relay_channelState[ch]);
         }
     }
-    // Maske sözleşmesi: flaşör+fan+far dışarıda, S1+S2+HV- içeride
-    // (8.2.a.vi / 6.e.ii / B3 7.a-b / B2 9.19.c).
+    // Maske sözleşmesi: kontaktör bankında flaşör+fan+far dışarıda,
+    // S1+S2+HV-+yedekler içeride (8.2.a.vi / 6.e.ii / B3 7.a-b / B2 9.19.c);
+    // sürüş bankı ise yalnız S2+HV- (yedekler READY'de kapatılmaz).
     TEST_ASSERT_EQUAL_HEX16(0x35B, RELAY_CONTACTOR_BANK_MASK);
-    TEST_ASSERT_EQUAL_HEX16(0x35A, RELAY_DRIVE_BANK_MASK);
+    TEST_ASSERT_EQUAL_HEX16(0x012, RELAY_DRIVE_BANK_MASK);
 }
 
 // ---------------------------------------------------------------------------

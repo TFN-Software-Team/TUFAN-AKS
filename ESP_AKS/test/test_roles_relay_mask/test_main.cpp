@@ -7,7 +7,7 @@
 // ===========================================================================
 // RELAY_ROLES_ASSIGNED=1 iken GERÇEK RelayManager sürücüsünün bank-maskesi
 // davranışı ([env:native_roles]): allOn/allOff yalnız RELAY_CONTACTOR_BANK_
-// MASK (0x17B — flaşör 9 + fan 7 + far 2 HARİÇ) kanallarını sürer; flaşör,
+// MASK (0x35B — flaşör 5 + fan 7 + far 2 HARİÇ) kanallarını sürer; flaşör,
 // fan ve far kanallarının son yazılan durumu shadow'da korunur ve
 // verifyOutputs geri-okuması yeni maskeyle tutarlıdır. Varsayılan (0x3FF)
 // davranış regresyonları test_native_relay'de.
@@ -26,8 +26,8 @@ void primeRelay() {
 }
 }  // namespace
 
-// allOff, yanık flaşörü SÖNDÜRMEZ: kanal 9 (OLATB bit1) LOW (aktif) kalır,
-// bank kanalları (0-8) HIGH (açık) olur.
+// allOff, yanık flaşörü SÖNDÜRMEZ: kanal 5 (OLATA bit5) LOW (aktif) kalır,
+// bank kanalları (0,1,3,4,6,8,9) HIGH (açık) olur.
 void test_allOff_preserves_flasher_channel(void) {
     primeRelay();
     RelayManager::instance().setRelay(RELAY_CH_FLASHER, true);  // flaşör yanık
@@ -42,14 +42,15 @@ void test_allOff_preserves_flasher_channel(void) {
             TEST_ASSERT_FALSE(RelayManager::instance().getRelayState(ch));
         }
     }
-    // Donanım seviyesi (active-low): state=0x200 → hw=~0x200 → OLATA=0xFF,
-    // OLATB=0xFD (bit1=kanal9 LOW: flaşör hâlâ enerjili).
+    // Donanım seviyesi (active-low): state=0x020 → hw=~0x020 → OLATA=0xDF
+    // (bit5=kanal5 LOW: flaşör hâlâ enerjili), OLATB=0xFF.
     TEST_ASSERT_EQUAL_HEX8(0xDF, fake_spi_get_reg(MCP23S17_OLATA));
     TEST_ASSERT_EQUAL_HEX8(0xFF, fake_spi_get_reg(MCP23S17_OLATB));
 }
 
-// allOn, sönük flaşörü/fanı/farı YAKMAZ: yalnız bank kanalları (0,1,3-6,8)
-// kapanır — bank dışı kanallar (2 far, 7 fan, 9 flaşör) etkilenmez.
+// allOn, sönük flaşörü/fanı/farı YAKMAZ: yalnız bank kanalları
+// (0,1,3,4,6,8,9) kapanır — bank dışı kanallar (2 far, 5 flaşör, 7 fan)
+// etkilenmez.
 void test_allOn_does_not_energize_flasher(void) {
     primeRelay();
 
@@ -63,8 +64,8 @@ void test_allOn_does_not_energize_flasher(void) {
             TEST_ASSERT_TRUE(RelayManager::instance().getRelayState(ch));
         }
     }
-    // state=0x17B → hw=~0x017B=0xFE84 → OLATA=0x84 (bit2 far + bit7 fan HIGH:
-    // sönük), OLATB=0xFE (bit1=kanal9 flaşör HIGH: sönük).
+    // state=0x35B → hw=~0x035B=0xFCA4 → OLATA=0xA4 (bit2 far + bit5 flaşör +
+    // bit7 fan HIGH: sönük), OLATB=0xFC (kanal 8-9 bank içi: kapalı).
     TEST_ASSERT_EQUAL_HEX8(0xA4, fake_spi_get_reg(MCP23S17_OLATA));
     TEST_ASSERT_EQUAL_HEX8(0xFC, fake_spi_get_reg(MCP23S17_OLATB));
 }
@@ -119,11 +120,13 @@ void test_verify_consistent_with_mask_after_allOff(void) {
     TEST_ASSERT_EQUAL_size_t(0, fake_spi_write_count());  // yalnız READ
 }
 
-// Maske sözleşmesi (derleme sabitleri): flaşör + fan + far dışarıda, S1 + S2 +
-// HV- içeride; sürüş bankı = kontaktör bankı − S1.
+// Maske sözleşmesi (derleme sabitleri): kontaktör bankında flaşör + fan + far
+// dışarıda, S1 + S2 + HV- + yedekler içeride; sürüş bankı ise YALNIZ S2 + HV-
+// (kablosuz yedekler READY'de enerjilenmez — asimetri bilinçlidir: allOff
+// yedekleri de açar, READY onları kapatmaz).
 void test_mask_contract_values(void) {
     TEST_ASSERT_EQUAL_HEX16(0x35B, RELAY_CONTACTOR_BANK_MASK);
-    TEST_ASSERT_EQUAL_HEX16(0x35A, RELAY_DRIVE_BANK_MASK);
+    TEST_ASSERT_EQUAL_HEX16(0x012, RELAY_DRIVE_BANK_MASK);
     TEST_ASSERT_EQUAL_UINT8(4, RELAY_CH_S2_DRIVE);
     TEST_ASSERT_EQUAL_UINT8(1, RELAY_CH_HVNEG);
     TEST_ASSERT_EQUAL_UINT8(2, RELAY_CH_HEADLIGHT);
@@ -135,6 +138,18 @@ void test_mask_contract_values(void) {
     TEST_ASSERT_EQUAL_UINT(0, RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_FAN));
     TEST_ASSERT_EQUAL_UINT(0, RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_FLASHER));
     TEST_ASSERT_TRUE(RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_HVNEG));
+
+    // Sürüş bankı kontaktör bankının ALT KÜMESİ: READY'de kapatılan her kanalı
+    // allOff güvenlik açması da açabilmeli (şartname 8.2.a.vi).
+    TEST_ASSERT_EQUAL_UINT(0, RELAY_DRIVE_BANK_MASK & ~(unsigned)RELAY_CONTACTOR_BANK_MASK);
+    // S1 sürüş bankının DIŞINDA (8.2.a.vii), kontaktör bankının İÇİNDE.
+    TEST_ASSERT_EQUAL_UINT(0, RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S1_CHARGE));
+    // Kablosuz yedekler: allOff'un açtığı bankın İÇİNDE, READY'nin kapattığı
+    // sürüş bankının DIŞINDA (bilinçli asimetri).
+    const uint16_t spares = (1u << RELAY_CH_SPARE_3) | (1u << RELAY_CH_SPARE_6) |
+                            (1u << RELAY_CH_SPARE_8) | (1u << RELAY_CH_SPARE_9);
+    TEST_ASSERT_EQUAL_HEX16(spares, RELAY_CONTACTOR_BANK_MASK & spares);
+    TEST_ASSERT_EQUAL_UINT(0, RELAY_DRIVE_BANK_MASK & spares);
 }
 
 void setUp(void) {}

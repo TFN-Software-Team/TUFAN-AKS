@@ -6,19 +6,23 @@ Current software meaning:
 
 - `RelayManager::allOn()` closes every channel in `RELAY_CONTACTOR_BANK_MASK`.
 - `RelayManager::allOff()` de-energizes every channel in `RELAY_CONTACTOR_BANK_MASK` (safety open — şartname Bölüm 3, 8.2.a.vi).
-- Channels **outside** the bank mask are untouched by `allOn`/`allOff`; their last commanded state is preserved in the shadow register and remains consistent with the `verifyOutputs()` readback check. Flasher (OUT9), cooling fan (OUT7) and headlight (OUT2) are all out-of-bank.
+- Channels **outside** the bank mask are untouched by `allOn`/`allOff`; their last commanded state is preserved in the shadow register and remains consistent with the `verifyOutputs()` readback check. Flasher (OUT5), cooling fan (OUT7) and headlight (OUT2) are all out-of-bank.
+- `VcuLogic::handleReady()` closes **only** `RELAY_DRIVE_BANK_MASK` (S2 + HV−), never `allOn()`.
 
 ## Channel decisions (hardware-team approved)
 
 | OUT | Function | Bank membership |
 | --- | --- | --- |
-| OUT0 | **S2 — drive-line contactor** | Drive bank + contactor bank |
+| OUT0 | **S1 — charge-line contactor** | Contactor bank (**not** drive bank) |
 | OUT1 | **HV− contactor** — opens/closes together with S2 in the drive bank | Drive bank + contactor bank |
 | OUT2 | **Headlight (far)** — controlled by a **physical switch** (`HEADLIGHT_SWITCH_PIN` = GPIO27, INPUT_PULLUP), BMS-independent; the screen only **shows** its status (`far.pic`) | **Out of bank** |
-| OUT3–OUT6 | empty / spare | Contactor bank (drive bank) |
+| OUT3 | empty / spare — **not wired to any load** | Contactor bank only (**not** drive bank) |
+| OUT4 | **S2 — drive-line contactor** | Drive bank + contactor bank |
+| OUT5 | **Warning flasher** (audible+visual) | **Out of bank** |
+| OUT6 | empty / spare — **not wired to any load** | Contactor bank only (**not** drive bank) |
 | OUT7 | **Cooling fan** — automatic, temperature-driven | **Out of bank** |
-| OUT8 | **S1 — charge-line contactor** | Contactor bank (not drive bank) |
-| OUT9 | **Warning flasher** (audible+visual) | **Out of bank** |
+| OUT8 | empty / spare — **not wired to any load** | Contactor bank only (**not** drive bank) |
+| OUT9 | empty / spare — **not wired to any load** | Contactor bank only (**not** drive bank) |
 
 **Not connected to the AKS (documented here, no firmware):**
 - **Horn (korna) + wiper (silecek): AKS DIŞI — donanımsal devre (B2 9.17 / B2 9.12.c).** Wired as a stand-alone hardware circuit; the AKS drives no channel for them.
@@ -26,34 +30,59 @@ Current software meaning:
 
 ## `RELAY_ROLES_ASSIGNED` build flag (SystemConfig.h)
 
-The channel→physical-load mapping has **not** been confirmed by the hardware team yet. The S1/S2/flasher/fan/headlight role logic is therefore gated behind the compile-time flag `RELAY_ROLES_ASSIGNED` (default **0**):
+The channel→physical-load mapping (Faz 2, harness) has **not** been confirmed by the hardware team yet, but the S1/S2/flasher/fan/headlight role logic is already enabled: the compile-time flag `RELAY_ROLES_ASSIGNED` in `SystemConfig.h` is currently **1**. Setting it back to `0` restores the legacy single-bank behavior.
 
 | Flag | `RELAY_CONTACTOR_BANK_MASK` | Behavior |
 | --- | --- | --- |
-| `0` (default) | `0x3FF` (all 10 channels) | Legacy single-bank behavior, byte-for-byte identical to before. A `#warning` is emitted at compile time. Flasher / fan / headlight / S1-S2 logic is compiled out. |
-| `1` | `0x17B` (flasher 9 + fan 7 + headlight 2 excluded) | S1/S2 mode switching (şartname 8.2.a) + temperature warning flasher (6.e.ii) + cooling fan (B3 7.a-b) + headlight toggle (B2 9.19.c) active. `RELAY_DRIVE_BANK_MASK = 0x07B` (S2 + HV− + spares 3-6; S1, fan and headlight excluded so READY keeps S1 open and never touches fan/headlight). |
+| `0` | `0x3FF` (all 10 channels) | Legacy single-bank behavior, byte-for-byte identical to before. A `#warning` is emitted at compile time. Flasher / fan / headlight / S1-S2 logic is compiled out. `RELAY_DRIVE_BANK_MASK` is **not defined**; `HMI_areAllContactorsClosed` falls back to the contactor mask in every state. |
+| `1` (current default) | `0x35B` (flasher 5 + fan 7 + headlight 2 excluded) | S1/S2 mode switching (şartname 8.2.a) + temperature warning flasher (6.e.ii) + cooling fan (B3 7.a-b) + headlight (B2 9.19.c) active. `RELAY_DRIVE_BANK_MASK = 0x012` (**only** S2 ch4 + HV− ch1). |
+
+### Why the two masks are asymmetric
+
+`RELAY_DRIVE_BANK_MASK` (0x012) is **not** simply `RELAY_CONTACTOR_BANK_MASK` minus S1 — the four unwired spares (ch3/6/8/9) are in the contactor mask but **not** in the drive mask:
+
+- **Closing (READY entry) is narrow.** `handleReady()` energizes S2 + HV− only. Including the spares would draw four pointless coil currents on every START, stretch the staggered close from 2 to 6 steps (`4 × RELAY_STAGGER_STEP_MS` = 120 ms of extra READY latency), and make the HMI contactor indicator (`contactor.txt`, via `HMI_areAllContactorsClosed`) depend on relays that are not wired to anything.
+- **Opening (`allOff` safety open) stays wide.** Şartname 8.2.a.vi requires *everything* to open on a safety problem, so `allOff()` keeps de-energizing the whole contactor bank, spares included — whatever a spare happens to be driving is forced to the safe state.
+
+The asymmetry is safe in this direction only: opening more than necessary is harmless, energizing more than necessary is not. Both invariants are locked by `static_assert` in `SystemConfig.h` (drive mask ⊆ contactor mask; S1 ∉ drive mask).
+
+### NOTE — adding a spare to the drive bank later
+
+When the hardware team wires one of `RELAY_CH_SPARE_3` / `_6` / `_8` / `_9`:
+
+1. **Is the new load part of the drive line** (must be CLOSED in READY/DRIVE)? Then add it to the drive mask in `SystemConfig.h`:
+   ```c
+   #define RELAY_DRIVE_BANK_MASK \
+       ((1u << RELAY_CH_S2_DRIVE) | (1u << RELAY_CH_HVNEG) | (1u << RELAY_CH_SPARE_3))
+   ```
+   and rename the `RELAY_CH_SPARE_n` macro to its real role. The channel must remain in `RELAY_CONTACTOR_BANK_MASK` so `allOff()` can open it — the subset `static_assert` fails at compile time if it does not.
+2. **Is it an auxiliary load** (second headlight, horn, pump — must survive a safety open)? Then do **not** add it to either mask; drive it with an explicit `setRelay()` like the fan/headlight, and extend the "out of bank" `static_assert` group instead.
+3. Update the hex values in this table, `HMI_Field_Map.md`, and the `test_mask_contract_values` assertions in `test_roles_relay_mask` / `test_roles_vcu_logic` in the **same commit** (CLAUDE.md Rule 5).
 
 ## Channel Map
 
 | Channel Macro | Index | Role (when `RELAY_ROLES_ASSIGNED=1`) | Şartname | Physical Load |
 | --- | --- | --- | --- | --- |
-| `RELAY_CH_S2_DRIVE` (`RELAY_CH_POS_0`) | 0 | **S2 — drive-line contactor** | 8.2.a.vii: closed in drive; 8.2.a.iii: open while charging; 8.2.a.vi: open on safety problem | TBD during harness validation |
+| `RELAY_CH_S1_CHARGE` (`RELAY_CH_POS_0`) | 0 | **S1 — charge-line contactor** (closed in IDLE while charger CAN stream is fresh; open in READY/DRIVE; open on FAULT/E-STOP). In the contactor bank, **outside** the drive bank. | 8.2.a.iii / 8.2.a.vii / 8.2.a.vi | TBD during harness validation |
 | `RELAY_CH_HVNEG` (`RELAY_CH_POS_1`) | 1 | **HV− contactor** — drive-bank member; opens/closes together with S2 | 8.2.a | TBD during harness validation |
 | `RELAY_CH_HEADLIGHT` (`RELAY_CH_POS_2`) | 2 | **Headlight (far)** — driven by `VcuLogic` from a **physical switch** on `HEADLIGHT_SWITCH_PIN` (**GPIO27**, direct ESP32 GPIO with INPUT_PULLUP; active-low, switch to GND). Debounce `HEADLIGHT_DEBOUNCE_MS`=40 ms; switch type `HEADLIGHT_SWITCH_LATCHING` (default **1** = latching/maintained). Latching → far follows the switch **position** (survives ESP reset — if the switch is still "on", far comes back on). BMS-independent. **Outside** the bank mask — `allOff`/`allOn` (FAULT/E-STOP/READY) never change it. The screen no longer controls the headlight; it only **shows** the state (`far.pic`). Pure decision logic: `lib/VcuLogic/HeadlightSwitch.h`. | B2 9.19.c | TBD during harness validation |
-| `RELAY_CH_POS_3` … `RELAY_CH_POS_6` | 3-6 | empty / spare (drive bank) | — | Boş/yedek |
+| `RELAY_CH_SPARE_3` (`RELAY_CH_POS_3`) | 3 | empty / spare — **not wired**. In the contactor bank (so `allOff` forces it open) but **not** in the drive bank (READY does not energize it). | — | Boş/yedek |
+| `RELAY_CH_S2_DRIVE` (`RELAY_CH_POS_4`) | 4 | **S2 — drive-line contactor** | 8.2.a.vii: closed in drive; 8.2.a.iii: open while charging; 8.2.a.vi: open on safety problem | TBD during harness validation |
+| `RELAY_CH_FLASHER` (`RELAY_CH_POS_5`) | 5 | **Temperature warning flasher** (audible+visual). Driven by `VcuLogic` from the verified BMS max temperature: ON at ≥55 °C, OFF below 53 °C (`FLASHER_HYSTERESIS_C=2`). **Outside** the contactor bank mask — `allOff()` never extinguishes it, so it stays on through FAULT/E-STOP while the temperature holds. | 6.e.ii / 6.e.iii | TBD during harness validation |
+| `RELAY_CH_SPARE_6` (`RELAY_CH_POS_6`) | 6 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
 | `RELAY_CH_FAN` (`RELAY_CH_POS_7`) | 7 | **Cooling fan** — driven by `VcuLogic` from the verified BMS max temperature: ON at ≥40 °C (`FAN_ON_TEMP_C`), OFF at ≤35 °C (`FAN_OFF_TEMP_C`). **Outside** the bank mask — stays on through FAULT/E-STOP so a hot pack keeps cooling. Stale/timed-out BMS data leaves it untouched. | B3 7.a-b | TBD during harness validation |
-| `RELAY_CH_S1_CHARGE` (`RELAY_CH_POS_8`) | 8 | **S1 — charge-line contactor** (closed in IDLE while charger CAN stream is fresh; open in READY/DRIVE; open on FAULT/E-STOP) | 8.2.a.iii / 8.2.a.vii / 8.2.a.vi | TBD during harness validation |
-| `RELAY_CH_FLASHER` (`RELAY_CH_POS_9`) | 9 | **Temperature warning flasher** (audible+visual). Driven by `VcuLogic` from the verified BMS max temperature: ON at ≥55 °C, OFF below 53 °C (`FLASHER_HYSTERESIS_C=2`). **Outside** the contactor bank mask — `allOff()` never extinguishes it, so it stays on through FAULT/E-STOP while the temperature holds. | 6.e.ii / 6.e.iii | TBD during harness validation |
+| `RELAY_CH_SPARE_8` (`RELAY_CH_POS_8`) | 8 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
+| `RELAY_CH_SPARE_9` (`RELAY_CH_POS_9`) | 9 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
 
 With `RELAY_ROLES_ASSIGNED=0` all ten channels are plain positive-contactor bank outputs (previous table).
 
 ## S1/S2 mode summary (`RELAY_ROLES_ASSIGNED=1`)
 
-| Mode | S1 (ch 8) | S2 + HV− + drive bank (ch 0,1,3-6) | Source |
-| --- | --- | --- | --- |
-| IDLE, charger active (`TEL_chargerActive`) | CLOSED | OPEN (START_REQUEST rejected: "charger aktif — sarj modunda READY yasak") | 8.2.a.iii |
-| READY / DRIVE | OPEN | CLOSED (`RELAY_DRIVE_BANK_MASK`, not `allOn`) | 8.2.a.vii |
-| FAULT / EMERGENCY_STOP | OPEN | OPEN (`allOff` over `RELAY_CONTACTOR_BANK_MASK`) | 8.2.a.vi |
+| Mode | S1 (ch 0) | Drive bank: S2 (ch 4) + HV− (ch 1) | Spares (ch 3,6,8,9) | Source |
+| --- | --- | --- | --- | --- |
+| IDLE, charger active (`TEL_chargerActive`) | CLOSED | OPEN (START_REQUEST rejected: "charger aktif — sarj modunda READY yasak") | OPEN | 8.2.a.iii |
+| READY / DRIVE | OPEN | CLOSED (`RELAY_DRIVE_BANK_MASK` = 0x012, not `allOn`) | **untouched** — READY does not energize unwired channels | 8.2.a.vii |
+| FAULT / EMERGENCY_STOP | OPEN | OPEN (`allOff` over `RELAY_CONTACTOR_BANK_MASK` = 0x35B) | OPEN — safety open covers the spares too | 8.2.a.vi |
 
 Fan (OUT7) and headlight (OUT2) are **independent of the S1/S2 mode** — they are outside the bank mask, so none of the transitions above changes them. The fan tracks the verified BMS max temperature (40 °C ON / 35 °C OFF, hysteresis) in every state including FAULT/E-STOP; the headlight follows the driver's physical switch (`HEADLIGHT_SWITCH_PIN`), independent of BMS and vehicle state.
 
@@ -97,13 +126,22 @@ Donanım ekibi harness'i çekerken her klemense aşağıdaki yük bağlanacak (k
 
 | Klemens | Fiziksel yük |
 | --- | --- |
-| OUT0 | S2 sürüş kontaktörü |
+| OUT0 | **S1 şarj kontaktörü** |
 | OUT1 | HV− kontaktörü |
 | OUT2 | Far |
-| OUT3–OUT6 | boş / yedek |
+| OUT3 | boş / yedek |
+| OUT4 | **S2 sürüş kontaktörü** |
+| OUT5 | **Flaşör** |
+| OUT6 | boş / yedek |
 | OUT7 | Soğutma fanı |
-| OUT8 | S1 şarj kontaktörü |
-| OUT9 | Flaşör |
+| OUT8 | boş / yedek |
+| OUT9 | boş / yedek |
+
+> ⚠️ Bu tablo `SystemConfig.h` içindeki `RELAY_CH_*` makrolarından türetilmiştir
+> (tek doğruluk kaynağı = kod, CLAUDE.md Kural 1). Daha eski bir sürümü
+> S1'i OUT8'e, S2'yi OUT0'a, flaşörü OUT9'a atıyordu; bu eşleme commit
+> `ed6e968` ile değişti (S1=OUT0, S2=OUT4, Flaşör=OUT5, Fan=OUT7) ve doküman
+> geride kalmıştı. Kablolamadan önce donanım ekibiyle bu tablo teyit edilmeli.
 
 Ayrıca **far düğmesi**: `HEADLIGHT_SWITCH_PIN` = **GPIO27** ile **GND** arasına bağlanacak (INPUT_PULLUP, aktif-düşük).
 
@@ -114,4 +152,4 @@ Doğrulama iki aşamalıdır; bu ikisi ayrı tutulmalıdır:
 - **DOĞRULANDI (Faz 1, bu test — 2026-07-22):** yazılım kanalı `N` ↔ kart klemensi `OUT N` eşlemesi. Çıplak kartta LED tablosuyla 10/10 birebir uyuştu (yukarı).
 - **HENÜZ DEĞİL (Faz 2, donanım ekibi):** kart klemensi ↔ fiziksel yük kablolaması. Harness çekilene kadar açık.
 
-Bu nedenle **`RELAY_ROLES_ASSIGNED=0` KALIR** — bayrak Faz 1 ile açılmaz; yalnızca Faz 2 kablolaması tamamlandıktan sonra 1 yapılacak. Yukarıdaki S1/S2/flaşör rolleri, o noktada etkinleşecek yazılım tarafı sözleşmedir.
+`SystemConfig.h` içinde **`RELAY_ROLES_ASSIGNED` şu anda `1`** ("Fiziksel röle yük eşlemesi aktifleştirildi") — yani yukarıdaki S1/S2/flaşör/fan/far rol mantığı derleniyor ve maskeler `0x35B` / `0x012` olarak etkin. Bu doküman daha önce bayrağın `0` kalacağını söylüyordu; kod bayrağı açtığı için (Kural 1: kod kazanır) metin koda hizalandı. **Faz 2 harness'i çekilmeden sahada HV ile çalıştırmadan önce yük kablolamasının yukarıdaki tabloyla eşleştiği teyit edilmelidir.**
