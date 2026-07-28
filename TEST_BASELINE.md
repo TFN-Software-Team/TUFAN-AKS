@@ -5,7 +5,7 @@
 > sayı düşer ama takım yine "PASSED" görünebilir. Bu dosya, her koşumda
 > karşılaştırılacak **beklenen** sayıları tutar.
 >
-> **Son güncelleme:** 25.07.2026 · **Dal:** `okan/aks-kod-duzeltmeleri`
+> **Son güncelleme:** 28.07.2026 · **Dal:** `okan/aks-kod-duzeltmeleri`
 > · **Ölçüm:** aşağıdaki komutlar birebir koşturularak alındı.
 
 ---
@@ -37,31 +37,60 @@ pytest tools/e2e/ -v          # TUFAN_UKS_REPO ortam değişkeni gerekebilir
 
 ---
 
-## 1 · `pio test -e native` — **515 test / 18 paket**
+## 1 · `pio test -e native` — **555 test / 18 paket**
 
-Varsayılan derleme ortamı (`RELAY_ROLES_ASSIGNED=0`).
+Varsayılan derleme ortamı (`RELAY_ROLES_ASSIGNED=0`, `MOTOR_DRIVER_PRESENT=0`).
 
-| Paket | Test |
-|---|---:|
-| `test_native_bms_algo` | 41 |
-| `test_native_bms_freshness` | 6 |
-| `test_native_can_parsing` | 76 |
-| `test_native_charge_detect` | 14 |
-| `test_native_e22_config` | 18 |
-| `test_native_hmi` | 5 |
-| `test_native_hmi_helpers` | 60 |
-| `test_native_link_monitor` | 11 |
-| `test_native_lora_rx_handler` | 7 |
-| `test_native_motor_debounce` | 5 |
-| `test_native_offline_buffer` | 18 |
-| `test_native_ready_motor` | 2 |
-| `test_native_relay` | 29 |
-| `test_native_sysstate_derive_enabled` | 6 |
-| `test_native_telemetry` | 63 |
-| `test_native_uart_init_retry` | 8 |
-| `test_native_uplink_scheduler` | 6 |
-| `test_native_vcu_logic` | 140 |
-| **TOPLAM** | **515** |
+| Paket | Test | Önceki taban (25.07) |
+|---|---:|---:|
+| `test_native_bms_algo` | 41 | 41 |
+| `test_native_bms_freshness` | 6 | 6 |
+| `test_native_can_parsing` | 76 | 76 |
+| `test_native_charge_detect` | 14 | 14 |
+| `test_native_e22_config` | 18 | 18 |
+| `test_native_hmi` | 18 | 5 † |
+| `test_native_hmi_helpers` | 71 | 60 † |
+| `test_native_link_monitor` | 11 | 11 |
+| `test_native_lora_rx_handler` | 7 | 7 |
+| `test_native_motor_debounce` | 5 | 5 |
+| `test_native_offline_buffer` | 18 | 18 |
+| `test_native_ready_motor` | 9 | 2 ‡ |
+| `test_native_relay` | 29 | 29 |
+| `test_native_sysstate_derive_enabled` | 6 | 6 |
+| `test_native_telemetry` | 63 | 63 |
+| `test_native_uart_init_retry` | 8 | 8 |
+| `test_native_uplink_scheduler` | 6 | 6 |
+| `test_native_vcu_logic` | 149 | 140 ‡ § ¶ |
+| **TOPLAM** | **555** | **515** |
+
+> **† Taban güncel değildi:** `test_native_hmi` (+13) ve `test_native_hmi_helpers`
+> (+11) 25.07 ölçümünden bu yana büyümüş ama bu dosya güncellenmemiş. Bu 24 test
+> **28.07 motor-gating çalışmasından ÖNCE** eklenmiş; burada yalnızca ölçülüp
+> kayda geçirildi (kayıp yok, artış).
+>
+> **‡ 28.07 motor-gating değişikliği (+10):** motor kaynaklı karar girdileri
+> `#if MOTOR_DRIVER_PRESENT` arkasına alındı (bkz.
+> `Documents/MOTOR_ENTEGRASYON_NOTU.md` §6). Bayrak=0 davranışı
+> `test_native_vcu_logic` içinde (+3, `*_when_flag0` case'leri), bayrak=1
+> davranışı `test_native_ready_motor` içinde (+7) kilitlendi. Bayrak 1
+> yapıldığında `*_when_flag0` testleri geçersizleşir — o gün gözden geçirin.
+>
+> **§ 28.07 IDLE-RESET düzeltmesi (+2):** latch'lenmiş actuator fault artık
+> `IDLE`'da RESET ile temizlenebiliyor (önceden tek çıkış reboot'tu).
+> `test_reset_interlock.cpp` içinde 2 yeni case. Ayrıca
+> `test_idle_reset_is_noop` **yeniden adlandırıldı** →
+> `test_idle_reset_does_not_change_state` (sayıyı değiştirmez; RESET artık
+> IDLE'da tam bir no-op değil). Bkz. `Documents/HMI_Field_Map.md`
+> "`RESET` (3) durum başına ne yapar".
+>
+> **¶ 28.07 güvenli-kapanış SIRASI düzeltmesi (+4):** sıfır-tork ile kontaktör
+> açma aynı tick'e düşüyordu (gecikme fiilen 0 ms). `test_stop_request.cpp`'ye
+> 3 yeni case eklendi. **+1'i yeni test DEĞİL:**
+> `test_fault_latches_contactors_off_once_and_reasserts` zaten yazılmıştı ama
+> `test_main.cpp`'ye hiç kaydedilmemişti — bu dosyanın uyardığı **sessiz test
+> kaybının canlı bir örneği**. Kaydedilirken içindeki zaman aritmetiği de
+> düzeltildi (re-assert sınırı t=1000 değil t=1020). Bkz.
+> `Documents/MOTOR_ENTEGRASYON_NOTU.md` §7.
 
 ## 2 · `pio test -e native_roles` — **38 test / 3 paket**
 

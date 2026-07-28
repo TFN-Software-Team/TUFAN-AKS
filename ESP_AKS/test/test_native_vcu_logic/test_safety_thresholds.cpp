@@ -242,12 +242,16 @@ void test_cell_overvoltage_critical_realistic(void) {
 }
 
 // ---------------------------------------------------------------------------
-// BMS FAULT state her zaman critical tetikler.
+// Motor error flag'leri — MOTOR_DRIVER_PRESENT=0 iken karar mantığına BAĞLI
+// DEĞİL. 0x200'ü bugün hall-effect hız sensörü üretiyor ve data[7] bit
+// anlamları motor sürücüsü için DOĞRULANMAMIŞ (bkz. CAN_Message_Table.md);
+// doğrulanmamış bir sinyalden kontaktör açtırmak Ek B ihlalidir (CLAUDE.md
+// Kural 4). Flag=1 dalı test_native_ready_motor'da kilitlenir.
 // ---------------------------------------------------------------------------
-void test_critical_motor_error_flag_set(void) {
+void test_motor_error_flag_is_not_critical_when_flag0(void) {
     TelemetryData d = makeTelemetryDataValid();
     d.TEL_motorErrorFlags = 0x01;
-    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
 void test_critical_bms_error_flag_set(void) {
@@ -257,7 +261,11 @@ void test_critical_bms_error_flag_set(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Motor timeout — IDLE'de yok sayılır, diğer durumlarda critical.
+// Motor timeout — MOTOR_DRIVER_PRESENT=0 iken HİÇBİR durumda kritik DEĞİL.
+// 0x200'ü hall-effect hız sensörü üretiyor; akışın kesilmesi HIZ GÖSTERGESİ
+// kaybıdır, GÜVENLİK arızası değildir — READY/DRIVE'da sahte FAULT üretip
+// kontaktör açtırmamalı. Flag=1'de eski davranış (IDLE hariç kritik) geri gelir
+// ve test_native_ready_motor'da kilitlenir.
 // ---------------------------------------------------------------------------
 void test_motor_timeout_in_idle_is_safe(void) {
     TelemetryData d = makeTelemetryDataValid();
@@ -265,16 +273,26 @@ void test_motor_timeout_in_idle_is_safe(void) {
     TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::IDLE));
 }
 
-void test_motor_timeout_in_ready_is_critical(void) {
+void test_motor_timeout_in_ready_is_not_critical_when_flag0(void) {
     TelemetryData d = makeTelemetryDataValid();
     d.TEL_motorTimeoutActive = true;
-    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
-void test_motor_timeout_in_drive_is_critical(void) {
+void test_motor_timeout_in_drive_is_not_critical_when_flag0(void) {
     TelemetryData d = makeTelemetryDataValid();
     d.TEL_motorTimeoutActive = true;
-    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::DRIVE));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::DRIVE));
+}
+
+// Sensör sustuğunda CanManager motorDataValid=false + motorTimeoutActive=true
+// yapar; bu bileşimin de READY/DRIVE'da kritik SAYILMAMASI gerekir.
+void test_motor_stream_lost_is_not_critical_when_flag0(void) {
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorDataValid = false;
+    d.TEL_motorTimeoutActive = true;
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::DRIVE));
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +321,8 @@ void test_bms_timeout_in_drive_is_critical(void) {
 }
 
 // ---------------------------------------------------------------------------
-// BMS data invalid — eşik kontrolü yapılmaz, motor error hâlâ critical.
+// BMS data invalid — eşik kontrolü yapılmaz. Motor error de (flag=0)
+// tetiklemez: geriye hiçbir kritik girdi kalmaz.
 // ---------------------------------------------------------------------------
 void test_warning_bms_invalid_skips_thresholds(void) {
     TelemetryData d = makeTelemetryDataValid();
@@ -315,11 +334,11 @@ void test_warning_bms_invalid_skips_thresholds(void) {
     TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
-void test_critical_bms_invalid_with_motor_error_still_critical(void) {
+void test_critical_bms_invalid_with_motor_error_not_critical_when_flag0(void) {
     TelemetryData d = makeTelemetryDataValid();
     d.TEL_bmsDataValid = false;
     d.TEL_motorErrorFlags = 0x04;
-    TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
+    TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
 // ---------------------------------------------------------------------------

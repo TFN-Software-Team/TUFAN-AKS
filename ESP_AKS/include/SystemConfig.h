@@ -204,27 +204,30 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define HMI_CMD_RESET          3  // 0x5A 0x03 0xFC -> RESET Request
 #define HMI_CMD_EMERGENCY_STOP 4  // 0x5A 0x04 0xFB -> EMERGENCY STOP Request
 
-// Komut 5 — HMI_CMD_HEADLIGHT_TOGGLE (far ekran butonu, çerçeve 0x5A 0x05 0xFA).
+// Komut 5 — KULLANIM DIŞI / REZERVE (eski far toggle, çerçeve 0x5A 0x05 0xFA).
 //
-// ⚠️ AÇIK ÇELİŞKİ (25.07.2026 tespiti — bkz. BENI_OKU.md):
-// Bu yorum eskiden "KULLANIM DIŞI — REZERVE, far fiziksel düğmeye taşındı"
-// diyordu, ama KOD BÖYLE DAVRANMIYOR: main.cpp'deki HMI komut switch'i hâlâ
-// `case 5` ile VcuEvent::HEADLIGHT_TOGGLE post ediyor ve VcuLogic.cpp bunu
-// RELAY_ROLES_ASSIGNED arkasında işleyip far rölesini sürüyor.
+// KARAR VERİLDİ (28.07.2026): farın resmî kontrol yolu FİZİKSEL DÜĞMEDİR
+// (HEADLIGHT_SWITCH_PIN, şartname B2 9.19.c); ekran farı yalnız GÖSTERİR
+// (far.pic göstergesi, bkz. Documents/HMI_Field_Map.md). Bu karar
+// 25.07.2026'da tespit edilen çelişkiyi kapatır — ÇELİŞKİ ARTIK YOKTUR.
 //
-// Üstelik far kanalına İKİ SÜRÜCÜ birden yazıyor:
-//   (a) fiziksel düğme (HEADLIGHT_SWITCH_PIN, şartname B2 9.19.c) — run()'ın
-//       her tick'inde okunur ve LATCHING modda far durumunu anahtar KONUMUNA
-//       eşitler;
+// Neden ekran kontrolü seçilmedi: far kanalına İKİ SÜRÜCÜ birden yazıyordu —
+//   (a) fiziksel düğme — run()'ın her tick'inde okunur ve LATCHING modda far
+//       durumunu anahtarın KONUMUNA eşitler;
 //   (b) ekran komutu 5 — anlık toggle.
 // Latching modda (a) baskındır: ekrandan yapılan toggle bir sonraki tick'te
-// GERİ ALINIR. Yani komut 5 pratikte kalıcı bir etki üretmez.
+// GERİ ALINIR. Yani (b) kalıcı bir etki üretmiyor, yalnız röleye gereksiz bir
+// yazma ve yanıltıcı bir log satırı çıkarıyordu. Tek sürücü bırakmak, iki
+// sürücüyü uzlaştırmaktan hem daha basit hem de şartnameye uygun.
 //
-// KARAR GEREKİYOR: ya komut 5 gerçekten kaldırılmalı (main.cpp'deki case ve
-// VcuLogic'teki dal silinir), ya da ekran kontrolü resmî yol yapılıp fiziksel
-// düğme mantığıyla uzlaştırılmalı. Karar verilene kadar numara BAŞKA BİR
-// KOMUTA ATANMAMALIDIR — eski ekran projeleri hâlâ 0x5A 0x05 0xFA gönderiyor
-// olabilir (bkz. Documents/HMI_Field_Map.md).
+// UYGULAMA: main.cpp'deki `case 5` ve VcuLogic.cpp'deki HEADLIGHT_TOGGLE
+// işleme dalı SİLİNDİ. VcuEvent::HEADLIGHT_TOGGLE enum girdisi rezerve olarak
+// duruyor ama hiçbir yerden post edilmiyor (bkz. VcuLogic.h).
+//
+// ⚠️ ID 5 BAŞKA BİR KOMUTA ATANMAMALIDIR — sahadaki eski ekran projeleri hâlâ
+// 0x5A 0x05 0xFA gönderiyor olabilir. Bugün o çerçeve main.cpp'deki `default`
+// dalına düşer ve yalnız WARN'lanır (röleye DOKUNMAZ); yeniden atanırsa aynı
+// çerçeve yanlış eylemi tetikler. Bu yüzden bu numaraya makro da TANIMLANMADI.
 //
 // READY/DRIVE'dan IDLE'a KONTROLLÜ dönüş (ekran "DUR" butonu, çerçeve
 // 0x5A 0x06 0xF9). Bu komuttan ÖNCE READY/DRIVE'dan çıkmanın tek yolu E-STOP
@@ -363,23 +366,44 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define RELAY_CONTACTOR_BANK_MASK ((1u << RELAY_TOTAL_CHANNELS) - 1u)  // 0x3FF
 #else
 // Roller atandı: kontaktör bankı = flaşör + fan + far HARİÇ tüm kanallar
-// (S1 + S2 + HV- + boş yedekler 3-6). allOff bu maskeyi açar → şartname
+// (S1 + S2 + HV- + boş yedekler 3/6/8/9). allOff bu maskeyi açar → şartname
 // 8.2.a.vi (güvenlik probleminde S1 ve S2 dahil hepsi açılır) sağlanır;
 // flaşör (uyarı), fan (soğutma) ve far kanallarının son yazılan durumu
 // shadow'da KORUNUR — güvenlik açması bunları söndürmez (sıcak batarya
 // soğutması ve uyarı ikazı kesilmez, far sürücü kontrolünde kalır).
+// Kablosuz yedek kanallar bu maskede BİLİNÇLİ olarak DURUR: allOff'un ne
+// sürdüğü bilinmeyen bir kanalı da güvenli tarafa (açık) zorlaması istenir.
 #define RELAY_CONTACTOR_BANK_MASK                     \
     (((1u << RELAY_TOTAL_CHANNELS) - 1u)              \
      & ~(1u << RELAY_CH_FLASHER)                      \
      & ~(1u << RELAY_CH_FAN)                          \
      & ~(1u << RELAY_CH_HEADLIGHT))  // 0x35B (Flasher:5, Fan:7, Headlight:2 haric)
-// Sürüş hattı bankı = S2 (kanal 4) + HV- (kanal 1) + boş yedekler. S1 (kanal 0),
-// fan ve far bu maskenin DIŞINDADIR (far/fan zaten kontaktör bankının da
-// dışında; S1 bilinçli olarak dışarıda): READY girişi yalnız bu maskeyi
-// kapatır, S1 açık kalır (şartname 8.2.a.vii). S1, RELAY_CONTACTOR_BANK_
-// MASK'ın İÇİNDEDİR ki allOff güvenlik açması S1'i de açsın (8.2.a.vi).
+// Sürüş hattı bankı = YALNIZ S2 (kanal 4) + HV- (kanal 1). READY girişi
+// (şartname 8.2.a.vii) sadece bu iki kontaktörü kapatır. Maskeden ÇIKARILANLAR:
+//   - S1 (kanal 0): sürüşte AÇIK kalmalı (8.2.a.vii).
+//   - Far / fan / flaşör: zaten kontaktör bankının da dışında.
+//   - Boş yedekler (SPARE_3/6/8/9): hiçbir yüke KABLOLANMAMIŞ. Bunları READY'de
+//     kapatmak (a) her START'ta 4 gereksiz bobin akımı çeker, (b) kademeli
+//     kapatmayı 2 yerine 6 adıma çıkarıp READY'yi 4*RELAY_STAGGER_STEP_MS
+//     kadar geciktirir, (c) HMI kontaktör göstergesini
+//     (HMI_areAllContactorsClosed) hiç bağlı olmayan rölelere baktırır.
+//
+// ASİMETRİ (bilinçli): yedekler RELAY_CONTACTOR_BANK_MASK'ın İÇİNDE, bu
+// maskenin DIŞINDADIR. Yani KAPATMA (READY) dar, AÇMA (allOff güvenlik açması)
+// geniştir. Şartname 8.2.a.vi güvenlik probleminde her şeyin açılmasını
+// istediğinden allOff yedekler dahil bankın tamamını açmaya devam eder.
+// Asimetri bu yönde güvenlidir: fazladan AÇMAK zararsız, fazladan KAPATMAK
+// (enerjilendirmek) değildir.
+//
+// NOT — yedekler ileride kablolanırsa: kanal SÜRÜŞ hattının parçasıysa (READY'de
+// kapalı olması gerekiyorsa) aşağıdaki maskeye `| (1u << RELAY_CH_SPARE_n)`
+// olarak eklenir ve RELAY_CH_SPARE_n makrosu gerçek rolüne göre yeniden
+// adlandırılır. Sürüş hattının parçası DEĞİLSE (ör. ikinci far, korna, pompa)
+// maskeye EKLENMEZ — far/fan gibi ayrı setRelay() ile sürülür. Maskeye eklenen
+// her kanal RELAY_CONTACTOR_BANK_MASK'ın da üyesi olmalıdır ki allOff onu
+// açabilsin; aşağıdaki alt-küme static_assert'i bunu derleme zamanında zorlar.
 #define RELAY_DRIVE_BANK_MASK \
-    (RELAY_CONTACTOR_BANK_MASK & ~(1u << RELAY_CH_S1_CHARGE))  // 0x35A
+    ((1u << RELAY_CH_S2_DRIVE) | (1u << RELAY_CH_HVNEG))  // 0x012 (S2:4 + HV-:1)
 #ifdef __cplusplus
 static_assert((RELAY_CONTACTOR_BANK_MASK & (1u << RELAY_CH_FLASHER)) == 0,
               "Flasor kanali kontaktor bank maskesinin DISINDA olmali — "
@@ -397,6 +421,16 @@ static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S2_DRIVE)) != 0 &&
                   (RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_HVNEG)) != 0,
               "S2 ve HV- (HVNEG) surus bankinin (RELAY_DRIVE_BANK_MASK) uyesi "
               "olmali — READY girisinde birlikte kapanir, allOff birlikte acar.");
+// RELAY_DRIVE_BANK_MASK artik RELAY_CONTACTOR_BANK_MASK'tan TUREMIYOR (acikca
+// yazili), bu yuzden eskiden yapisal olarak garanti olan iki kural artik
+// derleme zamaninda ZORLANIR:
+static_assert((RELAY_DRIVE_BANK_MASK & ~(unsigned)RELAY_CONTACTOR_BANK_MASK) == 0,
+              "Surus banki kontaktor bankinin ALT KUMESI olmali — aksi halde "
+              "READY'de kapatilan bir kanali allOff (guvenlik acmasi) ACAMAZ "
+              "(sartname 8.2.a.vi).");
+static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S1_CHARGE)) == 0,
+              "S1 surus bankinin DISINDA olmali — sarj hatti kontaktoru "
+              "suruste ACIK kalir (sartname 8.2.a.vii).");
 #endif
 #endif  // RELAY_ROLES_ASSIGNED
 
@@ -449,10 +483,25 @@ static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S2_DRIVE)) != 0 &&
 // durumla ters düşerdi (round-robin resync bunu HMI_RESYNC_HEADLIGHT ile de
 // onarır, bkz. lib/DisplayHMI/ResyncPolicy.h). Bileşen: Picture, objname="far",
 // komut "far.pic=<ID>".
-// CONFIG — Nextion resource ID'leri; ekran projesi hazırlanınca gerçek
-// değerlerle güncellenecek. Şimdilik 0 ve 1.
+//
+// ⚠️ CONFIG — EKRAN PROJESİNDEN ALINACAK — YARIŞ ÖNCESİ ZORUNLU.
+// Aşağıdaki 0/1 değerleri PLACEHOLDER'dır; ekran projesindeki gerçek Picture
+// resource ID'leri DEĞİLDİR. Nextion'da resource ID'ler, resimlerin projeye
+// eklenme SIRASINA göre atanır — "kapalı far" resmi 0, "açık far" resmi 1
+// olmak ZORUNDA değildir. Yanlış ID ile far.pic komutu bkcmd=0 altında
+// SESSİZCE yutulur ya da alakasız bir resim çizilir; firmware bunu fark
+// EDEMEZ (Nextion'dan onay okumuyoruz).
+//
+// NASIL ALINIR: Nextion Editor → sol alt "Picture" sekmesi → "far" (ekranda
+// bugün `pFar`, bkz. Documents/HMI_Field_Map.md) bileşeninin kullandığı iki
+// resmin listedeki numaraları. Bunlar buraya yazılıp
+// HMI_PIC_HEADLIGHT_CONFIRMED 1 yapılır.
 #define HMI_PIC_HEADLIGHT_OFF 0
 #define HMI_PIC_HEADLIGHT_ON 1
+// Gerçek resource ID'ler yukarıya yazılınca 1 yap. 0 iken derlemede #warning
+// ve boot'ta bir ESP_LOGW basılır (bkz. src/main.cpp) — derleme KIRILMAZ.
+// VEHICLE_PARAMS_CONFIRMED (include/VehicleParams.h) ile aynı desen.
+#define HMI_PIC_HEADLIGHT_CONFIRMED 0
 
 // --- MCP23S17 Çıkış Doğrulama (Actuator Verify) Periyodu ---
 // VCU task'i 20 ms'de bir (50 Hz) döner; OLAT/IODIR geri-okuma doğrulamasını
@@ -586,11 +635,17 @@ static_assert(
 #define SYSSTATE_DERIVE_FROM_CURRENT 1
 #endif
 
-// CONFIG — akımın "IDLE" sayılacağı simetrik bant (centi-Amper, TEL_bmsCurrentCentiA
+// ⚠️ CONFIG — SAHA KALİBRASYONU BEKLİYOR.
+// Akımın "IDLE" sayılacağı simetrik bant (centi-Amper, TEL_bmsCurrentCentiA
 // ile aynı birim). Öneri: 50 (=0.5 A) — 0xE000 byte[0:1] çözünürlüğü 0.1 A
 // (bkz. CAN_Message_Table.md) olduğundan birkaç LSB'lik ölçüm gürültüsüne
-// karşı marj bırakır. Saha kalibrasyonu/ekip onayı BEKLİYOR.
+// karşı marj bırakır; ancak gerçek gürültü genliği bench'te ÖLÇÜLMEDİ.
+// Yalnızca UKS telemetri GÖSTERİMİNİ etkiler (sysState 1/2/3) — güvenlik
+// kararına girmez (bkz. SYSSTATE_DERIVE_FROM_CURRENT notu, EK B kuralı).
 #define SYSSTATE_CURRENT_IDLE_BAND_CENTI_A 50
+// Bant bench'te ölçülen boşta-akım gürültüsüyle doğrulanınca 1 yap. 0 iken
+// boot'ta tek satırlık "teyitsiz CONFIG" özet WARN'ında listelenir.
+#define SYSSTATE_IDLE_BAND_CONFIRMED 0
 
 // --- Motor Error-Flag Debounce (G9) ---
 // Motor errorFlags → FAULT yolu, geçici/tek-seferlik hata bitine (ör. CAN CRC
@@ -710,9 +765,15 @@ static_assert(BMS_CRITICAL_MAX_TEMP_C - BMS_WARN_MAX_TEMP_C == 15,
 // Yalnız RELAY_ROLES_ASSIGNED=1 iken derlenen fan mantığı kullanır. Fan,
 // uyarı flaşöründen (55 °C) ÖNCE devreye girmeli ki batarya uyarı bandına
 // gelmeden soğutulsun — aşağıdaki static_assert bunu kilitler.
-// CONFIG — hücre datasheet + ekip onayı bekliyor (şartname B3 7.a-b).
+// ⚠️ CONFIG — EKİP ONAYI BEKLİYOR (hücre datasheet + şartname B3 7.a-b).
+// 40/35 mühendislik tahminidir, ölçülmüş bir değer DEĞİLDİR: hücrenin önerilen
+// çalışma sıcaklığı bandı ve fanın gerçek soğutma kapasitesi doğrulanmadı.
+// Değerler teyit edilince FAN_TEMP_CONFIRMED 1 yapılır.
 #define FAN_ON_TEMP_C 40
 #define FAN_OFF_TEMP_C 35
+// Yukarıdaki iki eşik ekip/datasheet ile teyit edilince 1 yap. 0 iken boot'ta
+// tek satırlık "teyitsiz CONFIG" özet WARN'ında listelenir (bkz. src/main.cpp).
+#define FAN_TEMP_CONFIRMED 0
 #ifdef __cplusplus
 static_assert(FAN_ON_TEMP_C > FAN_OFF_TEMP_C,
               "Fan ON esigi OFF esiginden buyuk olmali (histerezis) — aksi "
@@ -734,15 +795,23 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // BAĞLI: VcuLogic::isCurrentWarning/isCurrentCritical (>= semantiği)
 // hasWarningCondition/hasCriticalCondition içinden çağrılır.
 //
-// CONFIG — şarj eşikleri saha verisine göre kalibre edildi: 9.9 A nominal
-// şarj akımının üstünde marjla WARN 11 A / CRITICAL 13 A önerildi. Nihai
-// değerler BMS/şarj cihazı spec'iyle EKİP ONAYI BEKLİYOR. Deşarj eşikleri
-// (9/15 A) saha gözlemindeki −1.5 A tepe değerin çok üstünde; onlar da aynı
-// onay turunda gözden geçirilmeli.
+// ⚠️ CONFIG — SAHA KALİBRASYONU / EKİP ONAYI BEKLİYOR.
+// Şarj eşikleri tek bir saha gözleminden türetildi: 9.9 A nominal şarj
+// akımının üstünde marjla WARN 11 A / CRITICAL 13 A önerildi. Nihai değerler
+// BMS/şarj cihazı spec'iyle DOĞRULANMADI. Deşarj eşikleri (9/15 A) saha
+// gözlemindeki −1.5 A tepe değerin çok üstünde; onlar da aynı onay turunda
+// gözden geçirilmeli.
+//
+// RİSK: bu eşikler karar mantığına BAĞLIDIR (isCurrentWarning/isCurrentCritical
+// → hasCriticalCondition → FAULT + kontaktör açma). Düşük kalırsa yarışta
+// yanlış FAULT, yüksek kalırsa gerçek aşırı akımda geç kalma anlamına gelir.
 #define BMS_WARN_MAX_CHARGE_CURRENT_CENTI_A       1100  // 11.0 A
 #define BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A   1300  // 13.0 A
 #define BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A    900   // 9.0 A
 #define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A 1500 // 15.0 A
+// Yukarıdaki dört eşik saha kalibrasyonu + ekip onayından geçince 1 yap.
+// 0 iken boot'ta tek satırlık "teyitsiz CONFIG" özet WARN'ında listelenir.
+#define BMS_CURRENT_THRESHOLDS_CONFIRMED 0
 // Hücre voltajı eşikleri (mV) — 24S LiFePO4 spec'inden türetildi
 // (2.50 V / 3.65 V per hücre). TEL_bmsCellVoltageMin/MaxDeciMv DOĞRULANDI ve
 // parse ediliyor (0xE001 byte[0:1]/byte[2:3], bkz. CanParse::parseLbBmsE001)
@@ -833,6 +902,62 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // tetiklendiginde ayni durum tekrar tekrar olussa bile log spam'ini
 // onlemek icin alan basina en fazla 1 WARN / bu sure.
 #define TEL_SANITIZE_WARN_THROTTLE_MS 10000
+
+// ===========================================================================
+// --- YARIŞ ÖNCESİ TEYİT ÖZETİ (CONFIG placeholder izleyicisi) ---
+// ===========================================================================
+// AMAÇ: yarış günü bench'te, seri porta tek bakışta "hangi değerler HÂLÂ
+// teyitsiz" görünsün. Yukarıdaki *_CONFIRMED bayrakları tek tek anlamlıdır;
+// burası onları TEK bir boot log satırına toplar (bkz. src/main.cpp app_main).
+//
+// DESEN: include/VehicleParams.h::VEHICLE_PARAMS_CONFIRMED ile aynı —
+// derlemede #warning + boot'ta log; derleme ASLA kırılmaz (yarış sabahı
+// derlemeyi kilitleyen bir kontrol, çözdüğünden çok sorun çıkarır).
+//
+// YENİ BİR CONFIG EKLERKEN: (1) değerin yanına <AD>_CONFIRMED 0 bayrağı koy,
+// (2) aşağıya AKS_CFG_TXT_<AD> ikilisini ekle, (3) AKS_CFG_UNCONFIRMED_LIST
+// ve AKS_HAS_UNCONFIRMED_CONFIG satırlarına ekle. main.cpp DEĞİŞMEZ.
+//
+// Bayraklar 1 yapıldıkça ilgili metin listeden kendiliğinden düşer; hepsi 1
+// olunca boot'ta WARN yerine tek satırlık bir INFO basılır.
+
+#if !HMI_PIC_HEADLIGHT_CONFIRMED
+#define AKS_CFG_TXT_HMI_PIC_HEADLIGHT "HMI_PIC_HEADLIGHT_ON/OFF(ekran projesi) "
+#else
+#define AKS_CFG_TXT_HMI_PIC_HEADLIGHT ""
+#endif
+
+#if !FAN_TEMP_CONFIRMED
+#define AKS_CFG_TXT_FAN_TEMP "FAN_ON/OFF_TEMP_C(ekip onayi) "
+#else
+#define AKS_CFG_TXT_FAN_TEMP ""
+#endif
+
+#if !BMS_CURRENT_THRESHOLDS_CONFIRMED
+#define AKS_CFG_TXT_BMS_CURRENT "BMS_*_CHARGE_CURRENT_CENTI_A(saha kalibrasyonu) "
+#else
+#define AKS_CFG_TXT_BMS_CURRENT ""
+#endif
+
+#if !SYSSTATE_IDLE_BAND_CONFIRMED
+#define AKS_CFG_TXT_SYSSTATE_IDLE_BAND \
+    "SYSSTATE_CURRENT_IDLE_BAND_CENTI_A(saha kalibrasyonu) "
+#else
+#define AKS_CFG_TXT_SYSSTATE_IDLE_BAND ""
+#endif
+
+// Bitişik string literal birleştirmesi — derleme zamanında tek bir sabit.
+#define AKS_CFG_UNCONFIRMED_LIST                                       \
+    AKS_CFG_TXT_HMI_PIC_HEADLIGHT AKS_CFG_TXT_FAN_TEMP                 \
+        AKS_CFG_TXT_BMS_CURRENT AKS_CFG_TXT_SYSSTATE_IDLE_BAND
+
+#define AKS_HAS_UNCONFIRMED_CONFIG                                     \
+    (!HMI_PIC_HEADLIGHT_CONFIRMED || !FAN_TEMP_CONFIRMED ||            \
+     !BMS_CURRENT_THRESHOLDS_CONFIRMED || !SYSSTATE_IDLE_BAND_CONFIRMED)
+
+#if AKS_HAS_UNCONFIRMED_CONFIG
+#warning "TEYITSIZ CONFIG placeholder'lari var (SystemConfig.h *_CONFIRMED) — bkz. boot logu / Documents/BRING_UP_CHECKLIST.md"
+#endif
 
 // --- Sürüm Kimliği (AKS-18) ---
 // Nextion'a gönderilecek getter. Ekran projesi hazır olduğunda kullanılacak.

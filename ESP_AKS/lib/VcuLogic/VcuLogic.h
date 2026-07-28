@@ -36,6 +36,20 @@ enum class VcuEvent : uint8_t {
     EMERGENCY_STOP = 3,
     FAULT_DETECTED = 4,
     RESET = 5,
+    // KULLANIM DIŞI — REZERVE (28.07.2026 kararı). Bu olay artık HİÇBİR
+    // yerden post EDİLMEZ ve run() içinde işleyen bir dal YOKTUR.
+    //
+    // Farın resmî kontrol yolu FİZİKSEL DÜĞMEDİR (HEADLIGHT_SWITCH_PIN,
+    // şartname B2 9.19.c); ekran farı yalnız GÖSTERİR (far.pic). Eskiden
+    // ekran komutu 5 buraya post ederdi, ama latching modda fiziksel düğme
+    // baskın olduğu için toggle bir sonraki tick'te geri alınıyordu — kalıcı
+    // etkisi yoktu, yalnız röleye gereksiz yazma üretiyordu.
+    //
+    // ⚠️ BU GİRDİYİ SİLMEYİN ve değeri (6) BAŞKA BİR OLAYA ATAMAYIN. Enum
+    // dahilî olsa da değer kaydırmak, kuyrukta beklerken anlamı değişen bir
+    // olay yaratır; ayrıca ekran tarafındaki komut 5 de aynı gerekçeyle
+    // rezervedir (sahadaki eski ekran projeleri hâlâ 0x5A 05 FA gönderiyor
+    // olabilir — o çerçeve main.cpp'de `default` dalına düşüp WARN'lanır).
     HEADLIGHT_TOGGLE = 6,
     // READY/DRIVE -> IDLE KONTROLLÜ dönüş (ekran "DUR" butonu, HMI_CMD_STOP).
     //
@@ -66,6 +80,17 @@ enum class VcuEvent : uint8_t {
 // BMS/motor freshness (BMS freshness G12 ile E000+E001 ID bazında ayrı ayrı
 // izlenir; hücre voltajı freshness'ı CAN_cellVoltageSeenMask/E015-E020 ile
 // ayrı izlenir, bkz. TEL_cellVoltageTimeoutActive).
+//
+// MOTOR KAYNAKLI GİRDİLER (TEL_motorErrorFlags / TEL_motorTimeoutActive /
+// TEL_motorDataValid) tamamen `#if MOTOR_DRIVER_PRESENT` arkasındadır. Bayrak
+// 0 iken 0x200'ü motor sürücüsü DEĞİL, hall-effect hız sensörü ünitesi üretir
+// (Documents/CAN_Message_Table.md "0x200"; MOTOR_ENTEGRASYON_NOTU.md §5) —
+// o akışın kesilmesi HIZ GÖSTERGESİ kaybıdır, GÜVENLİK arızası değildir; ne
+// kontaktör açtırır ne de FAULT/EMERGENCY_STOP'tan çıkışı bloklar. Tek istisna
+// isResetInterlockSatisfied'daki RPM kontrolüdür (hareket halinde reset yasağı)
+// — o bayraktan bağımsızdır, ama yalnız TEL_motorDataValid iken bakılır.
+// Bayrak 1 olduğunda tüm motor kontrolleri geri gelir.
+//
 // KAPANDI (Y33, 24.07.2026): TEL_bmsSystemState==4 kontrolleri DEVRE DIŞI
 // bırakıldı (E-3/AKS-17, aşağıya bkz.). BMS'in sağlık durumunu yayınladığı bir
 // CAN ID'ye ULAŞILAMADI ve aranmayacak; alan artık akımdan türetilen ÇALIŞMA
@@ -182,16 +207,31 @@ inline bool hasWarningCondition(const TelemetryData& VCU_data) {
 
 inline bool hasCriticalCondition(const TelemetryData& VCU_data,
                                  VcuState currentState) {
+#if MOTOR_DRIVER_PRESENT
+    // MOTOR_DRIVER_PRESENT=0 iken 0x200'ü hall-effect hız sensörü ünitesi
+    // üretiyor (motor sürücüsü DEĞİL — bkz. Documents/CAN_Message_Table.md
+    // "0x200" notu ve MOTOR_ENTEGRASYON_NOTU.md §5). O kaynakta data[7] HER
+    // ZAMAN 0x00'dır ve bit anlamları motor sürücüsü için DOĞRULANMAMIŞTIR;
+    // doğrulanmamış bir sinyalden kontaktör açtırmak Ek B güven kuralının
+    // (CLAUDE.md Kural 4) ihlalidir. Bayrak 1 olduğunda — yani 0x200'ün
+    // kaynağı gerçekten motor sürücüsü olduğunda — tüm kontroller geri gelir.
     if (VCU_data.TEL_motorErrorFlags != 0)
         return true;
+#endif
 
     // DEVRE DISI: TEL_bmsSystemState gercek bir kaynaktan gelmiyor (AKS-17).
     // Gercek CAN parse eklendikten sonra yeniden aktif edilecek.
     // if (VCU_data.TEL_bmsDataValid && VCU_data.TEL_bmsSystemState == 4)
     //     return true;
 
+#if MOTOR_DRIVER_PRESENT
+    // MOTOR_DRIVER_PRESENT=0 iken 0x200'ü hall-effect hız sensörü üretiyor; bu
+    // akışın kesilmesi HIZ GÖSTERGESİ kaybıdır, bir GÜVENLİK arızası DEĞİLDİR
+    // ve kontaktör açtırmamalıdır (READY/DRIVE'da sahte FAULT üretiyordu).
+    // Bayrak 1 olduğunda tüm kontroller geri gelir.
     if (VCU_data.TEL_motorTimeoutActive && currentState != VcuState::IDLE)
         return true;
+#endif
 
     // Post-reception BMS freshness kaybı — motor timeout ile aynı politika:
     // IDLE'da tolere edilir, READY/DRIVE'da kritik (HV bus canlıyken bayat
@@ -234,17 +274,42 @@ inline bool isResetInterlockSatisfied(const TelemetryData& VCU_data,
                                       VcuState currentState) {
     // DEVRE DISI: TEL_bmsSystemState gercek bir kaynaktan gelmiyor (AKS-17).
     // Gercek CAN parse eklendikten sonra yeniden aktif edilecek.
+
+#if MOTOR_DRIVER_PRESENT
+    // MOTOR_DRIVER_PRESENT=0 iken 0x200'ü hall-effect hız sensörü üretiyor ve
+    // data[7] bit anlamları motor sürücüsü için DOĞRULANMAMIŞTIR (bkz.
+    // Documents/CAN_Message_Table.md). Doğrulanmamış bir sinyalin FAULT'tan
+    // çıkışı bloklaması Ek B güven kuralının (CLAUDE.md Kural 4) ihlalidir.
+    // Bayrak 1 olduğunda kontrol geri gelir.
     if (VCU_data.TEL_motorErrorFlags != 0)
         return false;
+#endif
 
     if (hasCriticalCondition(VCU_data, currentState))
         return false;
 
-    // AKS-04: Hareket halinde RESET'e izin verme (fail-safe: bayat veri = red)
+#if MOTOR_DRIVER_PRESENT
+    // AKS-04 fail-safe (bayat motor verisi = red). MOTOR_DRIVER_PRESENT=0 iken
+    // 0x200'ü hall-effect hız sensörü üretiyor; bu akışın kesilmesi bir
+    // GÜVENLİK arızası DEĞİLDİR ve FAULT'tan çıkışı BLOKLAMAMALIDIR — aksi
+    // halde sensör sustuğunda araç EMERGENCY_STOP/FAULT'ta KALICI kilitlenir
+    // (RESET her seferinde reddedilir, otomatik reset de takılır). Bayrak 1
+    // olduğunda tüm kontroller geri gelir.
     if (!VCU_data.TEL_motorDataValid || VCU_data.TEL_motorTimeoutActive)
         return false;
+#endif
 
-    if (VCU_data.TEL_motorRpm >= VCU_RESET_MAX_RPM || VCU_data.TEL_motorRpm <= -VCU_RESET_MAX_RPM)
+    // AKS-04'ün ASIL amacı: hareket halinde RESET'e izin verme. Bu kontrol
+    // bayraktan BAĞIMSIZDIR — RPM'i bugün hall-effect sensörü besliyor ve
+    // hareket halinde FAULT'tan çıkmak yine de yasaktır; motor sürücüsü
+    // geldiğinde aynı kontrol onun RPM'iyle sürer.
+    // KAPI (motorDataValid): freshness kaybında CanManager TEL_motorRpm'i
+    // SIFIRLAMAZ — son değer donar (bkz. CanManager.cpp motor timeout yolu).
+    // Bayat bir RPM'e bakmak, sensör yüksek hızda sustuğunda reset'i KALICI
+    // olarak bloklardı; bu yüzden RPM yalnızca veri TAZE iken değerlendirilir.
+    if (VCU_data.TEL_motorDataValid &&
+        (VCU_data.TEL_motorRpm >= VCU_RESET_MAX_RPM ||
+         VCU_data.TEL_motorRpm <= -VCU_RESET_MAX_RPM))
         return false;
 
     return true;

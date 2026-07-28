@@ -23,7 +23,7 @@ Fields currently included:
 | `HMI_bmsDataValid` | `TEL_bmsDataValid` | BMS freshness — `chg` NO_DATA dalının girdisi |
 | `HMI_bmsTimeoutActive` | `TEL_bmsTimeoutActive` | BMS post-reception timeout — `chg` NO_DATA dalının girdisi |
 | `HMI_chargerActive` | `TEL_chargerActive` | Araç şarjda mı — `chg` CHARGING dalının girdisi. **Yalnız gösterim**; LoRa wire formatına serialize EDİLMEZ |
-| `HMI_contactorClosed` | `RelayManager::getRelayState()` | True if all positive contactors are closed |
+| `HMI_contactorClosed` | `RelayManager::getRelayState()` | True if every contactor in the **state-dependent** mask is closed — see `HMI_areAllContactorsClosed` below |
 | `HMI_vcuState` | `VcuLogic::getState()` | Current VCU state |
 | `HMI_headlightOn` | `VcuLogic::isHeadlightOn()` | Headlight state (physical switch). Screen only **shows** it; `false` whenever `RELAY_ROLES_ASSIGNED=0` (honest state) |
 
@@ -130,6 +130,23 @@ SLOT** — sıra kaydırmamak için yerinde).
   `RelayManager`'ın bildiği şey verilen komuttur; kontaktör yardımcı
   kontağından bağımsız geri besleme **okunmuyor**. Yapışmış/açılmamış bir
   kontaktör ekranda yine `CLOSED` görünür.
+- **`contactor` hangi kanallara bakar? Duruma göre DEĞİŞİR**
+  (`HMI_areAllContactorsClosed`, `lib/HMIHelpers/HMIMappings.cpp`):
+
+  | VCU durumu | Kullanılan maske | Bakılan kanallar |
+  | --- | --- | --- |
+  | `READY`, `DRIVE` | `RELAY_DRIVE_BANK_MASK` = **0x012** | yalnız S2 (ch4) + HV− (ch1) |
+  | diğer tüm durumlar | `RELAY_CONTACTOR_BANK_MASK` = **0x35B** | S1 + S2 + HV− + yedekler (ch0,1,3,4,6,8,9) |
+
+  READY/DRIVE'da dar maske kullanılır çünkü şartname 8.2.a.vii gereği S1 o
+  durumda AÇIK olmalıdır — geniş maskeyle gösterge sürüş boyunca `OPEN`
+  takılırdı. Kablosuz yedek kanallar (ch3/6/8/9) da sürüş maskesinin dışındadır:
+  `VcuLogic::handleReady()` onları zaten kapatmaz, gösterge onlara baksaydı
+  READY'de kalıcı `OPEN` görünürdü. Bank dışı kanallar (far ch2, flaşör ch5,
+  fan ch7) hiçbir durumda göstergeye girmez — kontaktör değildirler.
+  `RELAY_ROLES_ASSIGNED=0` iken `RELAY_DRIVE_BANK_MASK` tanımlı değildir ve her
+  durumda 10 kanalın tamamına bakılır. Maske değerleri değişirse burası ve
+  [RELAY_CHANNEL_TABLE.md](RELAY_CHANNEL_TABLE.md) aynı commit'te güncellenir.
 
 ### Float (xfloat) fields
 
@@ -245,26 +262,164 @@ The 24-cell BMS panel has its own rotation
 
 ## Command Inputs
 
-Touch commands are 3-byte frames `0x5A <CMD> <~CMD>` (header, command, bitwise-NOT
-checksum) parsed by `DisplayHMI::readTouchCommand`. IDs currently recognized by firmware:
+Dokunmatik komutlar 3 baytlık `0x5A <CMD> <~CMD>` çerçeveleridir (header, komut,
+bit-tersi checksum); `DisplayHMI::readTouchCommand` →
+`HMI_parseTouchByte` (`lib/HMIHelpers/HMITouchParser.cpp`) tarafından çözülür.
 
-| Command ID | Meaning | Full frame (header CMD ~CMD) |
-| --- | --- | --- |
-| `1` | `START` | `0x5A 0x01 0xFE` |
-| `2` | `RESET` | `0x5A 0x02 0xFD` |
-| `3` | `EMERGENCY_STOP` | `0x5A 0x03 0xFC` |
-| `4` | `DRIVE_ENABLE` | `0x5A 0x04 0xFB` |
-| `5` | **UNUSED — RESERVED** (do not reassign) | — |
+> ### ⚠️ 28.07.2026 — BU TABLO DÜZELTİLDİ (yarış günü riski)
+>
+> Bu bölümdeki eski tablo `2 = RESET`, `3 = EMERGENCY_STOP`, `4 = DRIVE_ENABLE`
+> diyordu. **KOD BÖYLE DEĞİL.** Eski tabloya göre çizilen bir ekran projesinde
+> **E-STOP butonu `0x5A 03 FC` gönderir ve firmware bunu RESET olarak işler** —
+> yani acil durdurma isteği, arıza kaydını temizleme isteğine dönüşür.
+> Aşağıdaki tablo `include/SystemConfig.h` + `src/main.cpp` ile birebirdir
+> (CLAUDE.md Kural 1: kod kazanır) ve
+> `test/test_native_hmi/test_command_contract.cpp` tarafından kilitlenmiştir.
 
-### Command `5` — unused / reserved
+### Komut tablosu (tek doğruluk kaynağı: kod)
 
-Command `5` was previously `HEADLIGHT_TOGGLE` (frame `0x5A 0x05 0xFA`). The
-headlight is now controlled by a **physical switch** (`HEADLIGHT_SWITCH_PIN`,
-şartname B2 9.19.c), so the screen no longer sends any headlight command — the
-firmware no longer handles command 5. The ID is **kept permanently free**: if it
-were reassigned to another command, an old screen project still emitting
-`0x5A 0x05 0xFA` would trigger the wrong action. Command IDs 1-4 remain
-START/RESET/EMERGENCY_STOP/DRIVE_ENABLE.
+| Command ID | Makro | Anlam | Tam çerçeve (header CMD ~CMD) | Firmware'in yaptığı (`src/main.cpp`) |
+| --- | --- | --- | --- | --- |
+| `1` | `HMI_CMD_START` | `START` | `0x5A 0x01 0xFE` | `VcuEvent::START_REQUEST` |
+| `2` | `HMI_CMD_DRIVE_ENABLE` | `DRIVE_ENABLE` | `0x5A 0x02 0xFD` | `VcuEvent::DRIVE_ENABLE` |
+| `3` | `HMI_CMD_RESET` | `RESET` | `0x5A 0x03 0xFC` | `VcuEvent::RESET` |
+| `4` | `HMI_CMD_EMERGENCY_STOP` | `EMERGENCY_STOP` | `0x5A 0x04 0xFB` | `VcuEvent::EMERGENCY_STOP` |
+| `5` | *(makro YOK — kasten)* | **KULLANIM DIŞI — REZERVE, ATANMASIN** | `0x5A 0x05 0xFA` | **Hiçbir şey** — `default` dalı, yalnız WARN |
+| `6` | `HMI_CMD_STOP` | `STOP` (kontrollü durdurma) | `0x5A 0x06 0xF9` | `VcuEvent::STOP_REQUEST` |
+
+Tabloda olmayan her ID — **ve rezerve `5`** — `default` dalına düşer ve
+`"Ignored/Unknown HMI command received: %d"` WARN'ı ile **yok sayılır**.
+
+> **Komut ID'leri ≠ `VcuEvent` enum değerleri.** Bunlar iki AYRI numara
+> uzayıdır ve kasten farklıdır: `VcuEvent::HEADLIGHT_TOGGLE = 6`,
+> `VcuEvent::STOP_REQUEST = 7`, ama `HMI_CMD_STOP = 6`
+> (bkz. `lib/VcuLogic/VcuLogic.h`). Ekran tarafını yazarken **yalnız yukarıdaki
+> tabloya** bakın; `VcuEvent` değerleri firmware içidir.
+
+### ⚠️ `STOP` (6) `E-STOP`'un (4) YERİNİ TUTMAZ
+
+Bu ikisi ekranda da ayrı butonlar olmalı ve karıştırılmamalıdır
+(`SystemConfig.h` satır 234-239):
+
+- **E-STOP (`4`)** — acil. **Her** durumda çalışır, kontaktörleri ANINDA açar,
+  olay kuyruğunu bypass eder (atomic bayrak), `EMERGENCY_STOP` durumuna geçer,
+  çıkmak için RESET interlock'u gerekir.
+- **STOP (`6`)** — normal/kontrollü. Yalnız `READY` ve `DRIVE`'da anlamlıdır,
+  güvenli kapanış sırasını izler (önce sıfır tork, `VCU_CONTACTOR_OPEN_DELAY_MS`
+  sonra kontaktör), `IDLE`'a döner ve **arıza kaydı bırakmaz**.
+
+> **STOP anında tamamlanmaz (2026-07-28):** komut alındığında önce sıfır tork
+> istenir; kontaktör açma ve `IDLE` dönüşü, torkun sönmesi için
+> `VCU_CONTACTOR_OPEN_DELAY_MS` (20 ms) beklendikten sonra **bir sonraki VCU
+> tick'inde** olur. Ekranda "DUR"a basıldıktan sonra durum göstergesinin
+> `IDLE`'a düşmesi bir tick (~20 ms) gecikebilir — bu **normaldir**. Bekleme
+> sırasında gelen bir E-STOP kazanır ve bekleyen STOP iptal edilir. Ayrıntı:
+> `Documents/MOTOR_ENTEGRASYON_NOTU.md` §7.
+
+Ekrandaki E-STOP butonu fiziksel acil durdurma butonunun **yerini tutmaz**; o
+ayrı bir donanım yoludur.
+
+### `RESET` (3) durum başına ne yapar (28.07.2026)
+
+`RESET` tek bir buton ama **iki farklı iş** yapar; hangisinin çalıştığı VCU'nun
+o anki durumuna bağlıdır (`lib/VcuLogic/VcuLogic.cpp::run()`):
+
+| Durum | `RESET`'in etkisi |
+| --- | --- |
+| `FAULT` / `EMERGENCY_STOP` | **Arızadan çıkış.** Önce `isResetInterlockSatisfied()` aranır (kritik koşul yok + hareket halinde değil); geçerse actuator fault temizlenir ve `IDLE`'a geçilir. Interlock reddederse durum DEĞİŞMEZ ve WARN loglanır. |
+| `IDLE` | **Sadece latch'lenmiş actuator fault'u temizler** — durum geçişi YOK, kontaktörlere DOKUNULMAZ, interlock ARANMAZ (kontaktörler zaten açık, HV bus ölü). |
+| `READY` / `DRIVE` / `INIT` | Yok sayılır. |
+
+**`IDLE`'daki RESET neden var:** `RelayManager` bir röle geri-okuma
+uyuşmazlığında actuator fault'u **latch'ler**. Bu fault `IDLE`'da `START`'ı
+kalıcı olarak reddettiriyordu (`"READY gecisi reddedildi: actuator fault"`) ve
+`clearActuatorFault()` yalnız `FAULT`/`E-STOP`'tan çıkışta çağrıldığı için
+**tek çıkış reboot'tu**.
+
+**Bu bir bypass DEĞİLDİR:** temizleme kalıcı değil. Donanım gerçekten bozuksa
+bir sonraki periyodik `verifyIfDue` taraması fault'u **yeniden latch'ler** ve
+`START` tekrar bloklanır. Yani buton, geçici bir uyuşmazlıktan sonra sürücüye
+güvenli bir "tekrar dene" imkânı verir; bozuk donanımı gizlemez.
+Testler: `test/test_native_vcu_logic/test_reset_interlock.cpp`
+(`test_idle_reset_clears_actuator_fault_and_stays_idle`,
+`test_idle_reset_is_not_a_bypass_when_hardware_still_broken`).
+
+> **Ekran tarafı için sonuç:** `RESET` butonu `IDLE` ekranında da **aktif
+> bırakılmalıdır**. Yalnızca arıza ekranında gösterilirse, kullanıcı
+> latch'lenmiş bir actuator fault'tan çıkamaz.
+
+### Nextion Editor — butonlara yazılacak TAM KOD
+
+Her buton için **Touch Release Event** sekmesine (Touch Press değil) aşağıdaki
+tek satır yazılır. `printh` argümanları **hex** ve **boşlukla ayrılmış** olmalıdır:
+
+| Buton | Touch Release Event kodu |
+| --- | --- |
+| START | `printh 5A 01 FE` |
+| DRIVE (sürüşe izin) | `printh 5A 02 FD` |
+| RESET | `printh 5A 03 FC` |
+| **E-STOP (acil durdurma)** | `printh 5A 04 FB` |
+| STOP / DUR (kontrollü) | `printh 5A 06 F9` |
+
+Far için ekranda **buton yoktur** — `far` bir Picture *göstergesidir* ve touch
+event'i **boş kalmalıdır** (aşağıdaki `far` sözleşmesine bkz.). Mevcut ekran
+projesinde far butonu veya `printh 5A 05 FA` satırı **varsa KALDIRILMALIDIR**:
+firmware artık komut 5'i işlemiyor (bkz. "Komut `5`"), yani o buton sessizce
+hiçbir şey yapmaz — sürücüye çalışıyormuş izlenimi veren ölü bir kontroldür.
+
+> **Neden Touch *Release*?** Basılı tutarken tetiklenen Press event'i, parmak
+> kaymasıyla veya titreşimle yanlışlıkla komut üretebilir. Release, operatörün
+> butonu bilerek bıraktığı andır. Tüm butonlar aynı olayı kullanmalıdır ki
+> davranış öngörülebilir olsun.
+
+#### ⚠️ Butonlarda "Send Component ID" İŞARETLENMEMELİ
+
+Nextion Editor'de her bileşenin attribute panelinde bulunan **Send Component
+ID** kutusu (Touch Press / Touch Release) **işaretsiz bırakılmalıdır**.
+İşaretlenirse ekran, `printh` çıktısına **ek olarak** 7 baytlık bir
+`0x65 <page> <cid> <event> 0xFF 0xFF 0xFF` çerçevesi yollar.
+
+- Firmware bu çerçeveyi **kullanmaz**: `HMI_parseTouchByte` yalnız `0x5A` ile
+  başlayan çerçeveleri çözer; `0x00`/`0xFF` baytları parser durumunu resetler,
+  dolayısıyla `0x65` trafiği **yanlış komut üretemez**.
+- Ama tamamen bedava da değildir: her dokunuşta gereksiz RX trafiği doğurur ve
+  `DisplayHMI::readTouchCommand` içindeki liveness zaman damgasını (`0x65`
+  bayt kontrolü) besler — yani ekran-canlı göstergesi, gerçek komut trafiği
+  olmasa da "canlı" kalır.
+
+Kısacası: **tek kaynak `printh` olsun.** Kutu işaretliyse kaldırın.
+
+### Komut `5` — KULLANIM DIŞI / REZERVE (28.07.2026 kararı)
+
+**Karar: farın resmî kontrol yolu FİZİKSEL DÜĞMEDİR** (`HEADLIGHT_SWITCH_PIN`,
+şartname B2 9.19.c); **ekran farı yalnız GÖSTERİR** (`far.pic`, aşağıdaki
+sözleşmeye bkz.). Bu karar 25.07.2026'da tespit edilen "açık çelişki"yi kapatır.
+
+**Kodda yapılan:** `src/main.cpp`'deki `case 5` dalı ve
+`lib/VcuLogic/VcuLogic.cpp`'deki `HEADLIGHT_TOGGLE` işleme dalı **silindi**.
+Bugün `0x5A 05 FA` çerçevesi `default` dalına düşer, yalnız
+`"Ignored/Unknown HMI command received: 5"` WARN'ı basar ve **röleye
+dokunmaz**. Far rölesinin tek sürücüsü artık `HeadlightSwitch::update`
+yoludur.
+
+**Neden ekran kontrolü seçilmedi:** far kanalına iki sürücü birden yazıyordu —
+
+1. **fiziksel düğme**, `run()`'ın her tick'inde okunur ve LATCHING modda far
+   durumunu anahtarın **konumuna** eşitler;
+2. **ekran komutu 5**, anlık toggle.
+
+Latching modda (1) baskındı: ekrandan yapılan toggle bir sonraki tick'te
+**geri alınıyordu**. Yani (2) kalıcı bir etki üretmiyor, yalnız röleye
+gereksiz bir yazma ve yanıltıcı bir log satırı ("Far ACILDI") çıkarıyordu. Tek
+sürücü bırakmak, iki sürücüyü uzlaştırmaktan hem daha basit hem de şartnameye
+uygun.
+
+> ⚠️ **ID 5 BAŞKA BİR KOMUTA ATANMAMALIDIR.** Sahadaki eski ekran projeleri
+> hâlâ `0x5A 0x05 0xFA` gönderiyor olabilir; bugün bu çerçeve zararsızca
+> yutulur, ama numara yeniden atanırsa **aynı çerçeve yanlış eylemi tetikler**.
+> Bu yüzden bu ID'ye bir `HMI_CMD_*` makrosu da kasten **tanımlanmadı** ve
+> `VcuEvent::HEADLIGHT_TOGGLE = 6` enum girdisi silinmeyip **rezerve**
+> bırakıldı (`lib/VcuLogic/VcuLogic.h`).
 
 ### `far` (Picture) — headlight status indicator contract
 

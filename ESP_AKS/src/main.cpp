@@ -519,10 +519,13 @@ void vTask_HMI_Display(void *pvParameters) {
                 ESP_LOGI(TAG, "HMI command: EMERGENCY_STOP request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::EMERGENCY_STOP);
                 break;
-            case 5: // HMI_CMD_HEADLIGHT_TOGGLE
-                ESP_LOGI(TAG, "HMI command: FAR (Headlight) toggle request");
-                VcuLogic::postEvent(VcuLogic::VcuEvent::HEADLIGHT_TOGGLE);
-                break;
+            // Komut 5 (far toggle) KASITLI OLARAK YOK — 28.07.2026 kararı:
+            // farın resmî yolu fiziksel düğmedir (HEADLIGHT_SWITCH_PIN,
+            // şartname B2 9.19.c), ekran farı yalnız GÖSTERİR. Eski ekran
+            // projelerinden gelebilecek 0x5A 05 FA çerçevesi aşağıdaki
+            // `default` dalına düşer ve yalnız WARN'lanır — röleye DOKUNMAZ.
+            // ID 5 REZERVEDİR, başka bir komuta atanmamalıdır
+            // (bkz. SystemConfig.h "Komut 5").
             case HMI_CMD_STOP:
                 ESP_LOGI(TAG, "HMI command: STOP (kontrollu durdurma) request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::STOP_REQUEST);
@@ -886,6 +889,30 @@ extern "C" void app_main() {
   // VehicleParams.h'de; bu boot logu sahada/bench'te de görünür kalır.
   ESP_LOGE(TAG, "ARAC PARAMETRELERI TEYITSIZ — hiz/enerji verisi gecersiz "
                 "(VehicleParams.h)");
+#endif
+
+#if !HMI_PIC_HEADLIGHT_CONFIRMED
+  // Far durum göstergesi (far.pic): HMI_PIC_HEADLIGHT_ON/OFF hala PLACEHOLDER
+  // (1/0). Gercek Nextion resource ID'leri EKRAN PROJESINDEN ALINACAK ve
+  // YARIS ONCESI ZORUNLU olarak girilecek. Yanlis ID ile komut bkcmd=0
+  // altinda SESSIZCE yutulur ya da alakasiz resim cizilir — firmware bunu
+  // fark EDEMEZ, bu yuzden tek gorunur uyari bu boot logudur.
+  ESP_LOGW(TAG, "FAR GOSTERGESI TEYITSIZ: HMI_PIC_HEADLIGHT_OFF=%d ON=%d "
+                "PLACEHOLDER — EKRAN PROJESINDEN ALINACAK, YARIS ONCESI "
+                "ZORUNLU (SystemConfig.h)",
+           HMI_PIC_HEADLIGHT_OFF, HMI_PIC_HEADLIGHT_ON);
+#endif
+
+  // Yaris gunu bench'te "hangi degerler HALA teyitsiz" tek satirda gorunsun.
+  // Liste SystemConfig.h'de derleme zamaninda kurulur (AKS_CFG_UNCONFIRMED_
+  // LIST); bir *_CONFIRMED bayragi 1 yapilinca ilgili metin kendiliginden
+  // duser ve hepsi 1 olunca asagidaki INFO dali calisir.
+#if AKS_HAS_UNCONFIRMED_CONFIG
+  ESP_LOGW(TAG, "TEYITSIZ CONFIG: %s— degerler girilene kadar bench/yaris "
+                "davranisi TAHMINE dayali (SystemConfig.h *_CONFIRMED)",
+           AKS_CFG_UNCONFIRMED_LIST);
+#else
+  ESP_LOGI(TAG, "CONFIG: yaris oncesi teyit bekleyen deger YOK.");
 #endif
 
   // BMS durumu: 0xE000 ve 0xE001 DOĞRULANDI (packV, current, SoC, temp,

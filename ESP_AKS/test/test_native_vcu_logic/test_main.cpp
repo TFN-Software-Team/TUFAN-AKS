@@ -48,13 +48,14 @@ extern void test_cell_overvoltage_warn_threshold_deci_mv(void);
 extern void test_cell_overvoltage_critical_realistic(void);
 
 // Faz 1 — error flag'ler
-extern void test_critical_motor_error_flag_set(void);
+extern void test_motor_error_flag_is_not_critical_when_flag0(void);
 extern void test_critical_bms_error_flag_set(void);
 
-// Faz 1 — motor timeout
+// Faz 1 — motor timeout (MOTOR_DRIVER_PRESENT=0: hiçbir durumda kritik değil)
 extern void test_motor_timeout_in_idle_is_safe(void);
-extern void test_motor_timeout_in_ready_is_critical(void);
-extern void test_motor_timeout_in_drive_is_critical(void);
+extern void test_motor_timeout_in_ready_is_not_critical_when_flag0(void);
+extern void test_motor_timeout_in_drive_is_not_critical_when_flag0(void);
+extern void test_motor_stream_lost_is_not_critical_when_flag0(void);
 
 // Faz 1 — bms timeout (post-reception E000 freshness kaybı)
 extern void test_bms_timeout_in_idle_is_safe(void);
@@ -69,14 +70,14 @@ extern void test_cell_voltage_timeout_inactive_no_warning(void);
 
 // Faz 1 — bms data invalid
 extern void test_warning_bms_invalid_skips_thresholds(void);
-extern void test_critical_bms_invalid_with_motor_error_still_critical(void);
+extern void test_critical_bms_invalid_with_motor_error_not_critical_when_flag0(void);
 
 // Faz 1 — baseline & akım uçtan uca
 extern void test_baseline_clean_data_no_conditions(void);
 
 // Faz 1 — reset interlock
 extern void test_reset_interlock_clean_baseline_passes(void);
-extern void test_reset_interlock_motor_error_blocks(void);
+extern void test_reset_interlock_motor_error_does_not_block_when_flag0(void);
 extern void test_reset_interlock_bms_error_blocks(void);
 extern void test_reset_interlock_critical_temp_blocks(void);
 extern void test_reset_interlock_warning_temp_does_not_block(void);
@@ -84,7 +85,7 @@ extern void test_reset_interlock_critical_voltage_low_blocks(void);
 extern void test_reset_interlock_critical_voltage_high_blocks(void);
 extern void test_reset_interlock_critical_current_blocks(void);
 extern void test_reset_interlock_nominal_charge_current_does_not_block(void);
-extern void test_reset_interlock_motor_timeout_in_fault_blocks(void);
+extern void test_reset_interlock_motor_timeout_does_not_block_when_flag0(void);
 extern void test_reset_interlock_bms_timeout_in_fault_blocks(void);
 extern void test_reset_interlock_warning_level_passes(void);
 extern void test_reset_interlock_unverified_bms_system_state_does_not_block(void);
@@ -92,8 +93,15 @@ extern void test_reset_interlock_unverified_bms_system_state_does_not_block(void
 // AKS-04
 extern void test_reset_interlock_rpm_zero_fresh_passes(void);
 extern void test_reset_interlock_rpm_high_blocks(void);
-extern void test_reset_interlock_rpm_zero_stale_blocks(void);
 extern void test_reset_interlock_rpm_noise_passes(void);
+
+// MOTOR_DRIVER_PRESENT=0 — hall sensörü akışının kesilmesi reset'i bloklamaz
+extern void test_reset_interlock_motor_stream_lost_passes_when_flag0(void);
+extern void test_reset_interlock_stale_high_rpm_is_ignored_when_flag0(void);
+
+// IDLE'da RESET — latch'lenmiş actuator fault için "tekrar dene" yolu
+extern void test_idle_reset_clears_actuator_fault_and_stays_idle(void);
+extern void test_idle_reset_is_not_a_bypass_when_hardware_still_broken(void);
 
 // Faz 2 — state machine geçişleri
 extern void test_init_transitions_to_idle_and_calls_allOff(void);
@@ -114,10 +122,12 @@ extern void test_ready_to_fault_on_critical_temp(void);
 extern void test_drive_to_fault_on_bms_timeout(void);
 extern void test_fault_to_idle_on_reset_when_clean(void);
 extern void test_emergency_stop_to_idle_on_reset_when_clean(void);
-extern void test_fault_stays_on_reset_when_motor_error(void);
-extern void test_idle_reset_is_noop(void);
+extern void test_fault_stays_on_reset_when_critical_condition(void);
+extern void test_fault_reset_succeeds_when_motor_stream_lost(void);
+extern void test_idle_reset_does_not_change_state(void);
 extern void test_idle_with_motor_timeout_stays_idle(void);
 extern void test_emergency_stop_opens_contactors_after_delay(void);
+extern void test_fault_latches_contactors_off_once_and_reasserts(void);
 extern void test_idle_with_unverified_bms_system_state_stays_idle(void);
 
 // Faz 2 — G3 actuator fault entegrasyonu
@@ -177,6 +187,9 @@ extern void test_derating_two_warning_tier_signals_stay_at_warning_tier(void);
 extern void test_stop_from_ready_returns_to_idle(void);
 extern void test_stop_from_drive_returns_to_idle(void);
 extern void test_stop_opens_contactors(void);
+extern void test_stop_zero_torque_precedes_contactor_open_by_a_tick(void);
+extern void test_repeated_stop_does_not_postpone_contactor_open(void);
+extern void test_estop_during_pending_stop_wins_and_cancels_it(void);
 extern void test_stop_does_not_use_staggered_bank_close(void);
 extern void test_stop_in_idle_is_ignored(void);
 extern void test_stop_in_fault_does_not_clear_fault(void);
@@ -237,13 +250,14 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_cell_overvoltage_critical_realistic);
 
     // Faz 1 — error flag'ler
-    RUN_TEST(test_critical_motor_error_flag_set);
+    RUN_TEST(test_motor_error_flag_is_not_critical_when_flag0);
     RUN_TEST(test_critical_bms_error_flag_set);
 
     // Faz 1 — motor timeout
     RUN_TEST(test_motor_timeout_in_idle_is_safe);
-    RUN_TEST(test_motor_timeout_in_ready_is_critical);
-    RUN_TEST(test_motor_timeout_in_drive_is_critical);
+    RUN_TEST(test_motor_timeout_in_ready_is_not_critical_when_flag0);
+    RUN_TEST(test_motor_timeout_in_drive_is_not_critical_when_flag0);
+    RUN_TEST(test_motor_stream_lost_is_not_critical_when_flag0);
 
     RUN_TEST(test_bms_timeout_in_idle_is_safe);
     RUN_TEST(test_bms_timeout_in_ready_is_critical);
@@ -257,14 +271,14 @@ int main(int /*argc*/, char ** /*argv*/) {
 
     // Faz 1 — bms invalid
     RUN_TEST(test_warning_bms_invalid_skips_thresholds);
-    RUN_TEST(test_critical_bms_invalid_with_motor_error_still_critical);
+    RUN_TEST(test_critical_bms_invalid_with_motor_error_not_critical_when_flag0);
 
     // Faz 1 — baseline & akım entegre
     RUN_TEST(test_baseline_clean_data_no_conditions);
 
     // Faz 1 — reset interlock
     RUN_TEST(test_reset_interlock_clean_baseline_passes);
-    RUN_TEST(test_reset_interlock_motor_error_blocks);
+    RUN_TEST(test_reset_interlock_motor_error_does_not_block_when_flag0);
     RUN_TEST(test_reset_interlock_bms_error_blocks);
     RUN_TEST(test_reset_interlock_critical_temp_blocks);
     RUN_TEST(test_reset_interlock_warning_temp_does_not_block);
@@ -272,14 +286,17 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_reset_interlock_critical_voltage_high_blocks);
     RUN_TEST(test_reset_interlock_critical_current_blocks);
     RUN_TEST(test_reset_interlock_nominal_charge_current_does_not_block);
-    RUN_TEST(test_reset_interlock_motor_timeout_in_fault_blocks);
+    RUN_TEST(test_reset_interlock_motor_timeout_does_not_block_when_flag0);
     RUN_TEST(test_reset_interlock_bms_timeout_in_fault_blocks);
     RUN_TEST(test_reset_interlock_warning_level_passes);
     RUN_TEST(test_reset_interlock_unverified_bms_system_state_does_not_block);
     RUN_TEST(test_reset_interlock_rpm_zero_fresh_passes);
     RUN_TEST(test_reset_interlock_rpm_high_blocks);
-    RUN_TEST(test_reset_interlock_rpm_zero_stale_blocks);
     RUN_TEST(test_reset_interlock_rpm_noise_passes);
+    RUN_TEST(test_reset_interlock_motor_stream_lost_passes_when_flag0);
+    RUN_TEST(test_reset_interlock_stale_high_rpm_is_ignored_when_flag0);
+    RUN_TEST(test_idle_reset_clears_actuator_fault_and_stays_idle);
+    RUN_TEST(test_idle_reset_is_not_a_bypass_when_hardware_still_broken);
 
     // Faz 2 — state machine
     RUN_TEST(test_init_transitions_to_idle_and_calls_allOff);
@@ -300,10 +317,12 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_drive_to_fault_on_bms_timeout);
     RUN_TEST(test_fault_to_idle_on_reset_when_clean);
     RUN_TEST(test_emergency_stop_to_idle_on_reset_when_clean);
-    RUN_TEST(test_fault_stays_on_reset_when_motor_error);
-    RUN_TEST(test_idle_reset_is_noop);
+    RUN_TEST(test_fault_stays_on_reset_when_critical_condition);
+    RUN_TEST(test_fault_reset_succeeds_when_motor_stream_lost);
+    RUN_TEST(test_idle_reset_does_not_change_state);
     RUN_TEST(test_idle_with_motor_timeout_stays_idle);
     RUN_TEST(test_emergency_stop_opens_contactors_after_delay);
+    RUN_TEST(test_fault_latches_contactors_off_once_and_reasserts);
     RUN_TEST(test_idle_with_unverified_bms_system_state_stays_idle);
 
     RUN_TEST(test_run_calls_verifyIfDue_each_tick);
@@ -360,6 +379,9 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_stop_from_ready_returns_to_idle);
     RUN_TEST(test_stop_from_drive_returns_to_idle);
     RUN_TEST(test_stop_opens_contactors);
+    RUN_TEST(test_stop_zero_torque_precedes_contactor_open_by_a_tick);
+    RUN_TEST(test_repeated_stop_does_not_postpone_contactor_open);
+    RUN_TEST(test_estop_during_pending_stop_wins_and_cancels_it);
     RUN_TEST(test_stop_does_not_use_staggered_bank_close);
     RUN_TEST(test_stop_in_idle_is_ignored);
     RUN_TEST(test_stop_in_fault_does_not_clear_fault);
