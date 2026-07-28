@@ -288,11 +288,48 @@ Bu ikisi ekranda da ayrı butonlar olmalı ve karıştırılmamalıdır
   olay kuyruğunu bypass eder (atomic bayrak), `EMERGENCY_STOP` durumuna geçer,
   çıkmak için RESET interlock'u gerekir.
 - **STOP (`6`)** — normal/kontrollü. Yalnız `READY` ve `DRIVE`'da anlamlıdır,
-  güvenli kapanış sırasını izler (önce sıfır tork, sonra kontaktör), `IDLE`'a
-  döner ve **arıza kaydı bırakmaz**.
+  güvenli kapanış sırasını izler (önce sıfır tork, `VCU_CONTACTOR_OPEN_DELAY_MS`
+  sonra kontaktör), `IDLE`'a döner ve **arıza kaydı bırakmaz**.
+
+> **STOP anında tamamlanmaz (2026-07-28):** komut alındığında önce sıfır tork
+> istenir; kontaktör açma ve `IDLE` dönüşü, torkun sönmesi için
+> `VCU_CONTACTOR_OPEN_DELAY_MS` (20 ms) beklendikten sonra **bir sonraki VCU
+> tick'inde** olur. Ekranda "DUR"a basıldıktan sonra durum göstergesinin
+> `IDLE`'a düşmesi bir tick (~20 ms) gecikebilir — bu **normaldir**. Bekleme
+> sırasında gelen bir E-STOP kazanır ve bekleyen STOP iptal edilir. Ayrıntı:
+> `Documents/MOTOR_ENTEGRASYON_NOTU.md` §7.
 
 Ekrandaki E-STOP butonu fiziksel acil durdurma butonunun **yerini tutmaz**; o
 ayrı bir donanım yoludur.
+
+### `RESET` (3) durum başına ne yapar (28.07.2026)
+
+`RESET` tek bir buton ama **iki farklı iş** yapar; hangisinin çalıştığı VCU'nun
+o anki durumuna bağlıdır (`lib/VcuLogic/VcuLogic.cpp::run()`):
+
+| Durum | `RESET`'in etkisi |
+| --- | --- |
+| `FAULT` / `EMERGENCY_STOP` | **Arızadan çıkış.** Önce `isResetInterlockSatisfied()` aranır (kritik koşul yok + hareket halinde değil); geçerse actuator fault temizlenir ve `IDLE`'a geçilir. Interlock reddederse durum DEĞİŞMEZ ve WARN loglanır. |
+| `IDLE` | **Sadece latch'lenmiş actuator fault'u temizler** — durum geçişi YOK, kontaktörlere DOKUNULMAZ, interlock ARANMAZ (kontaktörler zaten açık, HV bus ölü). |
+| `READY` / `DRIVE` / `INIT` | Yok sayılır. |
+
+**`IDLE`'daki RESET neden var:** `RelayManager` bir röle geri-okuma
+uyuşmazlığında actuator fault'u **latch'ler**. Bu fault `IDLE`'da `START`'ı
+kalıcı olarak reddettiriyordu (`"READY gecisi reddedildi: actuator fault"`) ve
+`clearActuatorFault()` yalnız `FAULT`/`E-STOP`'tan çıkışta çağrıldığı için
+**tek çıkış reboot'tu**.
+
+**Bu bir bypass DEĞİLDİR:** temizleme kalıcı değil. Donanım gerçekten bozuksa
+bir sonraki periyodik `verifyIfDue` taraması fault'u **yeniden latch'ler** ve
+`START` tekrar bloklanır. Yani buton, geçici bir uyuşmazlıktan sonra sürücüye
+güvenli bir "tekrar dene" imkânı verir; bozuk donanımı gizlemez.
+Testler: `test/test_native_vcu_logic/test_reset_interlock.cpp`
+(`test_idle_reset_clears_actuator_fault_and_stays_idle`,
+`test_idle_reset_is_not_a_bypass_when_hardware_still_broken`).
+
+> **Ekran tarafı için sonuç:** `RESET` butonu `IDLE` ekranında da **aktif
+> bırakılmalıdır**. Yalnızca arıza ekranında gösterilirse, kullanıcı
+> latch'lenmiş bir actuator fault'tan çıkamaz.
 
 ### Nextion Editor — butonlara yazılacak TAM KOD
 

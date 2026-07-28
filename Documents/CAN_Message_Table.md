@@ -82,10 +82,23 @@ Direction: `Motor Driver → AKS` | DLC: 8 | Status: **MSTest/mock_motor ile do�
 | 0–1 | RPM | int16_t | Big | signed | raw | ✅ DOĞRULANDI | MSTest/mock_motor + hall sensör entegrasyon testi |
 | 2–3 | Motor Voltage | uint16_t | Big | unsigned | ×0.1 V | ✅ DOĞRULANDI | MSTest/mock_motor (sensörde 0x00) |
 | 4–6 | Rezerve | — | — | — | — | ❌ BİLİNMİYOR | Kullanılmıyor |
-| 7 | Error Flags / Running | uint8_t | — | unsigned | bitfield | ✅ DOĞRULANDI | bit0=çalışıyor, bit[7:1]=hata bayrakları (sensörde 0x00) |
+| 7 | Error Flags / Running | uint8_t | — | unsigned | bitfield | ⚠️ HİPOTEZ | Düzen (bit0=çalışıyor, bit[7:1]=hata bayrakları) yalnız MSTest/mock_motor'a karşı doğrulandı — **gerçek motor sürücüsü donanımı yok**, bitlerin hangi arızaya karşılık geldiği BİLİNMİYOR. Bugünkü kaynak (hall sensörü) bu byte'ı her zaman 0x00 gönderir. |
 
-Freshness: 1500 ms timeout → `TEL_motorTimeoutActive`, IDLE dışında FAULT.
+Freshness: 1500 ms timeout → `TEL_motorTimeoutActive`.
 Sensör yayın periyodu: 100 ms (10 Hz) — tazelik penceresi içinde.
+
+> **KARAR MANTIĞI (2026-07-28):** `MOTOR_DRIVER_PRESENT=0` iken bu frame'den
+> türeyen HİÇBİR alan FAULT/kontaktör/reset kararına girmez — `TEL_motorRpm`
+> yalnız hız göstergesini besler, `TEL_motorErrorFlags` ve
+> `TEL_motorTimeoutActive` ise `VcuLogic`'te `#if MOTOR_DRIVER_PRESENT` ile
+> devre dışıdır. Gerekçe: frame'i bugün motor sürücüsü değil hall-effect hız
+> sensörü üretiyor; akışın kesilmesi HIZ GÖSTERGESİ kaybıdır, GÜVENLİK arızası
+> değildir (eskiden READY/DRIVE'da sahte FAULT üretiyor ve FAULT/E-STOP'tan
+> çıkışı KALICI bloklıyordu). **Tek istisna:** `TEL_motorRpm`, hareket halinde
+> RESET yasağında (`VCU_RESET_MAX_RPM`) kullanılmaya devam eder — o alan
+> DOĞRULANMIŞ ve yalnız `TEL_motorDataValid` iken değerlendirilir. Bayrak `1`
+> olduğunda tüm kontroller geri gelir; bkz.
+> `Documents/MOTOR_ENTEGRASYON_NOTU.md` §6.
 
 ---
 
@@ -304,6 +317,9 @@ Oturum 3'te görülmedi. Önceki oturumlarda tüm payload sıfır. Firmware tara
 
 | CAN ID | Tablo Durumu | Firmware'de Parse | TelemetryData'ya Yazılıyor | Karar Mantığına Bağlı |
 | --- | --- | --- | --- | --- |
+| 0x200 byte[0:1] RPM | ✅ DOĞRULANDI | ✅ parseMotorStatus | ✅ TEL_motorRpm | ⚠️ yalnız RESET interlock'unda (`VCU_RESET_MAX_RPM`, hareket halinde reset yasağı) ve yalnız `TEL_motorDataValid` iken — FAULT/kontaktör kararı DEĞİL |
+| 0x200 byte[7] Error/Running | ⚠️ HİPOTEZ (yalnız mock'a karşı) | ✅ parseMotorStatus (+debounce) | ✅ TEL_motorErrorFlags | ❌ `MOTOR_DRIVER_PRESENT=0` iken karar mantığından ÇIKARILDI (`#if MOTOR_DRIVER_PRESENT`); bayrak 1'de geri gelir |
+| 0x200 freshness (1500 ms) | ✅ DOĞRULANDI | ✅ updateMotorStatusValidity | ✅ TEL_motorTimeoutActive / TEL_motorDataValid | ❌ `MOTOR_DRIVER_PRESENT=0` iken FAULT üretmez ve reset'i bloklamaz; bayrak 1'de IDLE dışında kritik |
 | 0xE000 byte[0:1] Current | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsCurrentCentiA | ✅ isCurrentWarning/Critical ← hasWarning/CriticalCondition (şarj 11/13 A, deşarj 9/15 A — CONFIG, ekip onayı bekliyor) |
 | 0xE000 byte[2:3] Voltage | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsPackVoltageDeciV | ✅ checkPackVoltageFault + VcuLogic |
 | 0xE000 byte[4:5] SoC 1 | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsSocHundredths | ❌ (gösterim, karar dışı) |

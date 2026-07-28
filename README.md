@@ -79,7 +79,7 @@ Sayı düştüyse bir paket sessizce çalışmıyor olabilir — o dosyaya bakı
 | Bayrak | Varsayılan | Anlamı |
 | --- | --- | --- |
 | `RELAY_ROLES_ASSIGNED` | **0** | S1/S2 ayrımı, flaşör, fan, far mantığı. **0 çünkü Faz 2 (klemens↔yük) kablolaması bitmedi** — aşağıya bkz. |
-| `MOTOR_DRIVER_PRESENT` | **0** | Motor sürücüsü henüz yok; tork komutu ÜRETİLMEZ |
+| `MOTOR_DRIVER_PRESENT` | **0** | Motor sürücüsü henüz yok; tork komutu ÜRETİLMEZ **ve** motor CAN'i (`0x200`) karar mantığına bağlı DEĞİL — frame'i bugün hall-effect hız sensörü üretiyor, akışın kesilmesi FAULT/kontaktör açma sebebi değil (bkz. [MOTOR_ENTEGRASYON_NOTU.md](Documents/MOTOR_ENTEGRASYON_NOTU.md) §6) |
 | `SYSSTATE_DERIVE_FROM_CURRENT` | **1** | BMS durum alanı, doğrulanmış akımdan çalışma modu taşır (Y33) |
 
 ## Güncel CAN Kapsamı
@@ -91,7 +91,7 @@ Ayrıştırılan frame'ler:
 
 | ID | İçerik | Durum |
 | --- | --- | --- |
-| `0x200` | Motor durumu (RPM, gerilim, hata bayrakları) | DOĞRULANDI |
+| `0x200` | Motor durumu (RPM, gerilim, hata bayrakları) | RPM DOĞRULANDI; `data[7]` hata bitleri HİPOTEZ — karar mantığına bağlı DEĞİL (`MOTOR_DRIVER_PRESENT=0`) |
 | `0x100` | Tork komutu (TX) | `MOTOR_DRIVER_PRESENT=0` — gönderilmiyor |
 | `0xE000` | Pack gerilimi, akım, SoC 1, SoC 2 | DOĞRULANDI |
 | `0xE001` | Hücre min/max/ort özeti + 2 sıcaklık | DOĞRULANDI |

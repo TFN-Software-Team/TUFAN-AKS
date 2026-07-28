@@ -335,12 +335,15 @@ void test_emergency_stop_to_idle_on_reset_when_clean(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Reset interlock kötü iken FAULT'ta kalır (motor error flag set).
+// Reset interlock kötü iken FAULT'ta kalır. Bloklayıcı olarak DOĞRULANMIŞ bir
+// sinyal (kritik sıcaklık, 0xE001 byte[6:7]) kullanılır — motor error flag'i
+// MOTOR_DRIVER_PRESENT=0 iken bilinçli olarak bloklamaz (bkz.
+// test_fault_reset_succeeds_when_motor_stream_lost ve VcuLogic.h #if blokları).
 // ---------------------------------------------------------------------------
-void test_fault_stays_on_reset_when_motor_error(void) {
+void test_fault_stays_on_reset_when_critical_condition(void) {
     primeIdle();
     TelemetryData faulty = makeTelemetryDataValid();
-    faulty.TEL_motorErrorFlags = 0x01;
+    faulty.TEL_bmsTempHighestC = 75;  // ≥70 °C — kritik
     VcuLogic::setTelemetryData(faulty);
     VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
     VcuLogic::run();
@@ -356,14 +359,43 @@ void test_fault_stays_on_reset_when_motor_error(void) {
 }
 
 // ---------------------------------------------------------------------------
-// IDLE'da RESET no-op olmalı (RESET sadece FAULT/ESTOP'ta anlamlı).
+// REGRESYON (uçtan uca): hall-effect hız sensörü sussa bile RESET butonu
+// çalışmalı. MOTOR_DRIVER_PRESENT=0 iken motor akışının kesilmesi bir GÜVENLİK
+// arızası değildir; eskiden interlock bunu reddettiği için araç FAULT'ta KALICI
+// kilitleniyordu.
 // ---------------------------------------------------------------------------
-void test_idle_reset_is_noop(void) {
+void test_fault_reset_succeeds_when_motor_stream_lost(void) {
+    primeIdle();
+    VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
+                          static_cast<int>(VcuLogic::getState()));
+
+    TelemetryData d = makeTelemetryDataValid();
+    d.TEL_motorDataValid = false;      // sensör sustu
+    d.TEL_motorTimeoutActive = true;
+    d.TEL_motorErrorFlags = 0x02;      // doğrulanmamış bit — bloklamamalı
+    VcuLogic::setTelemetryData(d);
+    VcuLogic::postEvent(VcuEvent::RESET);
+    VcuLogic::run();
+
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
+                          static_cast<int>(VcuLogic::getState()));
+}
+
+// ---------------------------------------------------------------------------
+// IDLE'da RESET DURUM DEĞİŞTİRMEZ. (Artık tam bir no-op değil: latch'lenmiş
+// actuator fault'u temizler — bkz. test_reset_interlock.cpp
+// test_idle_reset_clears_actuator_fault_and_stays_idle. Burada kilitlenen şey,
+// o yolun bir DURUM GEÇİŞİNE dönüşmemesi ve kontaktörlere dokunmaması.)
+// ---------------------------------------------------------------------------
+void test_idle_reset_does_not_change_state(void) {
     primeIdle();
     VcuLogic::postEvent(VcuEvent::RESET);
     VcuLogic::run();
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
                           static_cast<int>(VcuLogic::getState()));
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOn_count);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,28 +444,34 @@ void test_emergency_stop_opens_contactors_after_delay(void) {
     TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
 }
 
+// FAULT'ta kontaktörler BİR KEZ açılır (loglu), sonra saniyede bir SESSİZ
+// re-assert edilir (allOff(true) — içindeki verifyOutputs geri-okumayı yapar).
+//
+// NOT: bu test uzun süre test_main.cpp'ye KAYDEDİLMEMİŞTİ (extern/RUN_TEST
+// satırları yoktu), yani hiç koşmuyordu — TEST_BASELINE.md'nin uyardığı
+// "sessiz test kaybı" durumu. Kaydedilirken içindeki zaman aritmetiği de
+// düzeltildi: eski hâli re-assert'i t=1000'de bekliyordu ("1000 - 0 = 1000"),
+// ama ilk açmanın olduğu t=20 tick'inde log bloğu s_lastFaultLogMs'i 20 yapar,
+// dolayısıyla sınır t=1020'dir.
 void test_fault_latches_contactors_off_once_and_reasserts(void) {
     primeIdle();
     fake_relay_reset();
 
     VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
-    VcuLogic::run(); // t=0
+    VcuLogic::run(); // t=0 — transitionTo(FAULT) + sıfır tork; AÇMA YOK
     TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOff_count);
 
-    VcuLogic::run(); // t=20
+    VcuLogic::run(); // t=20 — gecikme doldu → ilk (loglu) açma
     TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
     TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOff_silent_count);
 
-    // Simulate runs up to 980ms (48 ticks of 20ms = 960ms + 20ms = 980ms)
-    // Actually, at t=20, it ran. Next is t=40.
-    for(int i=0; i<48; i++) {
+    // t=20'den t=1000'e: 49 tick. Sınır (t=1020) henüz gelmedi → re-assert yok.
+    for (int i = 0; i < 49; ++i) {
         VcuLogic::run();
     }
-    // Now t=980
     TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
 
-    VcuLogic::run(); // t=1000
-    // At t=1000, 1000 - 0 = 1000, so it logs and silently re-asserts
+    VcuLogic::run(); // t=1020 → 1020-20 = 1000 → sessiz re-assert
     TEST_ASSERT_EQUAL_UINT(2, g_fake_relay_allOff_count);
     TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_silent_count);
 }
@@ -547,17 +585,34 @@ void primeEstopOrder() {
 }
 }  // namespace
 
+// P3 SIRA GARANTİSİ: sıfır tork GEÇİŞ tick'inde (t=0), kontaktör açma ise
+// VCU_CONTACTOR_OPEN_DELAY_MS sonra — ARALARINDA EN AZ BİR run() tick'i olmalı.
+//
+// REGRESYON: düzeltmeden önce sıfır tork handler'ın ilk tick'inde
+// (s_stateTimer==TASK_PERIOD_MS) isteniyordu ve VCU_CONTACTOR_OPEN_DELAY_MS ==
+// TASK_PERIOD_MS == 20 olduğu için açma koşulu AYNI tick'te sağlanıyordu —
+// yani gecikme fiilen SIFIRDI ve kontaktörler yük altında açılabilirdi.
+// Aşağıdaki "1. tick'ten sonra allOff YOK" iddiası tam olarak bunu yakalar
+// (sıra numarası karşılaştırması tek başına yakalayAMAZdı: aynı tick içinde de
+// tork önce çağrıldığından seq testi eskiden de geçiyordu).
 void test_estop_requests_zero_torque_before_opening_contactors(void) {
     primeIdle();
     primeEstopOrder();
 
     VcuLogic::postEvent(VcuEvent::EMERGENCY_STOP);
-    VcuLogic::run();  // transitionTo ESTOP (handler bu tick çalışmaz)
-    VcuLogic::run();  // handler: (1) torque(0) → (2) delay doldu → (3) allOff
 
-    // (a) sıfır tork tam olarak bir kez ve değer 0 ile istendi (E-STOP spam yok)
+    // --- 1. tick: transitionTo(ESTOP) → (1) torque(0). AÇMA YOK. ---
+    VcuLogic::run();
     TEST_ASSERT_EQUAL_UINT(1, s_torqueCount);
     TEST_ASSERT_EQUAL_UINT16(0, s_lastTorque);
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOff_count);
+
+    // --- 2. tick: gecikme doldu → (3) allOff ---
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
+
+    // (a) sıfır tork tam olarak bir kez istendi (E-STOP spam yok)
+    TEST_ASSERT_EQUAL_UINT(1, s_torqueCount);
     // (b) hem tork hem röle açma gerçekleşti
     TEST_ASSERT_TRUE(s_torqueFirstSeq > 0);
     TEST_ASSERT_TRUE(g_fake_relay_allOff_firstSeq > 0);
@@ -570,11 +625,18 @@ void test_fault_requests_zero_torque_before_opening_contactors(void) {
     primeEstopOrder();
 
     VcuLogic::postEvent(VcuEvent::FAULT_DETECTED);
-    VcuLogic::run();  // transitionTo FAULT (t=0, henüz açma yok)
-    VcuLogic::run();  // handler: torque(0) → allOff
 
+    // --- 1. tick: transitionTo(FAULT) → (1) torque(0). AÇMA YOK. ---
+    VcuLogic::run();
     TEST_ASSERT_EQUAL_UINT(1, s_torqueCount);
     TEST_ASSERT_EQUAL_UINT16(0, s_lastTorque);
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOff_count);
+
+    // --- 2. tick: gecikme doldu → (3) allOff ---
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
+
+    TEST_ASSERT_EQUAL_UINT(1, s_torqueCount);
     TEST_ASSERT_TRUE(s_torqueFirstSeq > 0);
     TEST_ASSERT_TRUE(g_fake_relay_allOff_firstSeq > 0);
     TEST_ASSERT_TRUE(s_torqueFirstSeq < g_fake_relay_allOff_firstSeq);
@@ -625,8 +687,9 @@ void test_estop_zero_torque_reaches_can_queue_before_contactor_open(void) {
     VcuLogic::setTorqueSink(torqueSinkToCanQueue);
 
     VcuLogic::postEvent(VcuEvent::EMERGENCY_STOP);
-    VcuLogic::run();  // transitionTo ESTOP (handler bu tick çalışmaz)
-    VcuLogic::run();  // handler: (1) torque(0) -> queue.push -> (2) delay doldu -> (3) allOff
+    VcuLogic::run();  // transitionTo ESTOP -> (1) torque(0) -> queue.push
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOff_count);  // AÇMA henüz YOK
+    VcuLogic::run();  // (2) gecikme doldu -> (3) allOff
 
     // (a) İstek queue'ya ULAŞTI — CAN task henüz hiç drain ETMEMİŞKEN bile
     // (yani "CAN task'i dışından" gelen istek kaybolmadan kuyrukta bekliyor).

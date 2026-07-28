@@ -103,8 +103,10 @@ Bu ikisi birbirinin yerine geçmez:
   ANINDA açar, olay kuyruğunu bypass eder, `EMERGENCY_STOP` durumuna geçer.
   Çıkmak için RESET interlock'u gerekir (arıza kaydı düşer).
 - **STOP / DUR (`printh 5A 06 F9`)** — normal. Yalnız `READY` ve `DRIVE`'da
-  anlamlıdır, güvenli kapanış sırasını izler (önce sıfır tork, sonra
-  kontaktör), `IDLE`'a döner, **arıza kaydı bırakmaz**.
+  anlamlıdır, güvenli kapanış sırasını izler (önce sıfır tork, `20 ms` sonra
+  kontaktör), `IDLE`'a döner, **arıza kaydı bırakmaz**. Bu yüzden durum
+  göstergesinin `IDLE`'a düşmesi bir VCU tick'i (~20 ms) gecikebilir — normaldir
+  (bkz. `Documents/MOTOR_ENTEGRASYON_NOTU.md` §7).
 
 DUR butonu olmadan sürücünün normal durmak için tek yolu E-STOP'a basmaktır —
 aşırı tepki, gereksiz arıza kaydı ve RESET zorunluluğu demektir.

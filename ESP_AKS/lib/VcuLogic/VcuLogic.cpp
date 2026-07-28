@@ -17,13 +17,11 @@
 static constexpr const char* TAG = "VCU_LOGIC";
 static constexpr uint32_t TASK_PERIOD_MS = 20;
 
-#if MOTOR_DRIVER_PRESENT
-#warning "STOP_REQUEST yolu (run() icindeki kontrollu durdurma) sifir-tork ile \
-kontaktor acma arasinda VCU_CONTACTOR_OPEN_DELAY_MS BEKLEMIYOR. \
-handleEmergencyStop/handleFault bu beklemeyi yapar; motor surucusu artik \
-mevcut oldugundan STOP yolu da ayni sirayi izlemeli, yoksa kontaktorler yuk \
-altinda acilir (ark/kontak kaynagi riski). Bkz. Documents/MOTOR_ENTEGRASYON_NOTU.md."
-#endif
+// NOT (28.07.2026): burada bir `#if MOTOR_DRIVER_PRESENT #warning` vardı —
+// STOP_REQUEST yolunun sıfır-tork ile kontaktör açma arasında
+// VCU_CONTACTOR_OPEN_DELAY_MS BEKLEMEDİĞİNİ söylüyordu. Açık KAPANDI: STOP
+// artık E-STOP/FAULT ile aynı gecikmeli sırayı izliyor (bkz. run() içindeki
+// "bekleyen STOP" bloğu), bu yüzden uyarı kaldırıldı.
 
 namespace VcuLogic {
 
@@ -62,6 +60,43 @@ static bool s_relaysOpenedInFault = false;
 static uint32_t s_lastEstopLogMs = 0;
 static uint32_t s_lastFaultLogMs = 0;
 static uint32_t s_autoResetTimer = 0;
+
+// ---------------------------------------------------------------------------
+// P3 GÜVENLİ KAPANIŞ SIRASI — sıfır-tork ile kontaktör açma arasındaki gecikme
+// ---------------------------------------------------------------------------
+// Sıra: (1) sıfır tork iste → (2) VCU_CONTACTOR_OPEN_DELAY_MS bekle → (3) aç.
+// (1) ve (3) ASLA aynı tick'te olmamalıdır; olursa tork sönmeye fırsat bulamaz
+// ve kontaktörler YÜK ALTINDA açılır (ark / kontak kaynaması / regen aşırı
+// gerilimi).
+//
+// ESKİ HATA (düzeltildi): adım (1) handler'ın "ilk tick" guard'ına
+// (s_stateTimer <= TASK_PERIOD_MS) bağlıydı, adım (3) ise
+// (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) koşuluna. transitionTo sonrası
+// run() RETURN ettiği için handler ilk kez s_stateTimer==TASK_PERIOD_MS ile
+// çalışıyordu ve VCU_CONTACTOR_OPEN_DELAY_MS == TASK_PERIOD_MS == 20 olduğundan
+// İKİ KOŞUL DA AYNI TICK'TE sağlanıyordu — yani gecikme fiilen SIFIRDI.
+//
+// ÇÖZÜM: adım (1) artık handler'da değil, GEÇİŞİN KENDİSİNDE (transitionTo →
+// beginSafeShutdown) t=0'da yapılır ve zaman damgası kaydedilir. Adım (3) ise
+// "damgadan bu yana >= VCU_CONTACTOR_OPEN_DELAY_MS geçti mi" sorusuna bağlıdır.
+// Aşağıdaki static_assert, gecikmenin en az bir tik olmasını garanti eder —
+// dolayısıyla (3) her zaman (1)'den EN AZ bir tick SONRA çalışır.
+static_assert(VCU_CONTACTOR_OPEN_DELAY_MS >= TASK_PERIOD_MS,
+              "VCU_CONTACTOR_OPEN_DELAY_MS en az bir VCU tik periyodu olmali; "
+              "aksi halde sifir-tork ve kontaktor acma AYNI tick'e duser ve "
+              "kontaktorler yuk altinda acilir (bkz. MOTOR_ENTEGRASYON_NOTU.md).");
+
+// Bu güvenli-kapanış epizodunda sıfır tork istendi mi + hangi uptime damgasında.
+// s_stateTimer DEĞİL s_uptimeMs kullanılır: s_stateTimer geçişte sıfırlandığı
+// için, kapanış sırası devam ederken araya giren bir geçiş (ör. FAULT → E-STOP)
+// ölçümü bozardı.
+static bool s_zeroTorqueSent = false;
+static uint32_t s_zeroTorqueAtMs = 0;
+
+// BÖLÜM C: bekleyen kontrollü durdurma (ekran "DUR" / STOP_REQUEST). STOP da
+// aynı güvenli kapanış sırasını izler; kontaktör açma + IDLE dönüşü bir sonraki
+// tick'e ertelenir. VCU task'i vTaskDelay ile BLOKLANMAZ (tick sayarak beklenir).
+static bool s_stopPendingOpen = false;
 
 // READY girişi reddedildiğinde log spam'ini önlemek için: aynı ret nedeni her
 // tick değil, neden değiştiğinde veya en fazla 1 sn'de bir loglanır. Neden
@@ -107,6 +142,8 @@ static VcuLogic::HeadlightSwitchReader s_headlightSwitchReader = nullptr;
 // ---------------------------------------------------------------------------
 static void transitionTo(VcuState next);
 static void requestZeroTorque();
+static void beginSafeShutdown();
+static bool contactorOpenDelayElapsed();
 static bool pollEvent(VcuEvent& out);
 static bool isResetInterlockSatisfied();
 static bool hasWarningCondition();
@@ -285,6 +322,37 @@ void run() {
         return;
     }
 
+    // BÖLÜM C — bekleyen kontrollü durdurmanın (STOP) 2.+3. adımı.
+    // STOP_REQUEST dalı sıfır torku istedi ve buraya bıraktı; kontaktör açma
+    // ile IDLE dönüşü, torkun sönmesi için EN AZ VCU_CONTACTOR_OPEN_DELAY_MS
+    // beklendikten sonra yapılır. Bu blok E-STOP/FAULT/aktüatör-fault
+    // kontrollerinden SONRA gelir: onlar durumu değiştirirse (transitionTo
+    // s_stopPendingOpen'ı temizler) bekleyen STOP zaten iptal olmuştur ve
+    // güvenlik durumu IDLE'a düşürülmez.
+    if (s_stopPendingOpen) {
+        if (currentState != VcuState::READY && currentState != VcuState::DRIVE) {
+            // Savunma amaçlı: transitionTo zaten iptal ediyor, buraya
+            // düşülmemeli. Yine de bayat bir STOP'un kontaktör açmasına izin
+            // verme (durum artık STOP'un anlamlı olduğu bir durum değil).
+            s_stopPendingOpen = false;
+        } else if (contactorOpenDelayElapsed()) {
+            // Açma her zaman ANINDA olmalıdır — setBankStaggered (kademeli
+            // KAPATMA, inrush içindir) BURADA KULLANILMAZ. allOff bank
+            // maskesini (S1 + S2 + sürüş bankı) açar; flaşör/fan/far maske
+            // DIŞINDA olduğu için etkilenmez (FAULT/E-STOP ile aynı davranış).
+            s_relays->allOff(false);
+            s_stopPendingOpen = false;
+
+            // transitionTo(IDLE) s_s1LastCmdInIdle'ı "bilinmiyor" yapar; bir
+            // sonraki handleIdle tick'i S1'i chargerActive durumuna göre
+            // deterministik olarak yeniden yazar (şartname 8.2.a.iii).
+            ESP_LOGI(TAG, "STOP: kontrollu durdurma (%s -> IDLE)",
+                     currentState == VcuState::DRIVE ? "DRIVE" : "READY");
+            transitionTo(VcuState::IDLE);
+            return;
+        }
+    }
+
     // AÇIK İŞ (B12): Warning bandında derating (tork/güç sınırlama) politikası
     // — İSKELET KURULDU (bkz. lib/VcuLogic/DeratingPolicy.h). WARN aktifken
     // 0..100 bir tork-izin yüzdesi hesaplanıp kenar-tetikli loglanır, ama
@@ -337,7 +405,42 @@ void run() {
         currentState = s_state.load(std::memory_order_relaxed);
         if (event == VcuEvent::RESET &&
             (currentState == VcuState::FAULT ||
-             currentState == VcuState::EMERGENCY_STOP)) {
+             currentState == VcuState::EMERGENCY_STOP ||
+             currentState == VcuState::IDLE)) {
+
+            // IDLE'daki RESET, FAULT/E-STOP'takinden FARKLI bir iştir: bir
+            // DURUM GEÇİŞİ değil, latch'lenmiş aktüatör fault'u için
+            // "TEKRAR DENE" yoludur.
+            //
+            // NEDEN GEREKLİ: RelayManager bir geri-okuma uyuşmazlığında
+            // actuator fault'u LATCH'ler. Bu fault IDLE'da START'ı kalıcı
+            // olarak reddettiriyordu ("READY gecisi reddedildi: actuator
+            // fault") ve clearActuatorFault() yalnız FAULT/E-STOP'tan çıkışta
+            // çağrıldığı için IDLE'da hiçbir ekran komutuyla temizlenemiyordu
+            // — tek çıkış reboot'tu.
+            //
+            // NEDEN BYPASS DEĞİL: temizleme kalıcı değildir. Donanım gerçekten
+            // bozuksa bir sonraki periyodik verifyIfDue taraması fault'u
+            // YENİDEN latch'ler ve START tekrar bloklanır. Yani bu yol, geçici
+            // bir uyuşmazlıktan (ör. tek seferlik SPI gürültüsü) sonra sürücüye
+            // güvenli bir "tekrar dene" imkânı verir; bozuk donanımı gizlemez.
+            //
+            // NEDEN INTERLOCK ARANMAZ: isResetInterlockSatisfied()'in amacı
+            // CANLI HV bus'tan (FAULT/E-STOP) çıkışı korumaktır. IDLE'da
+            // kontaktörler zaten AÇIK ve bus ÖLÜ — korunacak bir geçiş yok.
+            //
+            // NEDEN transitionTo ÇAĞRILMAZ: zaten IDLE'dayız. transitionTo
+            // s_stateTimer'ı sıfırlardı (READY-reddi log kısıtlaması buna
+            // dayanıyor) ve RELAY_ROLES_ASSIGNED=1 iken s_s1LastCmdInIdle'ı
+            // "bilinmiyor" yapardı — bu da bir sonraki handleIdle tick'inde
+            // S1'in gereksiz yere yeniden yazılmasına yol açardı (şartname
+            // 8.2.a.iii yolu).
+            if (currentState == VcuState::IDLE) {
+                s_relays->clearActuatorFault();
+                ESP_LOGI(TAG, "IDLE: actuator fault temizlendi (RESET)");
+                return;
+            }
+
             if (!isResetInterlockSatisfied()) {
                 TelemetryData VCU_snap = getTelemetrySnapshot();
                 ESP_LOGW("VCU", "RESET reddedildi: rpm=%d, timeout=%d",
@@ -376,26 +479,34 @@ void run() {
         // bir arızadan ÇIKIŞTIR — farklı bir güvenlik sorusudur.)
         if (event == VcuEvent::STOP_REQUEST) {
             if (currentState == VcuState::READY || currentState == VcuState::DRIVE) {
-                // (1) Güvenli kapanış sırasının ilk adımı: sıfır tork iste.
-                //     MOTOR_DRIVER_PRESENT=0 iken gerçek frame ÜRETİLMEZ
-                //     (requestZeroTorque no-op'a düşer) — sıra yine de burada
-                //     kurulu ki motor entegrasyonunda eklenmesi unutulmasın.
-                requestZeroTorque();
-
-                // (2) Kontaktörleri AÇ. Açma her zaman ANINDA olmalıdır —
-                //     setBankStaggered (kademeli KAPATMA, inrush içindir)
-                //     BURADA KULLANILMAZ. allOff bank maskesini (S1 + S2 +
-                //     sürüş bankı) açar; flaşör/fan/far maske DIŞINDA olduğu
-                //     için etkilenmez (FAULT/E-STOP ile aynı davranış).
-                s_relays->allOff(false);
-
-                // (3) IDLE'a dön. transitionTo(IDLE) s_s1LastCmdInIdle'ı
-                //     "bilinmiyor" yapar; bir sonraki handleIdle tick'i S1'i
-                //     chargerActive durumuna göre deterministik olarak yeniden
-                //     yazar (şartname 8.2.a.iii).
-                ESP_LOGI(TAG, "STOP: kontrollu durdurma (%s -> IDLE)",
-                         currentState == VcuState::DRIVE ? "DRIVE" : "READY");
-                transitionTo(VcuState::IDLE);
+                // STOP da E-STOP/FAULT ile AYNI güvenli kapanış sırasını izler:
+                //   (1) sıfır tork iste → (2) VCU_CONTACTOR_OPEN_DELAY_MS
+                //   bekle → (3) kontaktör aç + IDLE'a dön.
+                // Burada YALNIZ (1) yapılır; (2)+(3) run() başındaki "bekleyen
+                // STOP" bloğunda, EN AZ bir tick SONRA tamamlanır.
+                //
+                // NEDEN vTaskDelay DEĞİL: beklemeyi bloklayarak yapmak VCU
+                // task'ini durdururdu — E-STOP bayrağı, flaşör/fan mantığı ve
+                // aktüatör doğrulaması da o süre boyunca işlemezdi. Bekleme
+                // tick sayarak yapılır (s_uptimeMs damgası).
+                //
+                // ESKİ HATA (düzeltildi): burada requestZeroTorque() ile
+                // allOff() ARDIŞIK çağrılıyordu — yani gecikme HİÇ yoktu.
+                // Dosya başındaki #if MOTOR_DRIVER_PRESENT #warning'i tam da
+                // bu açığı tarif ediyordu; açık kapandığı için o uyarı kaldırıldı.
+                if (!s_stopPendingOpen) {
+                    requestZeroTorque();  // (1) — flag 0 iken gerçek frame üretmez
+                    s_stopPendingOpen = true;
+                    s_zeroTorqueSent = true;
+                    s_zeroTorqueAtMs = s_uptimeMs;
+                    ESP_LOGI(TAG,
+                             "STOP: sifir-tork istendi (%s) — kontaktor acma %u ms sonra",
+                             currentState == VcuState::DRIVE ? "DRIVE" : "READY",
+                             (unsigned)VCU_CONTACTOR_OPEN_DELAY_MS);
+                }
+                // Bekleyen bir STOP varken gelen YİNELENEN komut yok sayılır:
+                // aksi halde her tekrar bası zamanlayıcıyı sıfırlayıp kontaktör
+                // açmayı süresiz erteleyebilirdi.
             } else {
                 ESP_LOGW(TAG, "STOP yok sayildi (durum %d — yalniz READY/DRIVE)",
                          static_cast<int>(currentState));
@@ -609,19 +720,18 @@ static void handleDrive() {
 
 static void handleEmergencyStop() {
     // G2 GERÇEĞİ: Motor sürücüsü entegre değil (MOTOR_DRIVER_PRESENT=0). Bu
-    // fazda torque komutu gönderilmiyor; kontaktörler yük altında açılıyor
-    // OLABİLİR. Saha riski: ark/kontak kaynaması. Entegrasyonda
-    // sendTorqueCommand(0) dizisi aktive edilecek.
+    // fazda gerçek torque frame'i gönderilmiyor (requestZeroTorque no-op'a
+    // düşer); sıra yine de burada KURULU ki entegrasyonda hazır olsun.
     //
-    // Güvenli kapanış sırası (flag'ten bağımsız çağrı sırası): (1) t=0'da
-    // sıfır tork iste → (2) VCU_CONTACTOR_OPEN_DELAY_MS bekle → (3) kontaktör aç.
-    if (s_stateTimer <= TASK_PERIOD_MS) {
-        requestZeroTorque();  // (1) — flag 0 iken gerçek frame üretmez
-        ESP_LOGW(TAG, "EMERGENCY STOP: sifir-tork istegi (motor surucusu yoksa atlanir)");
-    }
+    // Güvenli kapanış sırası (flag'ten bağımsız çağrı sırası):
+    //   (1) sıfır tork iste  → transitionTo(EMERGENCY_STOP) içinde, t=0'da
+    //   (2) VCU_CONTACTOR_OPEN_DELAY_MS bekle
+    //   (3) kontaktör aç     → aşağıda, contactorOpenDelayElapsed() kapısıyla
+    // (1) burada YAPILMAZ: handler ilk kez t=TASK_PERIOD_MS ile çalıştığından
+    // (1) ve (3) aynı tick'e düşerdi — gecikme fiilen sıfır olurdu.
 
     // (2)+(3): torkun sönmesi için bekle, sonra pozitif kontaktör bankını aç.
-    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+    if (contactorOpenDelayElapsed()) {
         if (!s_relaysOpenedInEstop) {
             s_relays->allOff(false); // First time, log it
             s_relaysOpenedInEstop = true;
@@ -642,18 +752,11 @@ static void handleEmergencyStop() {
 }
 
 static void handleFault() {
-    // G2 GERÇEĞİ: Motor sürücüsü entegre değil (MOTOR_DRIVER_PRESENT=0). Bu
-    // fazda torque komutu gönderilmiyor; kontaktörler yük altında açılıyor
-    // OLABİLİR. Saha riski: ark/kontak kaynaması. Entegrasyonda
-    // sendTorqueCommand(0) dizisi aktive edilecek.
-    //
-    // Güvenli kapanış sırası: (1) sıfır tork → (2) bekle → (3) kontaktör aç.
-    if (s_stateTimer <= TASK_PERIOD_MS) {
-        requestZeroTorque();  // (1) — flag 0 iken gerçek frame üretmez
-        ESP_LOGW(TAG, "FAULT: sifir-tork istegi (motor surucusu yoksa atlanir)");
-    }
-
-    if (s_stateTimer >= VCU_CONTACTOR_OPEN_DELAY_MS) {
+    // Güvenli kapanış sırası — handleEmergencyStop ile AYNI desen:
+    //   (1) sıfır tork → transitionTo(FAULT) içinde, t=0'da
+    //   (2) bekle → (3) kontaktör aç → aşağıda, contactorOpenDelayElapsed() ile.
+    // (1)'in neden burada olmadığı için bkz. handleEmergencyStop yorumu.
+    if (contactorOpenDelayElapsed()) {
         if (!s_relaysOpenedInFault) {
             s_relays->allOff(false); // First time, log it
             s_relaysOpenedInFault = true;
@@ -692,6 +795,26 @@ static void requestZeroTorque() {
         s_torqueSink(0);
 }
 
+// P3 sırasının 1. ADIMI, t=0'da. Sıfır torku ister ve zaman damgasını kurar;
+// kontaktör açma bundan sonra contactorOpenDelayElapsed()'e bağlıdır.
+// MOTOR_DRIVER_PRESENT=0 iken requestZeroTorque bir NO-OP'tur (sink gerçek
+// frame üretmez) — davranış değişmez, DEĞİŞEN yalnızca SIRA GARANTİSİDİR.
+static void beginSafeShutdown() {
+    requestZeroTorque();
+    s_zeroTorqueSent = true;
+    s_zeroTorqueAtMs = s_uptimeMs;
+}
+
+// P3 sırasının 3. ADIMININ kapısı: sıfır tork istendi VE üzerinden en az
+// VCU_CONTACTOR_OPEN_DELAY_MS geçti mi? Yukarıdaki static_assert bu gecikmenin
+// >= bir tik olmasını garanti ettiğinden, true dönmesi kontaktör açmanın
+// sıfır-tork tick'inden FARKLI (ve sonraki) bir tick'te olduğu anlamına gelir.
+// İşaretsiz çıkarma idiomu s_uptimeMs sarmasında da doğru çalışır.
+static bool contactorOpenDelayElapsed() {
+    return s_zeroTorqueSent &&
+           (s_uptimeMs - s_zeroTorqueAtMs) >= VCU_CONTACTOR_OPEN_DELAY_MS;
+}
+
 static void transitionTo(VcuState next) {
     VcuState current = s_state.load(std::memory_order_relaxed);
     ESP_LOGI(TAG, "State: %d → %d", static_cast<int>(current),
@@ -699,13 +822,28 @@ static void transitionTo(VcuState next) {
     s_state.store(next, std::memory_order_relaxed);
     s_stateTimer = 0;
 
+    // Bekleyen bir kontrollü durdurma (STOP) varsa İPTAL: durum başka bir
+    // nedenle değişti (E-STOP/FAULT kendi kapanış sırasını yürütür) — bayat bir
+    // STOP tamamlanıp güvenlik durumunu IDLE'a DÜŞÜRMEMELİDİR.
+    s_stopPendingOpen = false;
+
     if (next == VcuState::EMERGENCY_STOP) {
         s_relaysOpenedInEstop = false;
         s_lastEstopLogMs = (uint32_t)-1000;
+        // P3 adım (1): sıfır tork t=0'da, GEÇİŞ TICK'İNDE istenir. Handler'ın
+        // ilk tick'ine bırakılamaz — o tick'te kontaktör açma koşulu da
+        // sağlanıyor ve ikisi aynı tick'e düşüyordu (bkz. dosya başındaki not).
+        beginSafeShutdown();
+        ESP_LOGW(TAG, "EMERGENCY STOP: sifir-tork istegi (motor surucusu yoksa atlanir)");
     } else if (next == VcuState::FAULT) {
         s_relaysOpenedInFault = false;
         s_lastFaultLogMs = (uint32_t)-1000;
         s_autoResetTimer = 0;
+        beginSafeShutdown();  // P3 adım (1) — E-STOP ile aynı gerekçe
+        ESP_LOGW(TAG, "FAULT: sifir-tork istegi (motor surucusu yoksa atlanir)");
+    } else {
+        // Güvenli kapanış epizodu bitti (IDLE/READY/DRIVE'a dönüldü).
+        s_zeroTorqueSent = false;
     }
 
 #if RELAY_ROLES_ASSIGNED
@@ -794,6 +932,9 @@ void resetForTest() {
     s_relaysOpenedInInit = false;
     s_relaysOpenedInEstop = false;
     s_relaysOpenedInFault = false;
+    s_zeroTorqueSent = false;
+    s_zeroTorqueAtMs = 0;
+    s_stopPendingOpen = false;
     s_lastInitLogMs = 0;
     s_lastEstopLogMs = 0;
     s_lastFaultLogMs = 0;

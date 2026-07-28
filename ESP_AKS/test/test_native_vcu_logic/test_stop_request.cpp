@@ -21,7 +21,26 @@ using VcuLogic::VcuState;
 //            BIRAKMAZ.
 // ===========================================================================
 
+// ---------------------------------------------------------------------------
+// GÜVENLİ KAPANIŞ SIRASI (P3): STOP da E-STOP/FAULT ile aynı sırayı izler —
+// (1) sıfır tork → (2) VCU_CONTACTOR_OPEN_DELAY_MS bekle → (3) kontaktör aç.
+// Bu yüzden STOP artık TEK bir run() tick'inde tamamlanmaz: ilk tick sıfır
+// torku ister, kontaktör açma + IDLE dönüşü BİR SONRAKİ tick'te olur.
+// ---------------------------------------------------------------------------
 namespace {
+
+// Torque sink spy'ı — sıfır-tork isteğinin sayısını, değerini ve çağrı sıra
+// numarasını (mock allOff ile PAYLAŞILAN g_fake_call_seq üzerinden) kaydeder.
+unsigned s_stopTorqueCount = 0;
+unsigned s_stopTorqueFirstSeq = 0;
+uint16_t s_stopLastTorque = 0xFFFF;
+
+void stopTorqueSpy(uint16_t torque) {
+    ++s_stopTorqueCount;
+    s_stopLastTorque = torque;
+    if (s_stopTorqueFirstSeq == 0)
+        s_stopTorqueFirstSeq = ++g_fake_call_seq;
+}
 
 void primeIdle() {
     VcuLogic::resetForTest();
@@ -31,6 +50,16 @@ void primeIdle() {
     VcuLogic::setTelemetryData(makeTelemetryDataValid());
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
                           static_cast<int>(VcuLogic::getState()));
+}
+
+// Spy + sıra sayaçlarını temiz başlat (primeIdle/primeReady'deki allOff ve
+// bank kapatma çağrılarını izole etmek için sayaçlar TEKRAR sıfırlanır).
+void primeStopOrder() {
+    s_stopTorqueCount = 0;
+    s_stopTorqueFirstSeq = 0;
+    s_stopLastTorque = 0xFFFF;
+    fake_relay_reset();  // g_fake_call_seq / allOff_firstSeq = 0
+    VcuLogic::setTorqueSink(stopTorqueSpy);
 }
 
 void primeReady() {
@@ -53,13 +82,16 @@ void primeDrive() {
 
 // --- Kabul edilen durumlar ------------------------------------------------
 
-// READY + STOP -> IDLE
+// READY + STOP -> IDLE (gecikmeli sira: 1. tick sifir tork, 2. tick acma)
 void test_stop_from_ready_returns_to_idle(void) {
     primeReady();
 
     VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
-    VcuLogic::run();
+    VcuLogic::run();  // (1) sifir tork — kontaktor HENUZ acilmadi, durum READY
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::READY),
+                          static_cast<int>(VcuLogic::getState()));
 
+    VcuLogic::run();  // (2)+(3) gecikme doldu -> allOff + IDLE
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
                           static_cast<int>(VcuLogic::getState()));
 }
@@ -70,7 +102,10 @@ void test_stop_from_drive_returns_to_idle(void) {
 
     VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
     VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::DRIVE),
+                          static_cast<int>(VcuLogic::getState()));
 
+    VcuLogic::run();
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
                           static_cast<int>(VcuLogic::getState()));
 }
@@ -82,8 +117,84 @@ void test_stop_opens_contactors(void) {
 
     VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
     VcuLogic::run();
+    // Ilk tick'te ACILMAZ — once tork sonmeli.
+    TEST_ASSERT_EQUAL_UINT(before, g_fake_relay_allOff_count);
 
+    VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_allOff_count > before);
+}
+
+// ---------------------------------------------------------------------------
+// P3 SIRA GARANTISI (asil regresyon): sifir-tork istegi ile kontaktor acma
+// ARASINDA EN AZ BIR run() tick'i olmali. Duzeltmeden once STOP dalinda ikisi
+// ARDISIK iki satirdi (gecikme HIC yoktu) — bu test onu yakalar.
+// ---------------------------------------------------------------------------
+void test_stop_zero_torque_precedes_contactor_open_by_a_tick(void) {
+    primeReady();
+    primeStopOrder();
+
+    VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
+
+    // --- 1. tick: YALNIZ sifir tork ---
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_UINT(1, s_stopTorqueCount);
+    TEST_ASSERT_EQUAL_UINT16(0, s_stopLastTorque);
+    TEST_ASSERT_EQUAL_UINT(0, g_fake_relay_allOff_count);  // ACMA YOK
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::READY),
+                          static_cast<int>(VcuLogic::getState()));
+
+    // --- 2. tick: gecikme doldu -> acma ---
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
+    // Tork istegi TEKRARLANMADI (STOP spam'i yok).
+    TEST_ASSERT_EQUAL_UINT(1, s_stopTorqueCount);
+
+    // SIRA: torque(0) kontaktor acmadan ONCE.
+    TEST_ASSERT_TRUE(s_stopTorqueFirstSeq > 0);
+    TEST_ASSERT_TRUE(g_fake_relay_allOff_firstSeq > 0);
+    TEST_ASSERT_TRUE(s_stopTorqueFirstSeq < g_fake_relay_allOff_firstSeq);
+
+    VcuLogic::setTorqueSink(nullptr);
+}
+
+// Bekleyen STOP varken gelen YINELENEN STOP zamanlayiciyi SIFIRLAMAMALI —
+// aksi halde tekrar tekrar basmak kontaktor acmayi süresiz erteleyebilirdi.
+void test_repeated_stop_does_not_postpone_contactor_open(void) {
+    primeReady();
+    primeStopOrder();
+
+    VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
+    VcuLogic::run();  // (1) sifir tork, bekleme basladi
+
+    VcuLogic::postEvent(VcuEvent::STOP_REQUEST);  // yinelenen bas
+    VcuLogic::run();  // gecikme yine de doldu -> acma
+
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
+                          static_cast<int>(VcuLogic::getState()));
+    TEST_ASSERT_EQUAL_UINT(1, g_fake_relay_allOff_count);
+    TEST_ASSERT_EQUAL_UINT(1, s_stopTorqueCount);  // ikinci istek yok sayildi
+
+    VcuLogic::setTorqueSink(nullptr);
+}
+
+// Bekleyen STOP sirasinda E-STOP gelirse: E-STOP kazanir ve bayat STOP
+// tamamlanip guvenlik durumunu IDLE'a DUSURMEZ.
+void test_estop_during_pending_stop_wins_and_cancels_it(void) {
+    primeReady();
+
+    VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
+    VcuLogic::run();  // STOP bekliyor (durum hala READY)
+
+    VcuLogic::postEvent(VcuEvent::EMERGENCY_STOP);
+    VcuLogic::run();  // E-STOP kazanir
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::EMERGENCY_STOP),
+                          static_cast<int>(VcuLogic::getState()));
+
+    // Bekleyen STOP iptal edildi: sonraki tick'ler IDLE'a DUSURMEZ.
+    VcuLogic::run();
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::EMERGENCY_STOP),
+                          static_cast<int>(VcuLogic::getState()));
 }
 
 // Acma ANINDA olmali: kademeli kapatma yolu (setBankStaggered) KULLANILMAZ.
@@ -94,6 +205,7 @@ void test_stop_does_not_use_staggered_bank_close(void) {
     const unsigned before = g_fake_relay_allOn_count;
 
     VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
+    VcuLogic::run();
     VcuLogic::run();
 
     TEST_ASSERT_EQUAL_UINT(before, g_fake_relay_allOn_count);
@@ -154,7 +266,8 @@ void test_stop_in_estop_does_not_downgrade_safety_state(void) {
 void test_start_works_again_after_stop(void) {
     primeReady();
     VcuLogic::postEvent(VcuEvent::STOP_REQUEST);
-    VcuLogic::run();
+    VcuLogic::run();  // (1) sifir tork
+    VcuLogic::run();  // (2)+(3) acma + IDLE
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::IDLE),
                           static_cast<int>(VcuLogic::getState()));
 
