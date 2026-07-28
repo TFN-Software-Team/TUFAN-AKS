@@ -519,10 +519,13 @@ void vTask_HMI_Display(void *pvParameters) {
                 ESP_LOGI(TAG, "HMI command: EMERGENCY_STOP request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::EMERGENCY_STOP);
                 break;
-            case 5: // HMI_CMD_HEADLIGHT_TOGGLE
-                ESP_LOGI(TAG, "HMI command: FAR (Headlight) toggle request");
-                VcuLogic::postEvent(VcuLogic::VcuEvent::HEADLIGHT_TOGGLE);
-                break;
+            // Komut 5 (far toggle) KASITLI OLARAK YOK — 28.07.2026 kararı:
+            // farın resmî yolu fiziksel düğmedir (HEADLIGHT_SWITCH_PIN,
+            // şartname B2 9.19.c), ekran farı yalnız GÖSTERİR. Eski ekran
+            // projelerinden gelebilecek 0x5A 05 FA çerçevesi aşağıdaki
+            // `default` dalına düşer ve yalnız WARN'lanır — röleye DOKUNMAZ.
+            // ID 5 REZERVEDİR, başka bir komuta atanmamalıdır
+            // (bkz. SystemConfig.h "Komut 5").
             case HMI_CMD_STOP:
                 ESP_LOGI(TAG, "HMI command: STOP (kontrollu durdurma) request");
                 VcuLogic::postEvent(VcuLogic::VcuEvent::STOP_REQUEST);

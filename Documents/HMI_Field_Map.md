@@ -284,17 +284,17 @@ bit-tersi checksum); `DisplayHMI::readTouchCommand` →
 | `2` | `HMI_CMD_DRIVE_ENABLE` | `DRIVE_ENABLE` | `0x5A 0x02 0xFD` | `VcuEvent::DRIVE_ENABLE` |
 | `3` | `HMI_CMD_RESET` | `RESET` | `0x5A 0x03 0xFC` | `VcuEvent::RESET` |
 | `4` | `HMI_CMD_EMERGENCY_STOP` | `EMERGENCY_STOP` | `0x5A 0x04 0xFB` | `VcuEvent::EMERGENCY_STOP` |
-| `5` | *(makro yok — `case 5`)* | `HEADLIGHT_TOGGLE` | `0x5A 0x05 0xFA` | `VcuEvent::HEADLIGHT_TOGGLE` (aşağıya bkz.) |
+| `5` | *(makro YOK — kasten)* | **KULLANIM DIŞI — REZERVE, ATANMASIN** | `0x5A 0x05 0xFA` | **Hiçbir şey** — `default` dalı, yalnız WARN |
 | `6` | `HMI_CMD_STOP` | `STOP` (kontrollü durdurma) | `0x5A 0x06 0xF9` | `VcuEvent::STOP_REQUEST` |
 
-Tabloda olmayan her ID `default` dalına düşer ve
+Tabloda olmayan her ID — **ve rezerve `5`** — `default` dalına düşer ve
 `"Ignored/Unknown HMI command received: %d"` WARN'ı ile **yok sayılır**.
 
 > **Komut ID'leri ≠ `VcuEvent` enum değerleri.** Bunlar iki AYRI numara
 > uzayıdır ve kasten farklıdır: `VcuEvent::HEADLIGHT_TOGGLE = 6`,
 > `VcuEvent::STOP_REQUEST = 7`, ama `HMI_CMD_STOP = 6`
-> (bkz. `lib/VcuLogic/VcuLogic.h` satır 48-51). Ekran tarafını yazarken
-> **yalnız yukarıdaki tabloya** bakın; `VcuEvent` değerleri firmware içidir.
+> (bkz. `lib/VcuLogic/VcuLogic.h`). Ekran tarafını yazarken **yalnız yukarıdaki
+> tabloya** bakın; `VcuEvent` değerleri firmware içidir.
 
 ### ⚠️ `STOP` (6) `E-STOP`'un (4) YERİNİ TUTMAZ
 
@@ -362,8 +362,10 @@ tek satır yazılır. `printh` argümanları **hex** ve **boşlukla ayrılmış*
 | STOP / DUR (kontrollü) | `printh 5A 06 F9` |
 
 Far için ekranda **buton yoktur** — `far` bir Picture *göstergesidir* ve touch
-event'i **boş kalmalıdır** (aşağıdaki `far` sözleşmesine bkz.). `printh 5A 05 FA`
-yalnız eski ekran projelerinde bulunur; yenisine **eklenmez**.
+event'i **boş kalmalıdır** (aşağıdaki `far` sözleşmesine bkz.). Mevcut ekran
+projesinde far butonu veya `printh 5A 05 FA` satırı **varsa KALDIRILMALIDIR**:
+firmware artık komut 5'i işlemiyor (bkz. "Komut `5`"), yani o buton sessizce
+hiçbir şey yapmaz — sürücüye çalışıyormuş izlenimi veren ölü bir kontroldür.
 
 > **Neden Touch *Release*?** Basılı tutarken tetiklenen Press event'i, parmak
 > kaymasıyla veya titreşimle yanlışlıkla komut üretebilir. Release, operatörün
@@ -387,33 +389,37 @@ ID** kutusu (Touch Press / Touch Release) **işaretsiz bırakılmalıdır**.
 
 Kısacası: **tek kaynak `printh` olsun.** Kutu işaretliyse kaldırın.
 
-### Komut `5` — far toggle (KULLANIMDA, "rezerve" DEĞİL)
+### Komut `5` — KULLANIM DIŞI / REZERVE (28.07.2026 kararı)
 
-> Bu bölüm daha önce "firmware artık komut 5'i işlemiyor" diyordu. **Bu iddia
-> YANLIŞTI** ve 28.07.2026'da silindi.
+**Karar: farın resmî kontrol yolu FİZİKSEL DÜĞMEDİR** (`HEADLIGHT_SWITCH_PIN`,
+şartname B2 9.19.c); **ekran farı yalnız GÖSTERİR** (`far.pic`, aşağıdaki
+sözleşmeye bkz.). Bu karar 25.07.2026'da tespit edilen "açık çelişki"yi kapatır.
 
-`src/main.cpp` içindeki HMI komut switch'i **hâlâ** `case 5` ile
-`VcuLogic::VcuEvent::HEADLIGHT_TOGGLE` post eder; `VcuLogic.cpp` bunu
-`RELAY_ROLES_ASSIGNED` arkasında işleyip far rölesini sürer. Yani komut 5
-**işlenmektedir** (bkz. `SystemConfig.h` satır 207-227).
+**Kodda yapılan:** `src/main.cpp`'deki `case 5` dalı ve
+`lib/VcuLogic/VcuLogic.cpp`'deki `HEADLIGHT_TOGGLE` işleme dalı **silindi**.
+Bugün `0x5A 05 FA` çerçevesi `default` dalına düşer, yalnız
+`"Ignored/Unknown HMI command received: 5"` WARN'ı basar ve **röleye
+dokunmaz**. Far rölesinin tek sürücüsü artık `HeadlightSwitch::update`
+yoludur.
 
-Buna rağmen **pratik etkisi kalıcı değildir**: far kanalına iki sürücü birden
-yazar —
+**Neden ekran kontrolü seçilmedi:** far kanalına iki sürücü birden yazıyordu —
 
-1. **fiziksel düğme** (`HEADLIGHT_SWITCH_PIN`, şartname B2 9.19.c), `run()`'ın
-   her tick'inde okunur ve LATCHING modda far durumunu anahtarın **konumuna**
-   eşitler;
+1. **fiziksel düğme**, `run()`'ın her tick'inde okunur ve LATCHING modda far
+   durumunu anahtarın **konumuna** eşitler;
 2. **ekran komutu 5**, anlık toggle.
 
-Latching modda (1) baskındır: ekrandan yapılan toggle bir sonraki tick'te
-**geri alınır**.
+Latching modda (1) baskındı: ekrandan yapılan toggle bir sonraki tick'te
+**geri alınıyordu**. Yani (2) kalıcı bir etki üretmiyor, yalnız röleye
+gereksiz bir yazma ve yanıltıcı bir log satırı ("Far ACILDI") çıkarıyordu. Tek
+sürücü bırakmak, iki sürücüyü uzlaştırmaktan hem daha basit hem de şartnameye
+uygun.
 
-**KARAR GEREKİYOR** (`SystemConfig.h`'deki açık iş): ya komut 5 gerçekten
-kaldırılır (`main.cpp`'deki `case 5` ve `VcuLogic`'teki dal silinir), ya da
-ekran kontrolü resmî yol yapılıp fiziksel düğme mantığıyla uzlaştırılır.
-Karar verilene kadar **ID 5 başka bir komuta ATANMAMALIDIR** — sahadaki eski
-ekran projeleri hâlâ `0x5A 0x05 0xFA` gönderiyor olabilir ve yeniden atanırsa
-o çerçeve yanlış eylemi tetikler.
+> ⚠️ **ID 5 BAŞKA BİR KOMUTA ATANMAMALIDIR.** Sahadaki eski ekran projeleri
+> hâlâ `0x5A 0x05 0xFA` gönderiyor olabilir; bugün bu çerçeve zararsızca
+> yutulur, ama numara yeniden atanırsa **aynı çerçeve yanlış eylemi tetikler**.
+> Bu yüzden bu ID'ye bir `HMI_CMD_*` makrosu da kasten **tanımlanmadı** ve
+> `VcuEvent::HEADLIGHT_TOGGLE = 6` enum girdisi silinmeyip **rezerve**
+> bırakıldı (`lib/VcuLogic/VcuLogic.h`).
 
 ### `far` (Picture) — headlight status indicator contract
 

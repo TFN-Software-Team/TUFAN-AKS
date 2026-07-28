@@ -36,6 +36,20 @@ enum class VcuEvent : uint8_t {
     EMERGENCY_STOP = 3,
     FAULT_DETECTED = 4,
     RESET = 5,
+    // KULLANIM DIŞI — REZERVE (28.07.2026 kararı). Bu olay artık HİÇBİR
+    // yerden post EDİLMEZ ve run() içinde işleyen bir dal YOKTUR.
+    //
+    // Farın resmî kontrol yolu FİZİKSEL DÜĞMEDİR (HEADLIGHT_SWITCH_PIN,
+    // şartname B2 9.19.c); ekran farı yalnız GÖSTERİR (far.pic). Eskiden
+    // ekran komutu 5 buraya post ederdi, ama latching modda fiziksel düğme
+    // baskın olduğu için toggle bir sonraki tick'te geri alınıyordu — kalıcı
+    // etkisi yoktu, yalnız röleye gereksiz yazma üretiyordu.
+    //
+    // ⚠️ BU GİRDİYİ SİLMEYİN ve değeri (6) BAŞKA BİR OLAYA ATAMAYIN. Enum
+    // dahilî olsa da değer kaydırmak, kuyrukta beklerken anlamı değişen bir
+    // olay yaratır; ayrıca ekran tarafındaki komut 5 de aynı gerekçeyle
+    // rezervedir (sahadaki eski ekran projeleri hâlâ 0x5A 05 FA gönderiyor
+    // olabilir — o çerçeve main.cpp'de `default` dalına düşüp WARN'lanır).
     HEADLIGHT_TOGGLE = 6,
     // READY/DRIVE -> IDLE KONTROLLÜ dönüş (ekran "DUR" butonu, HMI_CMD_STOP).
     //

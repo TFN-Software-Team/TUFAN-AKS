@@ -25,11 +25,16 @@
 
 namespace {
 
-// Komut 5'in SystemConfig.h'de makrosu YOKTUR: src/main.cpp cikplak `case 5`
-// ile VcuEvent::HEADLIGHT_TOGGLE post eder (bkz. SystemConfig.h satir 207-227,
-// "KARAR GEREKIYOR"). Sozlesmenin parcasi oldugu icin burada da kilitlenir —
-// ID yeniden atanirsa sahadaki eski ekran projeleri yanlis eylem tetikler.
-constexpr uint8_t HMI_CMD_HEADLIGHT_TOGGLE_ID = 5;
+// ID 5 — KULLANIM DISI / REZERVE (28.07.2026 karari, bkz. SystemConfig.h
+// "Komut 5"). Farin resmi kontrol yolu FIZIKSEL DUGMEDIR; src/main.cpp'deki
+// `case 5` ve VcuLogic.cpp'deki HEADLIGHT_TOGGLE dali SILINDI. Bu ID'ye kasten
+// bir HMI_CMD_* makrosu TANIMLANMADI.
+//
+// Yine de sozlesmenin parcasidir ve burada kilitlenir: sahadaki eski ekran
+// projeleri hala 0x5A 05 FA gonderiyor olabilir. Bugun o cerceve `default`
+// dalina dusup zararsizca yutulur; ID yeniden atanirsa AYNI cerceve yanlis
+// eylemi tetikler. Asagidaki testler bu numaranin bos birakildigini korur.
+constexpr uint8_t HMI_CMD_RESERVED_ID = 5;
 
 // --- Derleme zamani kilidi -------------------------------------------------
 // Bunlar makro degerleri; static_assert bir numara kaymasini daha binary
@@ -46,11 +51,13 @@ static_assert(HMI_CMD_EMERGENCY_STOP == 4,
 static_assert(HMI_CMD_STOP == 6,
               "HMI_CMD_STOP 6 OLMALI — ekran 'printh 5A 06 F9' gonderiyor.");
 
-// Komut 5 far toggle'a ait: 4 (E-STOP) ile 6 (STOP) arasindaki bosluk KASITLI,
-// bos degil. Yeni bir komut buraya ATANMAZ.
-static_assert(HMI_CMD_EMERGENCY_STOP + 1 == HMI_CMD_HEADLIGHT_TOGGLE_ID,
-              "ID 5 far toggle'a ayrilmistir (main.cpp case 5).");
-static_assert(HMI_CMD_HEADLIGHT_TOGGLE_ID + 1 == HMI_CMD_STOP,
+// 4 (E-STOP) ile 6 (STOP) arasindaki bosluk KASITLIDIR: ID 5 rezervedir, bos
+// degil. Yeni bir komut buraya ATANMAZ — 5'e makro tanimlanmasi bu iki
+// static_assert'i kirmadan mumkun olmasin diye numara komsuluk uzerinden
+// kilitlenir.
+static_assert(HMI_CMD_EMERGENCY_STOP + 1 == HMI_CMD_RESERVED_ID,
+              "ID 5 REZERVEDIR (eski far toggle) — yeniden atanmamali.");
+static_assert(HMI_CMD_RESERVED_ID + 1 == HMI_CMD_STOP,
               "ID 5 ile 6 arasinda bosluk yok — STOP 6'dir.");
 
 // Tum komutlar birbirinden farkli olmali (kopya = iki buton ayni eylemi yapar).
@@ -105,7 +112,7 @@ void test_cmd_ids_match_nextion_contract(void) {
     TEST_ASSERT_EQUAL_UINT8(2, HMI_CMD_DRIVE_ENABLE);
     TEST_ASSERT_EQUAL_UINT8(3, HMI_CMD_RESET);
     TEST_ASSERT_EQUAL_UINT8(4, HMI_CMD_EMERGENCY_STOP);
-    TEST_ASSERT_EQUAL_UINT8(5, HMI_CMD_HEADLIGHT_TOGGLE_ID);
+    TEST_ASSERT_EQUAL_UINT8(5, HMI_CMD_RESERVED_ID);
     TEST_ASSERT_EQUAL_UINT8(6, HMI_CMD_STOP);
 }
 
@@ -136,8 +143,20 @@ void test_frame_emergency_stop(void) {  // printh 5A 04 FB
     assertFrameDecodes(HMI_CMD_EMERGENCY_STOP);
 }
 
-void test_frame_headlight_toggle(void) {  // printh 5A 05 FA
-    assertFrameDecodes(HMI_CMD_HEADLIGHT_TOGGLE_ID);
+// ID 5 (rezerve) icin cerceve YINE DE cozulur — parser komut-agnostiktir,
+// yalnizca checksum'a bakar. Bu KASITLIDIR: cerceve main.cpp'ye komut 5 olarak
+// ulasir ve orada `default` dalinda WARN'lanip yutulur. Yani "sessizce yok
+// sayma" parser katmaninda DEGIL, switch katmanindadir.
+void test_frame_reserved_id_still_parses_but_is_unassigned(void) {  // printh 5A 05 FA
+    assertFrameDecodes(HMI_CMD_RESERVED_ID);
+
+    // Rezerve ID hicbir gecerli komutla CAKISMAMALI — main.cpp'de kendine ait
+    // bir `case` OLMADIGININ sartidir (aksi halde default dalina dusmezdi).
+    TEST_ASSERT_NOT_EQUAL(HMI_CMD_START, HMI_CMD_RESERVED_ID);
+    TEST_ASSERT_NOT_EQUAL(HMI_CMD_DRIVE_ENABLE, HMI_CMD_RESERVED_ID);
+    TEST_ASSERT_NOT_EQUAL(HMI_CMD_RESET, HMI_CMD_RESERVED_ID);
+    TEST_ASSERT_NOT_EQUAL(HMI_CMD_EMERGENCY_STOP, HMI_CMD_RESERVED_ID);
+    TEST_ASSERT_NOT_EQUAL(HMI_CMD_STOP, HMI_CMD_RESERVED_ID);
 }
 
 void test_frame_stop(void) {  // printh 5A 06 F9
@@ -156,7 +175,7 @@ void test_checksum_table_matches_document(void) {
     TEST_ASSERT_EQUAL_HEX8(0xFD, expectedChecksum(HMI_CMD_DRIVE_ENABLE));
     TEST_ASSERT_EQUAL_HEX8(0xFC, expectedChecksum(HMI_CMD_RESET));
     TEST_ASSERT_EQUAL_HEX8(0xFB, expectedChecksum(HMI_CMD_EMERGENCY_STOP));
-    TEST_ASSERT_EQUAL_HEX8(0xFA, expectedChecksum(HMI_CMD_HEADLIGHT_TOGGLE_ID));
+    TEST_ASSERT_EQUAL_HEX8(0xFA, expectedChecksum(HMI_CMD_RESERVED_ID));
     TEST_ASSERT_EQUAL_HEX8(0xF9, expectedChecksum(HMI_CMD_STOP));
 
     // "0xFF - CMD" kestirmesi `~CMD` ile birebir ayni (CMD <= 0xFF oldugu icin).
@@ -239,7 +258,7 @@ void test_all_commands_decode_back_to_back(void) {
         HMI_CMD_DRIVE_ENABLE,    // 5A 02 FD
         HMI_CMD_RESET,           // 5A 03 FC
         HMI_CMD_EMERGENCY_STOP,  // 5A 04 FB
-        HMI_CMD_HEADLIGHT_TOGGLE_ID,  // 5A 05 FA
+        HMI_CMD_RESERVED_ID,  // 5A 05 FA
         HMI_CMD_STOP,            // 5A 06 F9
     };
 

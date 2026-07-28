@@ -114,14 +114,30 @@ aşırı tepki, gereksiz arıza kaydı ve RESET zorunluluğu demektir.
 > Ekrandaki E-STOP butonu **fiziksel acil durdurma butonunun yerini tutmaz**;
 > o ayrı bir donanım yoludur.
 
-### 0.6 — Far butonu EKLEMEYİN
+### 0.6 — Far butonu VARSA KALDIRIN, yenisini EKLEMEYİN
 
-Far (`5`, `printh 5A 05 FA`) çerçevesini firmware hâlâ işliyor
-(`main.cpp` `case 5` → `HEADLIGHT_TOGGLE`), **ama yeni ekran projesine far
-butonu eklenmez**: far fiziksel düğmeyle (`HEADLIGHT_SWITCH_PIN`) kontrol
-ediliyor ve latching modda fiziksel düğme baskın — ekrandan yapılan toggle bir
-sonraki tick'te geri alınır. `far` ekranda yalnız **gösterge** (Picture) olarak
-durur ve touch event'i boş kalır (§3).
+**Karar (28.07.2026):** farın resmî kontrol yolu **fiziksel düğmedir**
+(`HEADLIGHT_SWITCH_PIN`, şartname B2 9.19.c); **ekran farı yalnız GÖSTERİR**.
+
+Firmware tarafında `case 5` dalı **silindi** — `0x5A 05 FA` çerçevesi artık
+`default` dalına düşüyor, yalnız `"Ignored/Unknown HMI command received: 5"`
+WARN'ı basıyor ve **far rölesine dokunmuyor**.
+
+Ekran tarafında yapılacak:
+
+1. `pageMain` (ve diğer sayfalar) taranıp far/ışık amaçlı **buton varsa
+   SİLİNİR**.
+2. Herhangi bir event içinde `printh 5A 05 FA` satırı varsa **silinir**
+   (Editor'de `printh 5A 05` diye arayın).
+3. Yeni far butonu **eklenmez**.
+
+> **Neden silmek gerekiyor:** buton kalırsa basıldığında hiçbir şey olmaz ama
+> ekranda duruyor olması sürücüye "far ekrandan kontrol edilebiliyor"
+> izlenimi verir — **ölü kontrol**. Yarış sırasında farı açmaya çalışan
+> sürücünün ekrana basıp beklemesi, fiziksel düğmeye gitmemesi demektir.
+
+`far` ekranda yalnız **gösterge** (Picture) olarak durur ve touch event'i boş
+kalır (§3).
 
 ---
 
@@ -344,7 +360,8 @@ Nextion Editor'de — **butonlar (§0)**:
 - [ ] Beş butonun da **Touch Press** event'i **boş** (komut yalnız Release'de)
 - [ ] Beş butonda da **Send Component ID işaretsiz** (Press ve Release)
 - [ ] E-STOP butonu görsel olarak ayrıştı (kırmızı, büyük, diğerlerinden uzak)
-- [ ] Far butonu **eklenmedi** (§0.6 — far yalnız gösterge)
+- [ ] Far/ışık butonu **varsa silindi**, yenisi eklenmedi (§0.6 — far yalnız gösterge)
+- [ ] Projede `printh 5A 05` araması **sonuç vermiyor** (ölü far komutu kalmadı)
 
 Nextion Editor'de — göstergeler:
 

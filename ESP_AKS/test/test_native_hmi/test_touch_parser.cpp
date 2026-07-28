@@ -108,7 +108,7 @@ extern void test_frame_start(void);
 extern void test_frame_drive_enable(void);
 extern void test_frame_reset(void);
 extern void test_frame_emergency_stop(void);
-extern void test_frame_headlight_toggle(void);
+extern void test_frame_reserved_id_still_parses_but_is_unassigned(void);
 extern void test_frame_stop(void);
 extern void test_checksum_table_matches_document(void);
 extern void test_old_doc_estop_frame_actually_decodes_to_reset(void);
@@ -131,7 +131,7 @@ int main(int argc, char **argv) {
     RUN_TEST(test_frame_drive_enable);
     RUN_TEST(test_frame_reset);
     RUN_TEST(test_frame_emergency_stop);
-    RUN_TEST(test_frame_headlight_toggle);
+    RUN_TEST(test_frame_reserved_id_still_parses_but_is_unassigned);
     RUN_TEST(test_frame_stop);
     RUN_TEST(test_checksum_table_matches_document);
     RUN_TEST(test_old_doc_estop_frame_actually_decodes_to_reset);

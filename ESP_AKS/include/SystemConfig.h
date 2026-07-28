@@ -204,27 +204,30 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 #define HMI_CMD_RESET          3  // 0x5A 0x03 0xFC -> RESET Request
 #define HMI_CMD_EMERGENCY_STOP 4  // 0x5A 0x04 0xFB -> EMERGENCY STOP Request
 
-// Komut 5 — HMI_CMD_HEADLIGHT_TOGGLE (far ekran butonu, çerçeve 0x5A 0x05 0xFA).
+// Komut 5 — KULLANIM DIŞI / REZERVE (eski far toggle, çerçeve 0x5A 0x05 0xFA).
 //
-// ⚠️ AÇIK ÇELİŞKİ (25.07.2026 tespiti — bkz. BENI_OKU.md):
-// Bu yorum eskiden "KULLANIM DIŞI — REZERVE, far fiziksel düğmeye taşındı"
-// diyordu, ama KOD BÖYLE DAVRANMIYOR: main.cpp'deki HMI komut switch'i hâlâ
-// `case 5` ile VcuEvent::HEADLIGHT_TOGGLE post ediyor ve VcuLogic.cpp bunu
-// RELAY_ROLES_ASSIGNED arkasında işleyip far rölesini sürüyor.
+// KARAR VERİLDİ (28.07.2026): farın resmî kontrol yolu FİZİKSEL DÜĞMEDİR
+// (HEADLIGHT_SWITCH_PIN, şartname B2 9.19.c); ekran farı yalnız GÖSTERİR
+// (far.pic göstergesi, bkz. Documents/HMI_Field_Map.md). Bu karar
+// 25.07.2026'da tespit edilen çelişkiyi kapatır — ÇELİŞKİ ARTIK YOKTUR.
 //
-// Üstelik far kanalına İKİ SÜRÜCÜ birden yazıyor:
-//   (a) fiziksel düğme (HEADLIGHT_SWITCH_PIN, şartname B2 9.19.c) — run()'ın
-//       her tick'inde okunur ve LATCHING modda far durumunu anahtar KONUMUNA
-//       eşitler;
+// Neden ekran kontrolü seçilmedi: far kanalına İKİ SÜRÜCÜ birden yazıyordu —
+//   (a) fiziksel düğme — run()'ın her tick'inde okunur ve LATCHING modda far
+//       durumunu anahtarın KONUMUNA eşitler;
 //   (b) ekran komutu 5 — anlık toggle.
 // Latching modda (a) baskındır: ekrandan yapılan toggle bir sonraki tick'te
-// GERİ ALINIR. Yani komut 5 pratikte kalıcı bir etki üretmez.
+// GERİ ALINIR. Yani (b) kalıcı bir etki üretmiyor, yalnız röleye gereksiz bir
+// yazma ve yanıltıcı bir log satırı çıkarıyordu. Tek sürücü bırakmak, iki
+// sürücüyü uzlaştırmaktan hem daha basit hem de şartnameye uygun.
 //
-// KARAR GEREKİYOR: ya komut 5 gerçekten kaldırılmalı (main.cpp'deki case ve
-// VcuLogic'teki dal silinir), ya da ekran kontrolü resmî yol yapılıp fiziksel
-// düğme mantığıyla uzlaştırılmalı. Karar verilene kadar numara BAŞKA BİR
-// KOMUTA ATANMAMALIDIR — eski ekran projeleri hâlâ 0x5A 0x05 0xFA gönderiyor
-// olabilir (bkz. Documents/HMI_Field_Map.md).
+// UYGULAMA: main.cpp'deki `case 5` ve VcuLogic.cpp'deki HEADLIGHT_TOGGLE
+// işleme dalı SİLİNDİ. VcuEvent::HEADLIGHT_TOGGLE enum girdisi rezerve olarak
+// duruyor ama hiçbir yerden post edilmiyor (bkz. VcuLogic.h).
+//
+// ⚠️ ID 5 BAŞKA BİR KOMUTA ATANMAMALIDIR — sahadaki eski ekran projeleri hâlâ
+// 0x5A 0x05 0xFA gönderiyor olabilir. Bugün o çerçeve main.cpp'deki `default`
+// dalına düşer ve yalnız WARN'lanır (röleye DOKUNMAZ); yeniden atanırsa aynı
+// çerçeve yanlış eylemi tetikler. Bu yüzden bu numaraya makro da TANIMLANMADI.
 //
 // READY/DRIVE'dan IDLE'a KONTROLLÜ dönüş (ekran "DUR" butonu, çerçeve
 // 0x5A 0x06 0xF9). Bu komuttan ÖNCE READY/DRIVE'dan çıkmanın tek yolu E-STOP

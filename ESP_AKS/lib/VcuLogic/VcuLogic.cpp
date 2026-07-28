@@ -454,15 +454,20 @@ void run() {
             return;
         }
 
-#if RELAY_ROLES_ASSIGNED
-        if (event == VcuEvent::HEADLIGHT_TOGGLE) {
-            bool hlDesired = !s_headlightOn.load(std::memory_order_relaxed);
-            s_relays->setRelay(RELAY_CH_HEADLIGHT, hlDesired);
-            ESP_LOGI(TAG, "Far %s (ekran uzerinden toggle)", hlDesired ? "ACILDI" : "KAPANDI");
-            s_headlightOn.store(hlDesired, std::memory_order_relaxed);
-            // return yok, asagidaki isleme devam et
-        }
-#endif
+        // VcuEvent::HEADLIGHT_TOGGLE işleme dalı 28.07.2026'da KALDIRILDI.
+        //
+        // Far kanalına eskiden İKİ sürücü yazıyordu: (a) fiziksel düğme
+        // (yukarıda, run()'ın her tick'inde) ve (b) ekran komutu 5 → bu dal.
+        // Latching modda (a) baskın olduğu için ekrandan yapılan toggle bir
+        // sonraki tick'te GERİ ALINIYORDU — yani bu dal kalıcı bir etki
+        // üretmiyor, yalnız röleye gereksiz bir yazma ve yanıltıcı bir log
+        // satırı ("Far ACILDI") çıkarıyordu.
+        //
+        // KARAR: farın resmî yolu fiziksel düğmedir (şartname B2 9.19.c);
+        // ekran farı yalnız GÖSTERİR (far.pic, HMI_Field_Map.md). Artık far
+        // rölesinin TEK sürücüsü yukarıdaki HeadlightSwitch::update yoludur.
+        // VcuEvent::HEADLIGHT_TOGGLE enum girdisi REZERVE olarak duruyor ama
+        // hiçbir yerden post EDİLMEZ (bkz. VcuLogic.h).
 
         // KONTROLLÜ DURDURMA (ekran "DUR" butonu — HMI_CMD_STOP).
         //
