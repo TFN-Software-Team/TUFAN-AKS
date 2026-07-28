@@ -891,6 +891,30 @@ extern "C" void app_main() {
                 "(VehicleParams.h)");
 #endif
 
+#if !HMI_PIC_HEADLIGHT_CONFIRMED
+  // Far durum göstergesi (far.pic): HMI_PIC_HEADLIGHT_ON/OFF hala PLACEHOLDER
+  // (1/0). Gercek Nextion resource ID'leri EKRAN PROJESINDEN ALINACAK ve
+  // YARIS ONCESI ZORUNLU olarak girilecek. Yanlis ID ile komut bkcmd=0
+  // altinda SESSIZCE yutulur ya da alakasiz resim cizilir — firmware bunu
+  // fark EDEMEZ, bu yuzden tek gorunur uyari bu boot logudur.
+  ESP_LOGW(TAG, "FAR GOSTERGESI TEYITSIZ: HMI_PIC_HEADLIGHT_OFF=%d ON=%d "
+                "PLACEHOLDER — EKRAN PROJESINDEN ALINACAK, YARIS ONCESI "
+                "ZORUNLU (SystemConfig.h)",
+           HMI_PIC_HEADLIGHT_OFF, HMI_PIC_HEADLIGHT_ON);
+#endif
+
+  // Yaris gunu bench'te "hangi degerler HALA teyitsiz" tek satirda gorunsun.
+  // Liste SystemConfig.h'de derleme zamaninda kurulur (AKS_CFG_UNCONFIRMED_
+  // LIST); bir *_CONFIRMED bayragi 1 yapilinca ilgili metin kendiliginden
+  // duser ve hepsi 1 olunca asagidaki INFO dali calisir.
+#if AKS_HAS_UNCONFIRMED_CONFIG
+  ESP_LOGW(TAG, "TEYITSIZ CONFIG: %s— degerler girilene kadar bench/yaris "
+                "davranisi TAHMINE dayali (SystemConfig.h *_CONFIRMED)",
+           AKS_CFG_UNCONFIRMED_LIST);
+#else
+  ESP_LOGI(TAG, "CONFIG: yaris oncesi teyit bekleyen deger YOK.");
+#endif
+
   // BMS durumu: 0xE000 ve 0xE001 DOĞRULANDI (packV, current, SoC, temp,
   // hücre min/max/avg). 24 hücrenin tekil voltajları (E015-E020) da
   // DOĞRULANDI. Y33 (24.07.2026): BMS'in SAĞLIK durumunu (OK/FAULT) yayınladığı
