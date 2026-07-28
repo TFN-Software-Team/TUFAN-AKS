@@ -245,26 +245,121 @@ The 24-cell BMS panel has its own rotation
 
 ## Command Inputs
 
-Touch commands are 3-byte frames `0x5A <CMD> <~CMD>` (header, command, bitwise-NOT
-checksum) parsed by `DisplayHMI::readTouchCommand`. IDs currently recognized by firmware:
+Dokunmatik komutlar 3 baytlık `0x5A <CMD> <~CMD>` çerçeveleridir (header, komut,
+bit-tersi checksum); `DisplayHMI::readTouchCommand` →
+`HMI_parseTouchByte` (`lib/HMIHelpers/HMITouchParser.cpp`) tarafından çözülür.
 
-| Command ID | Meaning | Full frame (header CMD ~CMD) |
-| --- | --- | --- |
-| `1` | `START` | `0x5A 0x01 0xFE` |
-| `2` | `RESET` | `0x5A 0x02 0xFD` |
-| `3` | `EMERGENCY_STOP` | `0x5A 0x03 0xFC` |
-| `4` | `DRIVE_ENABLE` | `0x5A 0x04 0xFB` |
-| `5` | **UNUSED — RESERVED** (do not reassign) | — |
+> ### ⚠️ 28.07.2026 — BU TABLO DÜZELTİLDİ (yarış günü riski)
+>
+> Bu bölümdeki eski tablo `2 = RESET`, `3 = EMERGENCY_STOP`, `4 = DRIVE_ENABLE`
+> diyordu. **KOD BÖYLE DEĞİL.** Eski tabloya göre çizilen bir ekran projesinde
+> **E-STOP butonu `0x5A 03 FC` gönderir ve firmware bunu RESET olarak işler** —
+> yani acil durdurma isteği, arıza kaydını temizleme isteğine dönüşür.
+> Aşağıdaki tablo `include/SystemConfig.h` + `src/main.cpp` ile birebirdir
+> (CLAUDE.md Kural 1: kod kazanır) ve
+> `test/test_native_hmi/test_command_contract.cpp` tarafından kilitlenmiştir.
 
-### Command `5` — unused / reserved
+### Komut tablosu (tek doğruluk kaynağı: kod)
 
-Command `5` was previously `HEADLIGHT_TOGGLE` (frame `0x5A 0x05 0xFA`). The
-headlight is now controlled by a **physical switch** (`HEADLIGHT_SWITCH_PIN`,
-şartname B2 9.19.c), so the screen no longer sends any headlight command — the
-firmware no longer handles command 5. The ID is **kept permanently free**: if it
-were reassigned to another command, an old screen project still emitting
-`0x5A 0x05 0xFA` would trigger the wrong action. Command IDs 1-4 remain
-START/RESET/EMERGENCY_STOP/DRIVE_ENABLE.
+| Command ID | Makro | Anlam | Tam çerçeve (header CMD ~CMD) | Firmware'in yaptığı (`src/main.cpp`) |
+| --- | --- | --- | --- | --- |
+| `1` | `HMI_CMD_START` | `START` | `0x5A 0x01 0xFE` | `VcuEvent::START_REQUEST` |
+| `2` | `HMI_CMD_DRIVE_ENABLE` | `DRIVE_ENABLE` | `0x5A 0x02 0xFD` | `VcuEvent::DRIVE_ENABLE` |
+| `3` | `HMI_CMD_RESET` | `RESET` | `0x5A 0x03 0xFC` | `VcuEvent::RESET` |
+| `4` | `HMI_CMD_EMERGENCY_STOP` | `EMERGENCY_STOP` | `0x5A 0x04 0xFB` | `VcuEvent::EMERGENCY_STOP` |
+| `5` | *(makro yok — `case 5`)* | `HEADLIGHT_TOGGLE` | `0x5A 0x05 0xFA` | `VcuEvent::HEADLIGHT_TOGGLE` (aşağıya bkz.) |
+| `6` | `HMI_CMD_STOP` | `STOP` (kontrollü durdurma) | `0x5A 0x06 0xF9` | `VcuEvent::STOP_REQUEST` |
+
+Tabloda olmayan her ID `default` dalına düşer ve
+`"Ignored/Unknown HMI command received: %d"` WARN'ı ile **yok sayılır**.
+
+> **Komut ID'leri ≠ `VcuEvent` enum değerleri.** Bunlar iki AYRI numara
+> uzayıdır ve kasten farklıdır: `VcuEvent::HEADLIGHT_TOGGLE = 6`,
+> `VcuEvent::STOP_REQUEST = 7`, ama `HMI_CMD_STOP = 6`
+> (bkz. `lib/VcuLogic/VcuLogic.h` satır 48-51). Ekran tarafını yazarken
+> **yalnız yukarıdaki tabloya** bakın; `VcuEvent` değerleri firmware içidir.
+
+### ⚠️ `STOP` (6) `E-STOP`'un (4) YERİNİ TUTMAZ
+
+Bu ikisi ekranda da ayrı butonlar olmalı ve karıştırılmamalıdır
+(`SystemConfig.h` satır 234-239):
+
+- **E-STOP (`4`)** — acil. **Her** durumda çalışır, kontaktörleri ANINDA açar,
+  olay kuyruğunu bypass eder (atomic bayrak), `EMERGENCY_STOP` durumuna geçer,
+  çıkmak için RESET interlock'u gerekir.
+- **STOP (`6`)** — normal/kontrollü. Yalnız `READY` ve `DRIVE`'da anlamlıdır,
+  güvenli kapanış sırasını izler (önce sıfır tork, sonra kontaktör), `IDLE`'a
+  döner ve **arıza kaydı bırakmaz**.
+
+Ekrandaki E-STOP butonu fiziksel acil durdurma butonunun **yerini tutmaz**; o
+ayrı bir donanım yoludur.
+
+### Nextion Editor — butonlara yazılacak TAM KOD
+
+Her buton için **Touch Release Event** sekmesine (Touch Press değil) aşağıdaki
+tek satır yazılır. `printh` argümanları **hex** ve **boşlukla ayrılmış** olmalıdır:
+
+| Buton | Touch Release Event kodu |
+| --- | --- |
+| START | `printh 5A 01 FE` |
+| DRIVE (sürüşe izin) | `printh 5A 02 FD` |
+| RESET | `printh 5A 03 FC` |
+| **E-STOP (acil durdurma)** | `printh 5A 04 FB` |
+| STOP / DUR (kontrollü) | `printh 5A 06 F9` |
+
+Far için ekranda **buton yoktur** — `far` bir Picture *göstergesidir* ve touch
+event'i **boş kalmalıdır** (aşağıdaki `far` sözleşmesine bkz.). `printh 5A 05 FA`
+yalnız eski ekran projelerinde bulunur; yenisine **eklenmez**.
+
+> **Neden Touch *Release*?** Basılı tutarken tetiklenen Press event'i, parmak
+> kaymasıyla veya titreşimle yanlışlıkla komut üretebilir. Release, operatörün
+> butonu bilerek bıraktığı andır. Tüm butonlar aynı olayı kullanmalıdır ki
+> davranış öngörülebilir olsun.
+
+#### ⚠️ Butonlarda "Send Component ID" İŞARETLENMEMELİ
+
+Nextion Editor'de her bileşenin attribute panelinde bulunan **Send Component
+ID** kutusu (Touch Press / Touch Release) **işaretsiz bırakılmalıdır**.
+İşaretlenirse ekran, `printh` çıktısına **ek olarak** 7 baytlık bir
+`0x65 <page> <cid> <event> 0xFF 0xFF 0xFF` çerçevesi yollar.
+
+- Firmware bu çerçeveyi **kullanmaz**: `HMI_parseTouchByte` yalnız `0x5A` ile
+  başlayan çerçeveleri çözer; `0x00`/`0xFF` baytları parser durumunu resetler,
+  dolayısıyla `0x65` trafiği **yanlış komut üretemez**.
+- Ama tamamen bedava da değildir: her dokunuşta gereksiz RX trafiği doğurur ve
+  `DisplayHMI::readTouchCommand` içindeki liveness zaman damgasını (`0x65`
+  bayt kontrolü) besler — yani ekran-canlı göstergesi, gerçek komut trafiği
+  olmasa da "canlı" kalır.
+
+Kısacası: **tek kaynak `printh` olsun.** Kutu işaretliyse kaldırın.
+
+### Komut `5` — far toggle (KULLANIMDA, "rezerve" DEĞİL)
+
+> Bu bölüm daha önce "firmware artık komut 5'i işlemiyor" diyordu. **Bu iddia
+> YANLIŞTI** ve 28.07.2026'da silindi.
+
+`src/main.cpp` içindeki HMI komut switch'i **hâlâ** `case 5` ile
+`VcuLogic::VcuEvent::HEADLIGHT_TOGGLE` post eder; `VcuLogic.cpp` bunu
+`RELAY_ROLES_ASSIGNED` arkasında işleyip far rölesini sürer. Yani komut 5
+**işlenmektedir** (bkz. `SystemConfig.h` satır 207-227).
+
+Buna rağmen **pratik etkisi kalıcı değildir**: far kanalına iki sürücü birden
+yazar —
+
+1. **fiziksel düğme** (`HEADLIGHT_SWITCH_PIN`, şartname B2 9.19.c), `run()`'ın
+   her tick'inde okunur ve LATCHING modda far durumunu anahtarın **konumuna**
+   eşitler;
+2. **ekran komutu 5**, anlık toggle.
+
+Latching modda (1) baskındır: ekrandan yapılan toggle bir sonraki tick'te
+**geri alınır**.
+
+**KARAR GEREKİYOR** (`SystemConfig.h`'deki açık iş): ya komut 5 gerçekten
+kaldırılır (`main.cpp`'deki `case 5` ve `VcuLogic`'teki dal silinir), ya da
+ekran kontrolü resmî yol yapılıp fiziksel düğme mantığıyla uzlaştırılır.
+Karar verilene kadar **ID 5 başka bir komuta ATANMAMALIDIR** — sahadaki eski
+ekran projeleri hâlâ `0x5A 0x05 0xFA` gönderiyor olabilir ve yeniden atanırsa
+o çerçeve yanlış eylemi tetikler.
 
 ### `far` (Picture) — headlight status indicator contract
 

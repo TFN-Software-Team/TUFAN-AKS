@@ -101,6 +101,21 @@ void test_hmi_liveness_timeout(void) {
     TEST_ASSERT_FALSE(hmi.isDisplayAlive());
 }
 
+// --- test_command_contract.cpp — HMI komut sozlesmesi (numara kilidi) ---
+extern void test_cmd_ids_match_nextion_contract(void);
+extern void test_estop_is_not_reset(void);
+extern void test_frame_start(void);
+extern void test_frame_drive_enable(void);
+extern void test_frame_reset(void);
+extern void test_frame_emergency_stop(void);
+extern void test_frame_headlight_toggle(void);
+extern void test_frame_stop(void);
+extern void test_checksum_table_matches_document(void);
+extern void test_old_doc_estop_frame_actually_decodes_to_reset(void);
+extern void test_correct_estop_frame_decodes_to_emergency_stop(void);
+extern void test_mismatched_checksum_rejects_frame(void);
+extern void test_all_commands_decode_back_to_back(void);
+
 int main(int argc, char **argv) {
     UNITY_BEGIN();
     RUN_TEST(test_hmi_touch_parser_valid_command);
@@ -108,5 +123,20 @@ int main(int argc, char **argv) {
     RUN_TEST(test_hmi_touch_parser_ignore_artifacts);
     RUN_TEST(test_hmi_touch_parser_state_reset_on_artifact);
     RUN_TEST(test_hmi_liveness_timeout);
+
+    // Komut sozlesmesi (test_command_contract.cpp)
+    RUN_TEST(test_cmd_ids_match_nextion_contract);
+    RUN_TEST(test_estop_is_not_reset);
+    RUN_TEST(test_frame_start);
+    RUN_TEST(test_frame_drive_enable);
+    RUN_TEST(test_frame_reset);
+    RUN_TEST(test_frame_emergency_stop);
+    RUN_TEST(test_frame_headlight_toggle);
+    RUN_TEST(test_frame_stop);
+    RUN_TEST(test_checksum_table_matches_document);
+    RUN_TEST(test_old_doc_estop_frame_actually_decodes_to_reset);
+    RUN_TEST(test_correct_estop_frame_decodes_to_emergency_stop);
+    RUN_TEST(test_mismatched_checksum_rejects_frame);
+    RUN_TEST(test_all_commands_decode_back_to_back);
     return UNITY_END();
 }

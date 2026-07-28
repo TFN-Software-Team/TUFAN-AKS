@@ -16,13 +16,110 @@ gereken işleri adım adım listeler.
 
 ## Özet — Neden Bu Liste Var
 
-Firmware ile ekran projesi arasında üç uyumsuzluk tespit edildi:
+Firmware ile ekran projesi arasında dört uyumsuzluk tespit edildi:
 
 | # | Sorun | Sonuç |
 | --- | --- | --- |
+| 0 | **Butonların gönderdiği komut baytları dokümanda YANLIŞTI** (`2/3/4` sırası kodla ters) | **Eski tabloya göre çizilen E-STOP butonu firmware'e RESET gönderir.** Ayrıca `STOP` (kontrollü durdurma, komut `6`) hiç belgelenmemişti → ekranda DUR butonu yok |
 | 1 | Firmware `contactor.txt` ve `warn.val` gönderiyor, ekranda bu isimde obje **yok** | Komutlar sessizce yutuluyor — kontaktör durumu ve BMS uyarı seviyesi ekranda **hiç** görünmüyor |
 | 2 | Ekranda `chg`/`chgtxt`/`tm0` var ama `chg.val`'ı yazan kod **yoktu** | Alan kalıcı 0'da → ekran her koşulda "Bosta" yazıyordu. **Firmware tarafı bu iş kapsamında yapıldı**; ekran tarafında yalnız §4 kaldı |
 | 3 | `far` objesi yok (`pFar` var, ismi tutmuyor) ve touch event'inde **yerel durum** tutuyor | Nextion brown-out'undan sonra far ikonu gerçek durumdan sapıyor |
+
+---
+
+## 0. Butonlar — komut çerçeveleri (ÖNCE BUNU YAPIN)
+
+**Sayfa:** `pageMain`
+
+Bu bölüm listenin **en kritik** maddesidir: yanlış bayt = yanlış eylem.
+Firmware komutları 3 baytlık `0x5A <CMD> <~CMD>` çerçevesi olarak bekler
+(header, komut, bit-tersi checksum). Tam sözleşme:
+[HMI_Field_Map.md](HMI_Field_Map.md) → "Command Inputs".
+
+### 0.1 — Beş buton, objname ve tam kod
+
+Her buton için **Touch Release Event** sekmesine (Touch Press **değil**) tek
+satır yazılır:
+
+| Buton | `objname` | Touch Release Event kodu | Komut |
+| --- | --- | --- | --- |
+| START | `bStart` | `printh 5A 01 FE` | `1` = `HMI_CMD_START` |
+| DRIVE (sürüşe izin) | `bDrive` | `printh 5A 02 FD` | `2` = `HMI_CMD_DRIVE_ENABLE` |
+| RESET | `bReset` | `printh 5A 03 FC` | `3` = `HMI_CMD_RESET` |
+| **E-STOP (acil)** | `bEstop` | `printh 5A 04 FB` | `4` = `HMI_CMD_EMERGENCY_STOP` |
+| STOP / DUR (kontrollü) | `bStop` | `printh 5A 06 F9` | `6` = `HMI_CMD_STOP` |
+
+> **`objname`'ler firmware için serbesttir.** Firmware butonların adını
+> **okumaz** — sözleşme yalnız yukarıdaki bayt çerçevesidir (§0.3'e bkz.).
+> Yukarıdaki isimler ekran projesinin kendi düzeni için önerilir; farklı bir
+> isimlendirme kullanıyorsanız **kodu değil, yalnız bu tabloyu** güncelleyin.
+> Öte yandan `contactor` / `warn` / `far` / `chg` gibi **gösterge** objelerinin
+> isimleri sözleşmedir ve harfi harfine tutmalıdır.
+
+### 0.2 — Adımlar
+
+1. Nextion Editor'de `pageMain` sayfasını aç.
+2. Her buton için Toolbox → **Button** bileşenini sayfaya sürükle.
+3. Attribute panelinde `objname` alanını tablodaki değere ayarla.
+4. **Touch Release Event** sekmesini aç, tablodaki `printh` satırını **tek satır
+   olarak** yaz. Argümanlar hex ve boşlukla ayrılmış olmalı (`printh 5A 04 FB`),
+   `0x` öneki **yazılmaz**.
+5. **Touch Press Event** sekmesini **boş bırak** (çift komut göndermeyin).
+6. **Send Component ID** kutusunun **işaretsiz** olduğunu doğrula (§0.4).
+7. E-STOP butonunu görsel olarak ayır: kırmızı zemin, en büyük dokunma alanı,
+   diğer butonlardan uzağa yerleştir.
+
+### 0.3 — Checksum nasıl hesaplanır (yeni komut eklerseniz)
+
+Üçüncü bayt komutun **bit tersidir** (`~CMD`), yani `0xFF - CMD`:
+
+```
+CMD=0x01 → ~CMD=0xFE      CMD=0x04 → ~CMD=0xFB
+CMD=0x02 → ~CMD=0xFD      CMD=0x05 → ~CMD=0xFA
+CMD=0x03 → ~CMD=0xFC      CMD=0x06 → ~CMD=0xF9
+```
+
+Checksum tutmazsa firmware çerçeveyi **sessizce atar** — buton hiçbir şey
+yapmamış gibi görünür. Ekranda hata mesajı çıkmaz.
+
+### 0.4 — ⚠️ "Send Component ID" İŞARETLENMEMELİ
+
+Butonun attribute panelindeki **Send Component ID** kutusu (Touch Press /
+Touch Release) **işaretsiz** olmalıdır. İşaretliyse ekran, `printh` çıktısına
+**ek olarak** 7 baytlık bir `0x65 <page> <cid> <event> 0xFF 0xFF 0xFF`
+çerçevesi yollar.
+
+Firmware bu çerçeveyi kullanmaz (`HMI_parseTouchByte` yalnız `0x5A` ile
+başlayan çerçeveleri çözer; `0x00`/`0xFF` baytları parser durumunu resetler,
+dolayısıyla **yanlış komut üretemez**) — ama her dokunuşta **gereksiz RX
+trafiği** doğurur ve ekran-canlı zaman damgasını gerçek komut trafiği olmadan
+besler. Tek kaynak `printh` olsun.
+
+### 0.5 — ⚠️ STOP (`6`) ile E-STOP (`4`) AYRI butonlardır
+
+Bu ikisi birbirinin yerine geçmez:
+
+- **E-STOP (`printh 5A 04 FB`)** — acil. Her durumda çalışır, kontaktörleri
+  ANINDA açar, olay kuyruğunu bypass eder, `EMERGENCY_STOP` durumuna geçer.
+  Çıkmak için RESET interlock'u gerekir (arıza kaydı düşer).
+- **STOP / DUR (`printh 5A 06 F9`)** — normal. Yalnız `READY` ve `DRIVE`'da
+  anlamlıdır, güvenli kapanış sırasını izler (önce sıfır tork, sonra
+  kontaktör), `IDLE`'a döner, **arıza kaydı bırakmaz**.
+
+DUR butonu olmadan sürücünün normal durmak için tek yolu E-STOP'a basmaktır —
+aşırı tepki, gereksiz arıza kaydı ve RESET zorunluluğu demektir.
+
+> Ekrandaki E-STOP butonu **fiziksel acil durdurma butonunun yerini tutmaz**;
+> o ayrı bir donanım yoludur.
+
+### 0.6 — Far butonu EKLEMEYİN
+
+Far (`5`, `printh 5A 05 FA`) çerçevesini firmware hâlâ işliyor
+(`main.cpp` `case 5` → `HEADLIGHT_TOGGLE`), **ama yeni ekran projesine far
+butonu eklenmez**: far fiziksel düğmeyle (`HEADLIGHT_SWITCH_PIN`) kontrol
+ediliyor ve latching modda fiziksel düğme baskın — ekrandan yapılan toggle bir
+sonraki tick'te geri alınır. `far` ekranda yalnız **gösterge** (Picture) olarak
+durur ve touch event'i boş kalır (§3).
 
 ---
 
@@ -235,7 +332,19 @@ durumu bilinmiyor.
 
 ## Kontrol Listesi
 
-Nextion Editor'de:
+Nextion Editor'de — **butonlar (§0)**:
+
+- [ ] `pageMain` → START butonu (`bStart`), Touch Release = `printh 5A 01 FE`
+- [ ] `pageMain` → DRIVE butonu (`bDrive`), Touch Release = `printh 5A 02 FD`
+- [ ] `pageMain` → RESET butonu (`bReset`), Touch Release = `printh 5A 03 FC`
+- [ ] `pageMain` → **E-STOP** butonu (`bEstop`), Touch Release = `printh 5A 04 FB`
+- [ ] `pageMain` → STOP/DUR butonu (`bStop`), Touch Release = `printh 5A 06 F9`
+- [ ] Beş butonun da **Touch Press** event'i **boş** (komut yalnız Release'de)
+- [ ] Beş butonda da **Send Component ID işaretsiz** (Press ve Release)
+- [ ] E-STOP butonu görsel olarak ayrıştı (kırmızı, büyük, diğerlerinden uzak)
+- [ ] Far butonu **eklenmedi** (§0.6 — far yalnız gösterge)
+
+Nextion Editor'de — göstergeler:
 
 - [ ] `pageMain` → `contactor` Text eklendi (`txt_maxl≥8`, `txt="--"`, event boş)
 - [ ] `pageBms` → `warn` Number eklendi (`val=3`)
@@ -256,6 +365,15 @@ Firmware ekibine geri bildirim:
 
 Ekranda doğrulama (araç üzerinde):
 
+- [ ] **Her buton ESP log'unda DOĞRU komutu üretiyor** (araç tekerlekleri
+      yerden kesik / kontaktör devre dışıyken, `idf.py monitor` ile):
+      START → `"HMI command: START request"`,
+      DRIVE → `"DRIVE_ENABLE request"`,
+      RESET → `"RESET request"`,
+      **E-STOP → `"EMERGENCY_STOP request"`** (`RESET` görürseniz butonun
+      `printh` satırı yanlış — §0.1'e dönün),
+      DUR → `"STOP (kontrollu durdurma) request"`
+- [ ] Hiçbir butonda `"Ignored/Unknown HMI command received"` WARN'ı çıkmıyor
 - [ ] `contactor` START öncesi `OPEN`, START sonrası `CLOSED` gösteriyor
 - [ ] `warn` BMS bağlıyken `0`/`1`/`2`, BMS sökülüyken `3` (gri) gösteriyor
 - [ ] `chg` şarj kablosu takılıyken "Sarj Oluyor", sürüşte "Desarj",
