@@ -80,8 +80,12 @@ Adım adım talimat: [NEXTION_EKRAN_YAPILACAKLAR.md](NEXTION_EKRAN_YAPILACAKLAR.
 Karar sırası (ilk eşleşen kazanır): NO_DATA → CHARGING → DISCHARGING → IDLE.
 
 - **Şarj kararı yeniden üretilmez.** Kaynak `TEL_chargerActive`tır; o bayrak
-  zaten iki bağımsız göstergenin OR'udur (charger frame tazeliği **veya**
-  `ChargeDetect` akım-işareti tespiti — eşik + debounce + hareketsizlik).
+  **yalnızca** `ChargeDetect` akım-işareti tespitidir (eşik `>+2.0 A` + açılış
+  debounce'u + release debounce'u + hareketsizlik kapısı).
+  ⚠️ 2026-07-29'a kadar bu bayrak charger frame tazeliğiyle (`0x1806E5F4`)
+  OR'lanıyordu; o frame araç şarjda olmasa da kesintisiz aktığı için ekran 7/24
+  "Sarj Oluyor" gösteriyordu (SORUN 1). OR kaldırıldı — bkz.
+  [CAN_Message_Table.md](CAN_Message_Table.md) § `0x1806E5F4`.
 - **Deşarj için ölü bant ŞART:** saha ölçümünde boşta akım `-0.1 A` (Y20).
   Ölü bant olmadan araç dururken ekran "Desarj" yazar.
   `HMI_CHG_DISCHARGE_DEADBAND_CENTI_A = 100` (1.0 A) — **CONFIG, gösterim

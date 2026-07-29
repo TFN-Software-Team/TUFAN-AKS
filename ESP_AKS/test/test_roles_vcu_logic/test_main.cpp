@@ -195,14 +195,15 @@ void test_roles_flasher_stays_on_in_fault_with_bank_open(void) {
 // ---------------------------------------------------------------------------
 // (c) S1/S2 mod anahtarlaması — şartname 8.2.a.
 // ---------------------------------------------------------------------------
-// chargerActive iken: S1 kapalı + S2 açık (8.2.a.iii) ve READY reddedilir.
+// Şarj akımı tespit edildiğinde (TEL_chargerActive): S1 kapalı + S2 açık
+// (8.2.a.iii) ve READY reddedilir.
 void test_roles_charger_active_closes_s1_and_rejects_ready(void) {
     primeIdle();
     TelemetryData d = makeTelemetryDataValid();
     d.TEL_chargerActive = true;
     VcuLogic::setTelemetryData(d);
 
-    VcuLogic::run();  // handleIdle: S1 kapatılır
+    VcuLogic::run();  // handleIdle: S1 kapalı
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_S2_DRIVE]);
 
@@ -215,18 +216,45 @@ void test_roles_charger_active_closes_s1_and_rejects_ready(void) {
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_S2_DRIVE]);
 }
 
-// Charger bayatlayınca (chargerActive=false) IDLE'da S1 tekrar açılır.
-void test_roles_charger_stale_opens_s1_in_idle(void) {
+// SORUN 1 (2026-07-29) — IDLE'da S1 KOŞULSUZ KAPALIDIR ("şarja hazır" duruşu),
+// TEL_chargerActive'e BAĞLI DEĞİLDİR. Gerekçe (VcuLogic.cpp::handleIdle):
+// şarj tespiti artık yalnız AKIM tabanlı; akımın akması için S1 kapalı olmalı.
+// S1'i o bayrağa bağlamak kilitlenme yaratır — şarj hiç başlayamaz.
+void test_roles_s1_closed_in_idle_regardless_of_charger_flag(void) {
     primeIdle();
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_chargerActive = true;
+    d.TEL_chargerActive = false;  // şarj YOK
     VcuLogic::setTelemetryData(d);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);
 
+    d.TEL_chargerActive = true;  // şarj başladı — S1 kapalı KALIR
+    VcuLogic::setTelemetryData(d);
+    VcuLogic::run();
+    TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);
+
+    d.TEL_chargerActive = false;  // fiş çekildi — S1 yine kapalı KALIR
+    VcuLogic::setTelemetryData(d);
+    VcuLogic::run();
+    TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);
+}
+
+// SORUN 1 regresyonu: şarj akımı YOKKEN (TEL_chargerActive=false) START kabul
+// edilmeli. Eskiden 0x1806E5F4 sürekli aktığı için bu bayrak 7/24 true'ydu ve
+// START her seferinde reddediliyordu.
+void test_roles_start_accepted_when_not_charging(void) {
+    primeIdle();
+    TelemetryData d = makeTelemetryDataValid();
     d.TEL_chargerActive = false;
     VcuLogic::setTelemetryData(d);
     VcuLogic::run();
+
+    VcuLogic::postEvent(VcuEvent::START_REQUEST);
+    VcuLogic::run();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::READY),
+                          static_cast<int>(VcuLogic::getState()));
+    // 8.2.a.vii: sürüşte S1 AÇIK — IDLE'daki "şarja hazır" duruşu READY
+    // girişinde açıkça bozulur.
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_S1_CHARGE]);
 }
 
@@ -234,7 +262,7 @@ void test_roles_charger_stale_opens_s1_in_idle(void) {
 // KULLANILMAZ (allOn S1'i de kapatırdı) — bank-maskeli kapatma yapılır.
 void test_roles_ready_closes_drive_bank_keeps_s1_open(void) {
     primeIdle();
-    VcuLogic::run();  // ilk IDLE tick'i (S1 açık komutlanır)
+    VcuLogic::run();  // ilk IDLE tick'i (S1 "şarja hazır" olarak KAPATILIR)
 
     VcuLogic::postEvent(VcuEvent::START_REQUEST);
     VcuLogic::run();
@@ -312,6 +340,27 @@ void test_roles_allOff_does_not_touch_flasher_channel(void) {
 // ---------------------------------------------------------------------------
 // (e) Soğutma fanı — şartname B3 7.a-b (flaşörün ikizi, FAN_ON=40 / FAN_OFF=35).
 // ---------------------------------------------------------------------------
+// SORUN 2 regresyonu (saha, 2026-07-29): ekranda 32 °C okunurken fan DÖNÜYORDU.
+// Bu test yazılım tarafını kilitler — 32 °C'de fan kanalı, kaç tick geçerse
+// geçsin ve sıcaklık nasıl dalgalanırsa dalgalansın KAPALI kalmalı. (Sahadaki
+// dönmenin sebebi NC klemens kablolamasıydı; onun karşılığı RELAY_INVERT_MASK
+// ve test_roles_relay_mask'teki polarite testleridir.)
+void test_roles_fan_off_at_32_regression(void) {
+    primeIdle();
+    setTemp(32);
+    for (int i = 0; i < 100; ++i) {
+        VcuLogic::run();
+        TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FAN]);
+    }
+    // 32 → 34 → 32: FAN_ON_TEMP_C'ye hiç değmeyen dalgalanma fanı açmamalı.
+    setTemp(34);
+    VcuLogic::run();
+    TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FAN]);
+    setTemp(32);
+    VcuLogic::run();
+    TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FAN]);
+}
+
 // 39 °C: boot OFF durumu korunur (ON eşiği 40'ın altı, OFF eşiği 35'in üstü).
 void test_roles_fan_stays_off_at_39(void) {
     primeIdle();
@@ -554,10 +603,12 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_roles_flasher_stays_on_in_fault_with_bank_open);
 
     RUN_TEST(test_roles_charger_active_closes_s1_and_rejects_ready);
-    RUN_TEST(test_roles_charger_stale_opens_s1_in_idle);
+    RUN_TEST(test_roles_s1_closed_in_idle_regardless_of_charger_flag);
+    RUN_TEST(test_roles_start_accepted_when_not_charging);
     RUN_TEST(test_roles_ready_closes_drive_bank_keeps_s1_open);
     RUN_TEST(test_roles_fault_opens_s1_s2_and_bank);
 
+    RUN_TEST(test_roles_fan_off_at_32_regression);
     RUN_TEST(test_roles_fan_stays_off_at_39);
     RUN_TEST(test_roles_fan_on_at_40);
     RUN_TEST(test_roles_fan_stays_on_at_38);

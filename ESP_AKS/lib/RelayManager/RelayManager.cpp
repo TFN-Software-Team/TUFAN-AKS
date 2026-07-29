@@ -50,11 +50,15 @@ bool RelayManager::begin() {
     writeRegister(MCP23S17_IOCON_BANK0, 0x00);
 
     // CRITICAL: Write OLAT registers BEFORE setting pins as output.
-    // MCP23S17 defaults OLAT to 0x00 (LOW).  In our active-low hardware
-    // LOW = relay ON, so we must set 0xFF (HIGH = relay OFF) first to
-    // prevent all relays firing the instant IODIR switches to output.
-    writeRegister(MCP23S17_OLATA, 0xFF);
-    writeRegister(MCP23S17_OLATB, 0xFF);
+    // MCP23S17 defaults OLAT to 0x00 (LOW). Pinler output yapıldığı anda hiçbir
+    // yükün kalkmaması için önce "hepsi KAPALI" deseni yazılır.
+    // ARTIK 0xFF SABİTİ DEĞİL, hwFromLogical(0) kullanılır: NC klemensli bir
+    // kanalda (RELAY_INVERT_MASK) "yük KAPALI", pinin HIGH değil LOW olması
+    // demektir. Sabit 0xFF yazmak, fanı boot anından itibaren çalıştırırdı
+    // (SORUN 2'nin ta kendisi).
+    const uint16_t hwSafe = hwFromLogical(0);
+    writeRegister(MCP23S17_OLATA, hwSafe & 0xFF);
+    writeRegister(MCP23S17_OLATB, (hwSafe >> 8) & 0xFF);
 
     // Now safe to set all pins as output
     writeRegister(MCP23S17_IODIRA, 0x00);
@@ -62,7 +66,10 @@ bool RelayManager::begin() {
 
     s_relayState.store(0, std::memory_order_relaxed);
     s_initialized = true;
-    ESP_LOGI(TAG, "RelayManager initialized — all relays OFF");
+    ESP_LOGI(TAG,
+             "RelayManager initialized — tum yukler KAPALI "
+             "(OLAT=%02X/%02X, invertMask=0x%03X)",
+             hwSafe & 0xFF, (hwSafe >> 8) & 0xFF, (unsigned)RELAY_INVERT_MASK);
 
     // Init yazımlarının chip'e gerçekten oturduğunu geri-okuma ile doğrula.
     verifyOutputs();
@@ -84,8 +91,8 @@ void RelayManager::setRelay(uint8_t channel, bool state) {
         cur &= ~(1u << channel);
     s_relayState.store(cur, std::memory_order_relaxed);
 
-    // Hardware is active-low: invert logical state before writing
-    uint16_t hw = ~cur;
+    // Mantıksal durum -> pin seviyeleri (active-low + kanal bazında NC terslemesi)
+    uint16_t hw = hwFromLogical(cur);
     writeRegister(MCP23S17_OLATA, hw & 0xFF);
     writeRegister(MCP23S17_OLATB, (hw >> 8) & 0xFF);
 
@@ -108,8 +115,7 @@ void RelayManager::allOn() {
     uint16_t cur = s_relayState.load(std::memory_order_relaxed);
     cur |= (uint16_t)RELAY_CONTACTOR_BANK_MASK;
     s_relayState.store(cur, std::memory_order_relaxed);
-    // Active-low: relay ON = pin LOW
-    uint16_t hw = ~cur;
+    uint16_t hw = hwFromLogical(cur);
     writeRegister(MCP23S17_OLATA, hw & 0xFF);
     writeRegister(MCP23S17_OLATB, (hw >> 8) & 0xFF);
     ESP_LOGI(TAG, "Contactor bank closed (mask=0x%03X)",
@@ -146,8 +152,7 @@ void RelayManager::allOff(bool silent) {
     uint16_t cur = s_relayState.load(std::memory_order_relaxed);
     cur &= (uint16_t)~RELAY_CONTACTOR_BANK_MASK;
     s_relayState.store(cur, std::memory_order_relaxed);
-    // Active-low: relay OFF = pin HIGH
-    uint16_t hw = ~cur;
+    uint16_t hw = hwFromLogical(cur);
     writeRegister(MCP23S17_OLATA, hw & 0xFF);
     writeRegister(MCP23S17_OLATB, (hw >> 8) & 0xFF);
     if (!silent) {
@@ -230,14 +235,16 @@ void RelayManager::reinitAndReassert() {
     writeRegister(MCP23S17_IOCON_BANK1, 0x00);
     writeRegister(MCP23S17_IOCON_BANK0, 0x00);
 
-    // Güvenli sıra (bkz. begin()): önce OLAT'ı emniyetli HIGH'a al, sonra
-    // pinleri output yap, en son gerçek gölge-durumu re-assert et.
-    writeRegister(MCP23S17_OLATA, 0xFF);
-    writeRegister(MCP23S17_OLATB, 0xFF);
+    // Güvenli sıra (bkz. begin()): önce OLAT'ı "tüm yükler KAPALI" desenine al
+    // (0xFF sabiti DEĞİL — hwFromLogical(0); NC kanalda ikisi aynı şey değildir),
+    // sonra pinleri output yap, en son gerçek gölge-durumu re-assert et.
+    const uint16_t hwSafe = hwFromLogical(0);
+    writeRegister(MCP23S17_OLATA, hwSafe & 0xFF);
+    writeRegister(MCP23S17_OLATB, (hwSafe >> 8) & 0xFF);
     writeRegister(MCP23S17_IODIRA, 0x00);
     writeRegister(MCP23S17_IODIRB, 0x00);
 
-    uint16_t hw = ~s_relayState.load(std::memory_order_relaxed);
+    uint16_t hw = hwFromLogical(s_relayState.load(std::memory_order_relaxed));
     writeRegister(MCP23S17_OLATA, hw & 0xFF);
     writeRegister(MCP23S17_OLATB, (hw >> 8) & 0xFF);
 }
@@ -246,7 +253,7 @@ bool RelayManager::verifyOutputs() {
     if (!s_initialized || s_spiDev == nullptr)
         return true;  // doğrulanacak bir şey yok / okunamaz
 
-    const uint16_t hw = ~s_relayState.load(std::memory_order_relaxed);
+    const uint16_t hw = hwFromLogical(s_relayState.load(std::memory_order_relaxed));
     const uint8_t expOlatA = hw & 0xFF;
     const uint8_t expOlatB = (hw >> 8) & 0xFF;
 

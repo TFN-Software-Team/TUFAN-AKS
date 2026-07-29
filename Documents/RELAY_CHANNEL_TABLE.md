@@ -70,19 +70,66 @@ When the hardware team wires one of `RELAY_CH_SPARE_3` / `_6` / `_8` / `_9`:
 | `RELAY_CH_S2_DRIVE` (`RELAY_CH_POS_4`) | 4 | **S2 — drive-line contactor** | 8.2.a.vii: closed in drive; 8.2.a.iii: open while charging; 8.2.a.vi: open on safety problem | TBD during harness validation |
 | `RELAY_CH_FLASHER` (`RELAY_CH_POS_5`) | 5 | **Temperature warning flasher** (audible+visual). Driven by `VcuLogic` from the verified BMS max temperature: ON at ≥55 °C, OFF below 53 °C (`FLASHER_HYSTERESIS_C=2`). **Outside** the contactor bank mask — `allOff()` never extinguishes it, so it stays on through FAULT/E-STOP while the temperature holds. | 6.e.ii / 6.e.iii | TBD during harness validation |
 | `RELAY_CH_SPARE_6` (`RELAY_CH_POS_6`) | 6 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
-| `RELAY_CH_FAN` (`RELAY_CH_POS_7`) | 7 | **Cooling fan** — driven by `VcuLogic` from the verified BMS max temperature: ON at ≥40 °C (`FAN_ON_TEMP_C`), OFF at ≤35 °C (`FAN_OFF_TEMP_C`). **Outside** the bank mask — stays on through FAULT/E-STOP so a hot pack keeps cooling. Stale/timed-out BMS data leaves it untouched. | B3 7.a-b | TBD during harness validation |
+| `RELAY_CH_FAN` (`RELAY_CH_POS_7`) | 7 | **Cooling fan** — driven by `VcuLogic` from the verified BMS max temperature: ON at ≥40 °C (`FAN_ON_TEMP_C`), OFF at ≤35 °C (`FAN_OFF_TEMP_C`). **Outside** the bank mask — stays on through FAULT/E-STOP so a hot pack keeps cooling. Stale/timed-out BMS data leaves it untouched. ⚠️ **NC-wired** — see the polarity note below. | B3 7.a-b | **NC (normally-closed) terminal, confirmed 2026-07-29** |
 | `RELAY_CH_SPARE_8` (`RELAY_CH_POS_8`) | 8 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
 | `RELAY_CH_SPARE_9` (`RELAY_CH_POS_9`) | 9 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
 
 With `RELAY_ROLES_ASSIGNED=0` all ten channels are plain positive-contactor bank outputs (previous table).
 
+## Per-channel polarity — `RELAY_INVERT_MASK` (2026-07-29, SORUN 2)
+
+**Field symptom:** the cooling fan was spinning while the HMI read 32 °C.
+
+**Software was clean.** `RELAY_CH_FAN` is written from exactly one place
+(`VcuLogic.cpp::run()` → `fanDesiredState`), and at 32 °C that function returns
+`false` (32 ≤ `FAN_OFF_TEMP_C`=35) — the firmware was commanding the fan **off**.
+
+**Root cause was electrical:** the fan load is wired to the relay's **NC
+(normally-closed)** terminal. Commanding the relay "off" leaves the coil
+de-energized, which leaves NC **closed** — so the fan ran. The logic was exactly
+inverted for that one channel.
+
+`RELAY_INVERT_MASK` (`SystemConfig.h`) inverts the logical→pin mapping per channel;
+`RelayManager::hwFromLogical()` is the single conversion point used by `begin()`,
+`setRelay()`, `allOn()`, `allOff()`, `reinitAndReassert()` and `verifyOutputs()`:
+
+| Channel class | Mapping | Meaning |
+| --- | --- | --- |
+| Not in mask (NO terminal, default) | pin = `!logical` | active-low driver: load ON = coil energized = pin LOW |
+| In mask (NC terminal) | pin = `logical` | load ON = coil **de-energized** = pin HIGH |
+
+Upper layers (`VcuLogic`, HMI, tests, `getRelayState()`) always speak in terms of
+the **load**, never the coil; the wiring difference is closed in this one mask.
+
+- Enabled by `RELAY_CH_FAN_NC_WIRED` (default `1`) → `RELAY_INVERT_MASK = 1 << RELAY_CH_FAN`.
+- A `static_assert` **forbids** putting any contactor-bank channel in the mask —
+  inverting a contactor would make `allOff()` *close* it (the opposite of 8.2.a.vi).
+- `begin()` no longer writes a hard-coded `0xFF`; it writes `hwFromLogical(0)` so
+  "all loads off" is correct from the first millisecond even on an inverted channel.
+
+**Hardware follow-up:** while the fan stays on NC, its coil is continuously energized
+whenever the pack is below 40 °C (i.e. almost always) — wasted current and coil/contact
+life. Moving the wire to the **NO** terminal is the permanent fix; then set
+`RELAY_CH_FAN_NC_WIRED 0` and nothing else changes.
+
 ## S1/S2 mode summary (`RELAY_ROLES_ASSIGNED=1`)
 
 | Mode | S1 (ch 0) | Drive bank: S2 (ch 4) + HV− (ch 1) | Spares (ch 3,6,8,9) | Source |
 | --- | --- | --- | --- | --- |
-| IDLE, charger active (`TEL_chargerActive`) | CLOSED | OPEN (START_REQUEST rejected: "charger aktif — sarj modunda READY yasak") | OPEN | 8.2.a.iii |
-| READY / DRIVE | OPEN | CLOSED (`RELAY_DRIVE_BANK_MASK` = 0x012, not `allOn`) | **untouched** — READY does not energize unwired channels | 8.2.a.vii |
+| IDLE (charging **or not**) | **CLOSED** — unconditional "charge-ready" posture | OPEN | OPEN | 8.2.a.iii |
+| IDLE + charge current detected (`TEL_chargerActive`) | CLOSED | OPEN (START_REQUEST rejected: "sarj akimi tespit edildi (>2.0A) — sarj sirasinda READY yasak") | OPEN | 8.2.a.iii |
+| READY / DRIVE | OPEN (explicitly commanded open on READY entry) | CLOSED (`RELAY_DRIVE_BANK_MASK` = 0x012, not `allOn`) | **untouched** — READY does not energize unwired channels | 8.2.a.vii |
 | FAULT / EMERGENCY_STOP | OPEN | OPEN (`allOff` over `RELAY_CONTACTOR_BANK_MASK` = 0x35B) | OPEN — safety open covers the spares too | 8.2.a.vi |
+
+> **S1 policy change (2026-07-29, SORUN 1).** S1 used to follow `TEL_chargerActive`.
+> That flag is now derived **only** from pack current (`ChargeDetect`, > +2.0 A while
+> stationary) — and current cannot flow unless S1 is already closed, so gating S1 on
+> it would deadlock: charging could never start. Charging worked before only because
+> `0x1806E5F4` freshness kept the flag permanently true (the false positive itself).
+> S1 is therefore held closed in IDLE and opened explicitly on READY entry and by
+> `allOff` in FAULT/E-STOP. **Hardware consequence:** the charge-port terminals sit at
+> pack voltage while the vehicle is in IDLE. If a plug/proximity detect input is added
+> later, S1 should follow that signal instead — only `VcuLogic.cpp::handleIdle()` changes.
 
 Fan (OUT7) and headlight (OUT2) are **independent of the S1/S2 mode** — they are outside the bank mask, so none of the transitions above changes them. The fan tracks the verified BMS max temperature (40 °C ON / 35 °C OFF, hysteresis) in every state including FAULT/E-STOP; the headlight follows the driver's physical switch (`HEADLIGHT_SWITCH_PIN`), independent of BMS and vehicle state.
 
@@ -99,7 +146,7 @@ The headlight (OUT2) is controlled by a **physical driver switch**, not the touc
 
 Wiring: connect the switch between GPIO27 and GND. The pure decision logic (debounce + latching/momentary) lives in `lib/VcuLogic/HeadlightSwitch.h` (native-tested); `main.cpp` binds `gpio_get_level(HEADLIGHT_SWITCH_PIN)` to the `VcuLogic` reader hook.
 
-`TEL_chargerActive` is derived from the charger CAN stream freshness (`CanManager::updateChargerValidity`, `CAN_CHARGER_TIMEOUT_MS`) and is internal-only — it is never serialized into the LoRa TEL frame (19 fields, v2).
+`TEL_chargerActive` is derived **only from pack current** (`ChargeDetect`: > +2.0 A, vehicle stationary, open/release debounced — see `lib/CanManager/ChargeDetect.h`) and is internal-only; it is never serialized into the LoRa TEL frame (19 fields, v2). It used to be OR'd with `0x1806E5F4` freshness (`CAN_chargerValid`); that term was removed on 2026-07-29 after two live CAN captures showed the frame streams continuously whether or not the vehicle is charging (see `CAN_Message_Table.md` § `0x1806E5F4`). `CAN_chargerValid` / `CAN_CHARGER_TIMEOUT_MS` still exist but only mark stored setpoint freshness — they feed no contactor, mode or interlock decision.
 
 ## Faz 1 — kanal↔klemens doğrulaması (DOĞRULANDI, 2026-07-22)
 

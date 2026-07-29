@@ -127,6 +127,13 @@ namespace {
 class RelayActuatorAdapter : public IRelayActuator {
  public:
   void allOn() override { RelayManager::instance().allOn(); }
+  // ÖNCEDEN EKSİKTİ (2026-07-29): IRelayActuator::setBankStaggered saf sanal
+  // olduğu halde bu adapter onu override etmiyordu → RelayActuatorAdapter soyut
+  // kalıyor ve [env:esp32dev] "cannot declare variable to be of abstract type"
+  // ile DERLENMİYORDU. VcuLogic READY girişinde (handleReady) bu yolu kullanır.
+  void setBankStaggered(uint16_t mask, uint32_t stepDelayMs) override {
+    RelayManager::instance().setBankStaggered(mask, stepDelayMs);
+  }
   void allOff(bool silent) override { RelayManager::instance().allOff(silent); }
   void setRelay(uint8_t channel, bool state) override {
     RelayManager::instance().setRelay(channel, state);

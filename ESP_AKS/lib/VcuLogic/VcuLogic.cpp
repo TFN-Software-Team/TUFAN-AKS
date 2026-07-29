@@ -167,6 +167,24 @@ void init(IRelayActuator& relays) {
     // Safety first — ensure all relays are off at startup, even if init fails
     s_relays->allOff(false);
 
+#if RELAY_ROLES_ASSIGNED
+    // allOff YALNIZCA kontaktör bankını açar; flaşör/fan/far kanalları maskenin
+    // DIŞINDADIR (bilinçli — güvenlik açması soğutmayı ve ikazı kesmemeli).
+    // Bu üç kanal bugüne kadar boot'ta HİÇ komutlanmıyordu: fiziksel durumları
+    // MCP23S17'nin reset desenine ve kenar-tetikli gölge mantığına bırakılmıştı.
+    // Aşağıdaki üç yazım o boşluğu kapatır — boot'tan itibaren yükün durumu
+    // yazılımın bildiği durumla AYNI olur (SORUN 2 sertleştirmesi, 2026-07-29).
+    // Gölge değişkenler (s_flasherOn / s_fanOn / s_headlightOn) zaten false;
+    // buradaki yazımlar onlarla tutarlıdır ve kenar-tetikli mantığı bozmaz.
+    s_relays->setRelay(RELAY_CH_FAN, false);
+    s_relays->setRelay(RELAY_CH_FLASHER, false);
+    s_relays->setRelay(RELAY_CH_HEADLIGHT, false);
+    ESP_LOGI(TAG,
+             "Bank disi kanallar boot'ta deterministik KAPALI yazildi "
+             "(fan=OUT%d, flasor=OUT%d, far=OUT%d)",
+             RELAY_CH_FAN, RELAY_CH_FLASHER, RELAY_CH_HEADLIGHT);
+#endif
+
     s_eventQueue = xQueueCreate(8, sizeof(VcuEvent));
     if (s_eventQueue == nullptr) {
         ESP_LOGE(TAG, "Failed to create event queue");
@@ -676,16 +694,26 @@ static void handleIdle() {
     // Waiting for START_REQUEST from LoRa/UKS
 #if RELAY_ROLES_ASSIGNED
     // Şartname 8.2.a.iii: şarjda S1 KAPALI + S2 AÇIK. IDLE'da sürüş bankı
-    // (S2 dahil) zaten açık; burada yalnız S1, charger freshness'ına
-    // (TEL_chargerActive — CAN_chargerValid'den, bayatlama dahil) göre
-    // sürülür. Kenar-tetikli: istenen durum değişmedikçe SPI yazılmaz.
-    // Charger aktifken START_REQUEST zaten reddedilir (isReadyEntryPermitted).
-    const TelemetryData VCU_snap = getTelemetrySnapshot();
-    const int8_t desired = VCU_snap.TEL_chargerActive ? 1 : 0;
+    // (S2 dahil) zaten açık; burada yalnız S1 sürülür.
+    //
+    // POLİTİKA (2026-07-29, ekip kararı): IDLE'da S1 KOŞULSUZ KAPALIDIR —
+    // "şarja hazır" duruşu. Şarj tespiti artık yalnızca AKIM tabanlıdır
+    // (TEL_chargerActive, bkz. CanManager::getTelemetryData) ve S1 bu bayrağa
+    // BAĞLANAMAZ: akımın akabilmesi için S1'in KAPALI olması gerekir, S1'i
+    // akıma bağlamak kilitlenme (deadlock) yaratır — şarj hiç başlayamaz.
+    // Eskiden bu koşul TEL_chargerActive idi ve şarj yalnızca 0x1806E5F4
+    // kaynaklı YANLIŞ POZİTİF sayesinde çalışıyordu (SORUN 1).
+    //
+    // GÜVENLİK SINIRI (değişmedi): S1 yalnızca IDLE'da kapalıdır.
+    //   * READY girişinde açıkça AÇILIR (handleReady, şartname 8.2.a.vii)
+    //   * FAULT / E-STOP'ta allOff bankı açar (S1 bankın İÇİNDE, 8.2.a.vi)
+    // DONANIM NOTU: bu duruşta şarj soketi terminalleri IDLE'da pack gerilimi
+    // altındadır. Fiziksel bir soket-takılı (plug/proximity) girişi eklenirse
+    // doğru davranış S1'i o sinyale bağlamaktır; o gün yalnız bu blok değişir.
+    const int8_t desired = 1;
     if (desired != s_s1LastCmdInIdle) {
-        s_relays->setRelay(RELAY_CH_S1_CHARGE, desired == 1);
-        ESP_LOGI(TAG, "IDLE: S1 (sarj hatti) %s (chargerActive=%d)",
-                 desired == 1 ? "KAPATILDI" : "ACILDI", (int)desired);
+        s_relays->setRelay(RELAY_CH_S1_CHARGE, true);
+        ESP_LOGI(TAG, "IDLE: S1 (sarj hatti) KAPATILDI — sarja hazir durus");
         s_s1LastCmdInIdle = desired;
     }
 #endif
@@ -904,7 +932,7 @@ static const char* readyRejectReason(const TelemetryData& VCU_data) {
 #if RELAY_ROLES_ASSIGNED
     // Şartname 8.2.a.iii — sıralama isReadyEntryPermitted ile birebir aynı.
     if (VCU_data.TEL_chargerActive)
-        return "charger aktif — sarj modunda READY yasak";
+        return "sarj akimi tespit edildi (>2.0A) — sarj sirasinda READY yasak";
 #endif
     if (hasCriticalCondition(VCU_data, VcuState::IDLE))
         return "kritik kosul aktif";
