@@ -457,7 +457,7 @@ static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S1_CHARGE)) == 0,
 // ve bobin/kontak omru kaybi. Kablo NO klemense alinirsa asagidaki
 // RELAY_CH_FAN_NC_WIRED 0 yapilmali; baska hicbir kod degismez.
 #ifndef RELAY_CH_FAN_NC_WIRED
-#define RELAY_CH_FAN_NC_WIRED 1  // 1 = fan NC klemenste (saha teyidi 2026-07-29)
+#define RELAY_CH_FAN_NC_WIRED 0  // 0 = fan NO (Normalde Açık) klemensli (kullanıcı teyidi: Fan rölesi normal hali OPEN)
 #endif
 
 #if RELAY_ROLES_ASSIGNED && RELAY_CH_FAN_NC_WIRED

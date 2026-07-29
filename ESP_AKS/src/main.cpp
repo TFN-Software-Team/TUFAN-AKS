@@ -990,10 +990,8 @@ extern "C" void app_main() {
                           TASK_PRIORITY_HMI, nullptr, 0);
   xTaskCreatePinnedToCore(vTask_VCU_Logic, "VCU_Task", 4096, nullptr,
                           TASK_PRIORITY_VCU, nullptr, 1);
-  // LoRa stack 3072 B: HWM ölçümü artık ESP_LOGI ile GÖRÜNÜR (logStackUsage).
-  // Marj < 512 B (≈128 word "remaining") ise stack'i artır; ölçüm görünmeden
-  // körlemesine büyütme.
-  xTaskCreatePinnedToCore(vTask_LoRa_UKS, "LoRa_Task", 3072, nullptr,
+  // LoRa stack 6144 B (increased from 3072 to prevent stack overflow crash).
+  xTaskCreatePinnedToCore(vTask_LoRa_UKS, "LoRa_Task", 6144, nullptr,
                           TASK_PRIORITY_LORA, nullptr, 0);
 }
 #endif  // E22_DIAGNOSTIC_MODE
