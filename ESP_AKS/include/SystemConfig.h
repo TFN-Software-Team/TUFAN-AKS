@@ -434,6 +434,49 @@ static_assert((RELAY_DRIVE_BANK_MASK & (1u << RELAY_CH_S1_CHARGE)) == 0,
 #endif
 #endif  // RELAY_ROLES_ASSIGNED
 
+// --- KANAL BAZINDA POLARITE (NC klemens / ters surucu kati) ----------------
+// SORUN 2 (saha, 2026-07-29): ekranda 32 °C okunurken sogutma fani DONUYORDU.
+// Yazilim tarafi DOGRULANDI ve TEMIZDI: RELAY_CH_FAN'a yazan TEK yer
+// VcuLogic.cpp::run() (fanDesiredState) ve o fonksiyon 32 °C'de (<= FAN_OFF_
+// TEMP_C=35) kesin olarak false doner — yani firmware fani KAPALI komutluyordu.
+// Kok neden ELEKTRIKSELDI: fan yuku rolenin NC (normalde kapali) klemensine
+// baglanmis. Roleyi "kapali" komutlamak (bobin enerjisiz) NC kontagini KAPALI
+// birakiyor ve fan doniyor; mantik birebir TERS calisiyordu.
+//
+// Bu maske, MANTIKSAL durum -> MCP23S17 pin seviyesi cevrimini kanal bazinda
+// tersler (bkz. RelayManager::hwFromLogical):
+//   * maskede OLMAYAN kanal (varsayilan, NO klemens): pin = !mantiksal
+//     (active-low surucu kati: mantiksal ON = pin LOW = bobin enerjili)
+//   * maskede OLAN  kanal (NC klemens):               pin =  mantiksal
+//     (mantiksal ON = pin HIGH = bobin ENERJISIZ = NC kapali = yuk calisir)
+// Boylece VcuLogic/HMI/testler her zaman YUK'un durumunu konusur; kablolama
+// farki tek bir yerde, bu maskede kapanir.
+//
+// DONANIM NOTU (kalici cozum): fan NC'de kaldigi surece bobin, sicaklik 40 °C
+// altindayken (yani neredeyse her zaman) SUREKLI ENERJILI kalir — gereksiz akim
+// ve bobin/kontak omru kaybi. Kablo NO klemense alinirsa asagidaki
+// RELAY_CH_FAN_NC_WIRED 0 yapilmali; baska hicbir kod degismez.
+#ifndef RELAY_CH_FAN_NC_WIRED
+#define RELAY_CH_FAN_NC_WIRED 1  // 1 = fan NC klemenste (saha teyidi 2026-07-29)
+#endif
+
+#if RELAY_ROLES_ASSIGNED && RELAY_CH_FAN_NC_WIRED
+#define RELAY_INVERT_MASK (1u << RELAY_CH_FAN)
+#else
+#define RELAY_INVERT_MASK 0u
+#endif
+
+#ifdef __cplusplus
+// GUVENLIK KILIDI: kontaktor bankindaki hicbir kanal terslenemez. Bir
+// kontaktoru terslemek, allOff'un (guvenlik acmasi) o kontaktoru KAPATMASI
+// anlamina gelirdi — sartname 8.2.a.vi'nin tam tersi.
+static_assert((RELAY_INVERT_MASK & (unsigned)RELAY_CONTACTOR_BANK_MASK) == 0,
+              "Kontaktor bankindaki bir kanal RELAY_INVERT_MASK'a KONULAMAZ — "
+              "allOff (guvenlik acmasi) o kanali kapatirdi (sartname 8.2.a.vi).");
+static_assert((RELAY_INVERT_MASK & ~((1u << RELAY_TOTAL_CHANNELS) - 1u)) == 0,
+              "RELAY_INVERT_MASK var olmayan bir kanali isaretliyor.");
+#endif
+
 // Flaşör histerezisi (şartname 6.e.ii/6.e.iii): flaşör 55 °C'de (BMS_WARN_
 // MAX_TEMP_C, >= semantiği) yanar; sıcaklık (55 − bu değer) = 53 °C'nin
 // ALTINA inince söner. Eşik sınırında titremeyi (ON/OFF çırpınması) önler.
@@ -859,25 +902,48 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // işaretler; CAN_Event/FAULT ÜRETMEZ (krş. motor timeout -> FAULT).
 #define CAN_CHARGER_TIMEOUT_MS      2000
 
-// --- Akım tabanlı şarj tespiti (Y20 gözlemi) — chargerActive YEDEĞİ ---
-// BİRİNCİL kaynak, charger komut frame'inin (0x1806E5F4) tazeliğidir
-// (CAN_chargerValid). Ancak bu akış OPSİYONELDİR: charger CAN'e hiç
-// konuşmuyorsa ya da farklı bir ID kullanıyorsa şarj hiç fark edilmez ve
-// şartname 8.2.a.iii (şarjda S1 KAPALI + S2 AÇIK) sessizce uygulanmaz.
+// --- Akım tabanlı şarj tespiti (Y20 gözlemi) — chargerActive'in TEK kaynağı ---
+// SORUN 1 (saha, 2026-07-29): eskiden BİRİNCİL kaynak charger komut frame'inin
+// (0x1806E5F4) tazeliğiydi ve TEL_chargerActive = CAN_chargerValid || akım idi.
+// İKİ CANLI CAN KAYDI bunun YANLIŞ olduğunu kanıtladı:
+//   esp32-session.log        (ŞARJDA DEĞİL): 0x1806E5F4 → 4733 frame, payload
+//                                            `03 70 03 E8` 4733 kez SABİT
+//   batarya_tam_kayit(1).log (ŞARJDA)      : 0x1806E5F4 → 1598 frame, aynı
+//                                            ~100 ms periyot, payload değişken
+// Yani 0x1806E5F4 şarj cihazının frame'i DEĞİLDİR: Lithium Balance BMS'in
+// charger'a hitaben setpoint limitlerini duyurduğu ve BMS ayakta olduğu sürece
+// (şarj olsun olmasın) sürekli yayınladığı bir broadcast'tir. Varlığını "şarjda"
+// saymak sistemi 7/24 yanlış pozitife sokuyordu (S1 kapalı kalıyor, START
+// reddediliyordu). CAN_chargerValid ARTIK yalnızca setpoint'lerin tazeliğini
+// (gözlem/telemetri) işaretler; TEL_chargerActive'e GİRMEZ.
 //
-// Ekip PCAN gözlemi (Y20) bağımsız ve güvenilir bir gösterge veriyor:
-//   şarjda   +9.8 A  (= +980 centi-A, POZİTİF — batarya akım ALIYOR)
-//   boşta    -0.1 A  (=  -10 centi-A)
-//   sürüşte  -5.6 A  (= -560 centi-A, NEGATİF)
+// Aynı kayıtlar akımın (0xE000 byte[0:1]) iki durumu kesin ayırdığını gösterir:
+//   şarjda değil : FF FF / FF FE = -0.1 / -0.2 A  (=  -10 / -20 centi-A)
+//   şarjda       : 00 5B … 00 64 = +9.1 … +10.0 A (= +910 … +1000 centi-A)
+// Bu, ekip PCAN gözlemiyle (Y20: +9.8 A şarj / -0.1 A boşta / -5.6 A sürüş)
+// birebir örtüşür.
 //
-// Eşik +200 centi-A (2.0 A): boşta ölçülen -10'un çok üstünde (gürültü payı)
-// ve gözlenen şarj akımının (+980) belirgin biçimde altında — ikisini kesin
-// ayırır. Sadece POZİTİF yön sayılır; deşarj asla şarj sanılmaz.
+// Eşik +200 centi-A (2.0 A): boşta ölçülen -10/-20'nin çok üstünde (gürültü
+// payı) ve gözlenen şarj akımının (+910) belirgin biçimde altında — ikisini
+// kesin ayırır. Sadece POZİTİF yön sayılır; deşarj asla şarj sanılmaz.
 #define CHARGE_DETECT_CURRENT_CENTI_A 200
 
 // Tek örneklik gürültü/geçici tepe ile şarj bayrağının açılıp kapanmaması
 // için ardışık örnek sayısı. CAN task periyodunda 3 ardışık E000 örneği.
 #define CHARGE_DETECT_DEBOUNCE_SAMPLES 3
+
+// BIRAKMA (release) debounce'u — CHARGE_DETECT_CURRENT_CENTI_A artık şarjın TEK
+// göstergesi olduğundan gerekli. Şarj sonunda (CV/taper fazı) akım doğal olarak
+// eşiğin altına iner ve yeniden yükselir; tek örneklik düşüşte bayrağı hemen
+// düşürmek ekrandaki "ŞARJ OLUYOR" göstergesini ve S1 kararlarını çırpındırırdı.
+// Bayrak, eşiğin ALTINDA bu kadar ARDIŞIK örnek geçtikten sonra düşer.
+// CAN task periyodu 10 ms (main.cpp) → 200 örnek ≈ 2 saniye. Şarj kablosu
+// çekildiğinde "şarjda değil"e geçiş yalnızca ~2 s gecikir (START kabulü de
+// aynı kadar gecikir — zararsız).
+// DİKKAT: bu gecikme SADECE akımın eşik altına inmesine uygulanır. HAREKET
+// kapısı (|rpm| >= CHARGE_DETECT_MAX_RPM) bayrağı ANINDA düşürür — rejeneratif
+// frenleme akımı hiçbir koşulda 2 sn boyunca "şarj" sanılmaz.
+#define CHARGE_DETECT_RELEASE_SAMPLES 200
 
 // GÜVENLİK KAPISI — REJENERATİF FRENLEME KARIŞIKLIĞI: motor sürücüsü
 // geldiğinde rejen de bataryaya POZİTİF akım basar. Rejeni "şarj" sanmamak

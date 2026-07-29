@@ -181,11 +181,39 @@ Her bir frame 4 adet hücre gerilimini barındırır (toplam 6 frame × 4 = 24 h
 
 ---
 
-### `0x1806E5F4` — Charger Komut Frame'i (J1939)
+### `0x1806E5F4` — BMS→Charger Setpoint Broadcast'i (J1939)
 
 Direction: `BMS → Charger` (AKS YALNIZCA DİNLER) | DLC: 8 | Status: **✅ DOĞRULANDI (kısmi)**
 
 J1939 çözümlemesi: PGN `0x1806`, DA (hedef adres) `0xE5`, SA (kaynak adres) `0xF4`.
+
+> ### 🚨 BU FRAME BİR "ŞARJ VAR" GÖSTERGESİ **DEĞİLDİR**
+>
+> Frame'in şarj cihazından geldiği ve varlığının şarjı ima ettiği VARSAYILIYORDU.
+> İki canlı CAN kaydı bu varsayımı çürüttü (2026-07-29 saha bulgusu, SORUN 1):
+>
+> | Kayıt | Durum | Frame sayısı | Payload |
+> | --- | --- | --- | --- |
+> | `esp32-session.log` | ŞARJDA **DEĞİL** | 4733 (~100 ms periyot) | `03 70 03 E8` — 4733 kez **SABİT** |
+> | `batarya_tam_kayit (1).log` | **ŞARJDA** | 1598 (aynı periyot) | `03 70 01 E8` … `03 70 02 2B` (değişken) |
+>
+> Frame, Lithium Balance BMS'in charger'a hitaben yaptığı bir **setpoint
+> broadcast'idir**: BMS ayakta olduğu sürece, araç şarjda olsun olmasın
+> kesintisiz akar. Şarj cihazının ürettiği bir mesaj değildir.
+>
+> **Sonuç:** `CanManager::CAN_chargerValid` (bu frame'in tazeliği) artık
+> **hiçbir kontaktör / mod / interlock kararına bağlanmaz** — yalnızca saklanan
+> setpoint'lerin tazeliğini işaretleyen bir gözlem bayrağıdır. Şarj tespitinin
+> tek kaynağı **akımdır** (`0xE000` byte[0:1], bkz. `lib/CanManager/ChargeDetect.h`):
+>
+> | Kayıt | `0xE000` byte[0:1] | Akım |
+> | --- | --- | --- |
+> | ŞARJDA DEĞİL | `FF FF` / `FF FE` | −0.1 / −0.2 A |
+> | ŞARJDA | `00 5B` … `00 64` | +9.1 … +10.0 A |
+>
+> Eşik `CHARGE_DETECT_CURRENT_CENTI_A` = +200 centi-A (2.0 A) ikisini kesin ayırır.
+> Bu frame'i yeniden karar mantığına bağlamadan önce sniffer teyidi + ekip onayı
+> gerekir (CLAUDE.md Kural 4).
 
 | Byte | Alan Adı | Veri Tipi | Endian | İşaret | Ölçek / Çarpan | Durum | Kanıt |
 | --- | --- | --- | --- | --- | --- | --- | --- |

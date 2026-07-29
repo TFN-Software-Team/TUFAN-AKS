@@ -90,6 +90,20 @@ class RelayManager {
     void resetForTest();
 #endif
 
+    // MANTIKSAL kanal durumu -> MCP23S17 pin seviyeleri. TEK dönüşüm noktası:
+    // begin(), setRelay(), allOn(), allOff(), reinitAndReassert() ve
+    // verifyOutputs() İSTİSNASIZ bunu kullanır, böylece yazılan ve beklenen
+    // (geri-okuma) desen yapısal olarak aynı kalır.
+    //   * Varsayılan (NO klemens): active-low sürücü katı → pin = !mantıksal.
+    //   * RELAY_INVERT_MASK'taki kanal (NC klemens): pin = mantıksal — röleyi
+    //     enerjisiz bırakmak yükü ÇALIŞTIRDIĞI için mantık terslenir
+    //     (bkz. SystemConfig.h "KANAL BAZINDA POLARITE", SORUN 2 / 2026-07-29).
+    // Kullanılmayan üst bitler (>= RELAY_TOTAL_CHANNELS) 1 kalır — o pinlerde
+    // yük yoktur, eski davranışla aynı.
+    static constexpr uint16_t hwFromLogical(uint16_t logical) {
+        return (uint16_t)(~logical ^ (uint16_t)RELAY_INVERT_MASK);
+    }
+
    private:
     RelayManager() = default;
     void writeRegister(uint8_t reg, uint8_t value);

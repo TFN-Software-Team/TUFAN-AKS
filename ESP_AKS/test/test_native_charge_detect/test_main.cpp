@@ -80,11 +80,36 @@ void test_debounce_resets_on_interrupting_sample(void) {
     TEST_ASSERT_FALSE(ChargeDetect::update(st, 980, true, 0));
 }
 
-// Kapanis ANINDA olur (asimetrik): acilis yavas, kapanis hizli = guvenli taraf.
-void test_detection_drops_immediately_below_threshold(void) {
+// --- Release (kapanis) debounce'u -----------------------------------------
+// 2026-07-29: 0x1806E5F4 tazeligi TEL_chargerActive'den cikarildi (SORUN 1),
+// akim artik TEK gosterge. Bu yuzden kapanis de debounce'lu: sarj sonu
+// CV/taper fazinda akim dogal olarak esigin altina inip cikar; tek ornekte
+// dusmek "SARJ OLUYOR" gostergesini ve S1 kararlarini cirpindirirdi.
+
+// Esik altina inen TEK ornek bayragi DUSURMEZ (eski davranisin tersi).
+void test_single_below_sample_does_not_drop_detection(void) {
     ChargeDetect::State st = ChargeDetect::makeState();
     TEST_ASSERT_TRUE(feed(st, 980, true, 0, CHARGE_DETECT_DEBOUNCE_SAMPLES));
+    TEST_ASSERT_TRUE(ChargeDetect::update(st, -10, true, 0));
+}
+
+// Release TAM sinirinda duser: N-1 ornekte hala acik, N'inci ornekte kapali.
+void test_release_drops_exactly_at_sample_count(void) {
+    ChargeDetect::State st = ChargeDetect::makeState();
+    TEST_ASSERT_TRUE(feed(st, 980, true, 0, CHARGE_DETECT_DEBOUNCE_SAMPLES));
+    TEST_ASSERT_TRUE(feed(st, -10, true, 0, CHARGE_DETECT_RELEASE_SAMPLES - 1));
     TEST_ASSERT_FALSE(ChargeDetect::update(st, -10, true, 0));
+}
+
+// Release sayaci ARDISIK olmali: taper dalgalanmasinda (arada esik ustu bir
+// ornek) sayac sifirlanir ve bayrak yanik kalir.
+void test_release_counter_resets_on_current_recovery(void) {
+    ChargeDetect::State st = ChargeDetect::makeState();
+    TEST_ASSERT_TRUE(feed(st, 980, true, 0, CHARGE_DETECT_DEBOUNCE_SAMPLES));
+    TEST_ASSERT_TRUE(feed(st, -10, true, 0, CHARGE_DETECT_RELEASE_SAMPLES - 1));
+    TEST_ASSERT_TRUE(ChargeDetect::update(st, 980, true, 0));  // taper toparladi
+    // Sayac sifirlandigi icin tek bir esik-alti ornek yine dusurmemeli.
+    TEST_ASSERT_TRUE(ChargeDetect::update(st, -10, true, 0));
 }
 
 // --- Guvenlik kapilari ----------------------------------------------------
@@ -117,11 +142,41 @@ void test_charge_detected_just_below_motion_threshold(void) {
                           CHARGE_DETECT_DEBOUNCE_SAMPLES));
 }
 
-// Sarj sirasinda BMS verisi kesilirse bayrak DUSER (bayat akimla surdurulmez).
+// Sarj sirasinda BMS verisi kesilirse bayrak release debounce'u kadar sonra
+// DUSER (bayat akimla SURESIZ surdurulmez). Bayat veri "esik alti" gibi islenir.
 void test_detection_drops_when_bms_goes_stale_mid_charge(void) {
     ChargeDetect::State st = ChargeDetect::makeState();
     TEST_ASSERT_TRUE(feed(st, 980, true, 0, CHARGE_DETECT_DEBOUNCE_SAMPLES));
+    TEST_ASSERT_TRUE(feed(st, 980, false, 0, CHARGE_DETECT_RELEASE_SAMPLES - 1));
     TEST_ASSERT_FALSE(ChargeDetect::update(st, 980, false, 0));
+}
+
+// HAREKET KAPISI release debounce'undan MUAFTIR: arac hareket ettigi ANDA
+// bayrak duser. Rejeneratif frenleme akimi hicbir kosulda ~2 sn boyunca
+// "sarj" sanilmaz — guvenlik yonu asimetrik kalir.
+void test_motion_drops_detection_immediately_bypassing_release(void) {
+    ChargeDetect::State st = ChargeDetect::makeState();
+    TEST_ASSERT_TRUE(feed(st, 980, true, 0, CHARGE_DETECT_DEBOUNCE_SAMPLES));
+    TEST_ASSERT_FALSE(ChargeDetect::update(st, 980, true, CHARGE_DETECT_MAX_RPM));
+}
+
+// --- SORUN 1 regresyonu (2026-07-29) --------------------------------------
+// Iki canli CAN kaydindan alinan GERCEK akim degerleriyle uctan uca ayrim.
+// 0x1806E5F4 her iki kayitta da ~100 ms'de bir akiyordu; tespitin TEK dayanagi
+// artik asagidaki akim farkidir.
+void test_logged_idle_current_never_detects_charge(void) {
+    // esp32-session.log (SARJDA DEGIL): 0xE000 byte[0:1] = FF FF / FF FE
+    ChargeDetect::State st = ChargeDetect::makeState();
+    for (int i = 0; i < 50; ++i) {
+        TEST_ASSERT_FALSE(ChargeDetect::update(st, (i % 2) ? -10 : -20, true, 0));
+    }
+}
+
+void test_logged_charging_current_detects_charge(void) {
+    // batarya_tam_kayit(1).log (SARJDA): 0xE000 byte[0:1] = 00 5B … 00 64
+    ChargeDetect::State st = ChargeDetect::makeState();
+    TEST_ASSERT_TRUE(feed(st, 910, true, 0, CHARGE_DETECT_DEBOUNCE_SAMPLES));
+    TEST_ASSERT_TRUE(ChargeDetect::update(st, 1000, true, 0));
 }
 
 void setUp(void) {}
@@ -137,11 +192,16 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_single_sample_does_not_trip_debounce);
     RUN_TEST(test_debounce_opens_exactly_at_sample_count);
     RUN_TEST(test_debounce_resets_on_interrupting_sample);
-    RUN_TEST(test_detection_drops_immediately_below_threshold);
+    RUN_TEST(test_single_below_sample_does_not_drop_detection);
+    RUN_TEST(test_release_drops_exactly_at_sample_count);
+    RUN_TEST(test_release_counter_resets_on_current_recovery);
     RUN_TEST(test_no_charge_when_bms_data_stale);
     RUN_TEST(test_no_charge_while_vehicle_moving_forward);
     RUN_TEST(test_no_charge_while_vehicle_moving_backward);
     RUN_TEST(test_charge_detected_just_below_motion_threshold);
     RUN_TEST(test_detection_drops_when_bms_goes_stale_mid_charge);
+    RUN_TEST(test_motion_drops_detection_immediately_bypassing_release);
+    RUN_TEST(test_logged_idle_current_never_detects_charge);
+    RUN_TEST(test_logged_charging_current_detects_charge);
     return UNITY_END();
 }

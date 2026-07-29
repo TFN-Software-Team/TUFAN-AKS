@@ -52,12 +52,15 @@ class CanManager {
     // `out` her zaman son görülen setpoint'lerle doldurulur; dönüş değeri
     // verinin taze olup olmadığını söyler (CAN_CHARGER_TIMEOUT_MS içinde
     // frame görüldüyse true). Charger akışı OPSİYONEL — false FAULT değildir.
-    // NOT: Charger FRESHNESS bilgisinin artık gerçek bir tüketicisi var —
-    // getTelemetryData() aynı CAN_chargerValid bayrağını TEL_chargerActive
-    // olarak yayınlar ve VcuLogic S1/S2 mod anahtarlaması
-    // (RELAY_ROLES_ASSIGNED=1, şartname 8.2.a) bunu girdi alır. Bu
-    // fonksiyonun döndürdüğü SETPOINT değerleri ise hâlâ hiçbir karar
-    // mantığına bağlanmaz (bench/diagnostik API); "ölü kod" diye SİLİNMEMELİ.
+    // NOT (2026-07-29 revizyonu): bu freshness bayrağının (CAN_chargerValid)
+    // ARTIK karar tarafında tüketicisi YOKTUR. Eskiden getTelemetryData() onu
+    // TEL_chargerActive olarak yayınlıyordu; iki canlı CAN kaydı 0x1806E5F4'ün
+    // araç şarjda olmasa da kesintisiz aktığını gösterince o bağ KOPARILDI
+    // (bkz. CanManager.cpp::getTelemetryData). Hem freshness hem SETPOINT
+    // değerleri bugün yalnızca bench/diagnostik API'sidir — hiçbir kontaktör,
+    // mod veya interlock kararına bağlanmaz; "ölü kod" diye SİLİNMEMELİ.
+    // Yeniden karar mantığına bağlanacaksa önce sniffer teyidi + ekip onayı
+    // gerekir (CLAUDE.md Kural 4).
     bool getChargerCommand(ChargerCommand& out) const;
 
    private:
@@ -175,9 +178,10 @@ class CanManager {
     bool CAN_chargerValid = false;
     bool CAN_chargerStaleLogged = false;
 
-    // Akım tabanlı şarj tespiti (Y20) — charger CAN akışı YOKKEN devreye giren
-    // YEDEK gösterge. Debounce durumu; karar saf ChargeDetect::update'te.
-    // getTelemetryData() bunu CAN_chargerValid ile OR'lar (CAN birincil).
+    // Akım tabanlı şarj tespiti (Y20) — TEL_chargerActive'in TEK kaynağı.
+    // Debounce durumu; karar saf ChargeDetect::update'te. 2026-07-29'a kadar
+    // YEDEK göstergeydi ve getTelemetryData() bunu CAN_chargerValid ile
+    // OR'luyordu; o OR kaldırıldı (SORUN 1 — bkz. getTelemetryData notu).
     ChargeDetect::State CAN_chargeDetect = ChargeDetect::makeState();
     bool CAN_chargeDetectLogged = false;
 

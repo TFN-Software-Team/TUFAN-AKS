@@ -458,21 +458,27 @@ TelemetryData CanManager::getTelemetryData() const {
         return CAN_telemetryCopy;
     }
     CAN_telemetryCopy = s_telemetryData;
-    // Şarj durumu → dahili S1/S2 mod girdisi (şartname 8.2.a.iii).
+    // Şarj durumu → ekrandaki "ŞARJ OLUYOR" göstergesi + READY girişi kilidi.
     // Wire formatına serialize edilmez (bkz. VehicleData.h TEL_chargerActive).
     //
-    // İKİ BAĞIMSIZ GÖSTERGE, OR'lanır (Y20):
-    //   1. CAN_chargerValid — charger komut frame'i (0x1806E5F4) TAZE mi.
-    //      BİRİNCİL kaynak, ama OPSİYONEL bir akış: charger CAN'e hiç
-    //      konuşmuyorsa bu bayrak asla true olmaz.
-    //   2. CAN_chargeDetect.detected — akım işareti (pozitif = batarya akım
-    //      ALIYOR). Birinci gösterge sessiz kaldığında şarjı yine de yakalar.
-    // OR seçildi çünkü şarjı KAÇIRMAK (S1 açık kalır, araç şarjdayken sürüşe
-    // izin verilir) yanlış pozitiften (S1 gereksiz kapanır, START reddedilir)
-    // daha tehlikelidir. Yanlış pozitif riski ChargeDetect'teki üç koruma
-    // katmanıyla (eşik + debounce + hareketsizlik) zaten sınırlanmıştır.
-    CAN_telemetryCopy.TEL_chargerActive =
-        CAN_chargerValid || CAN_chargeDetect.detected;
+    // TEK GÖSTERGE: AKIM (CAN_chargeDetect.detected).
+    //
+    // 2026-07-29 DÜZELTMESİ — CAN_chargerValid BİLEREK KULLANILMIYOR:
+    // Eskiden `CAN_chargerValid || CAN_chargeDetect.detected` idi. CAN_chargerValid,
+    // 0x1806E5F4'ün tazeliğini gösterir; o frame'in şarj cihazından geldiği
+    // VARSAYILIYORDU. İki canlı CAN kaydı bu varsayımı ÇÜRÜTTÜ:
+    //   * esp32-session.log (ŞARJDA DEĞİL): 4733 kez, payload `03 70 03 E8` SABİT
+    //   * batarya_tam_kayit(1).log (ŞARJDA): 1598 kez, aynı ~100 ms periyot
+    // Frame, Lithium Balance BMS'in charger'a hitaben yaptığı bir setpoint
+    // BROADCAST'idir ve BMS ayakta olduğu sürece kesintisiz akar. OR'un sol
+    // tarafı bu yüzden 7/24 true kalıyor, araç sürekli "şarjda" sayılıyor,
+    // START/DRIVE reddediliyordu (saha bulgusu SORUN 1).
+    //
+    // CAN_chargerValid KALDIRILMADI: setpoint'lerin (s_chargerCommand)
+    // tazeliğini işaretlemeye devam eder ve getChargerCommand() üzerinden
+    // gözlem/telemetri amaçlı okunur — ama artık HİÇBİR kontaktör/mod kararına
+    // girmez (CLAUDE.md Kural 4: karar yalnızca doğrulanmış sinyalden).
+    CAN_telemetryCopy.TEL_chargerActive = CAN_chargeDetect.detected;
     xSemaphoreGive(s_mutex);
 
     return CAN_telemetryCopy;
@@ -735,9 +741,15 @@ void CanManager::handleLbBmsE020(const twai_message_t& msg) {
     xSemaphoreGive(s_mutex);
 }
 
-// 0x1806E5F4 — Charger komut frame'i (BMS -> Charger, DOĞRULANDI decode).
-// AKS bu frame'i yalnızca DİNLER; hiçbir TX yolu yoktur. Setpoint'ler karar
-// mantığına bağlanmaz, yalnızca gözlem/telemetri amaçlı saklanır.
+// 0x1806E5F4 — BMS -> Charger setpoint broadcast'i (DOĞRULANDI decode).
+// AKS bu frame'i yalnızca DİNLER; hiçbir TX yolu yoktur.
+//
+// DİKKAT — BU FRAME BİR "ŞARJ VAR" GÖSTERGESİ DEĞİLDİR: BMS ayakta olduğu
+// sürece, araç şarjda OLSUN OLMASIN, ~100 ms'de bir kesintisiz yayınlanır
+// (iki canlı CAN kaydıyla kanıtlandı — bkz. getTelemetryData() içindeki
+// 2026-07-29 notu). Buradaki CAN_chargerValid yalnızca "saklanan setpoint'ler
+// taze mi" sorusunu yanıtlar; TEL_chargerActive'e, S1/S2 kararlarına veya
+// READY interlock'una BAĞLANMAZ. Setpoint'ler de karar mantığına girmez.
 void CanManager::handleCharger1806E5F4(const twai_message_t& msg) {
     if (s_mutex == nullptr) {
         ESP_LOGW(TAG, "Charger frame received before mutex initialization");
@@ -965,12 +977,11 @@ void CanManager::updateChargerValidity() {
         CAN_chargerStaleLogged = true;
     }
 
-    // Y20 — AKIM TABANLI ŞARJ TESPİTİ (yedek gösterge).
-    // Charger komut akışı (0x1806E5F4) opsiyoneldir: charger CAN'e hiç
-    // konuşmuyorsa CAN_chargerValid ASLA true olmaz ve şarj fark edilmez.
-    // Bu bağımsız gösterge (pozitif akım = batarya akım ALIYOR) o boşluğu
-    // kapatır. Karar saf ChargeDetect::update'te (eşik + debounce +
-    // hareketsizlik kapısı, rejen karışıklığına karşı).
+    // AKIM TABANLI ŞARJ TESPİTİ — TEL_chargerActive'in TEK kaynağı (Y20 + iki
+    // canlı CAN kaydı). 0x1806E5F4 tazeliği bu karara ARTIK GİRMEZ (2026-07-29,
+    // SORUN 1; gerekçe getTelemetryData() içinde). Karar saf
+    // ChargeDetect::update'te: eşik + açılış debounce'u + release debounce'u +
+    // hareketsizlik kapısı (rejen karışıklığına karşı).
     CAN_currentDetected = ChargeDetect::update(
         CAN_chargeDetect, s_telemetryData.TEL_bmsCurrentCentiA,
         s_telemetryData.TEL_bmsDataValid, s_telemetryData.TEL_motorRpm);

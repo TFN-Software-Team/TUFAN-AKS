@@ -96,7 +96,18 @@ da pack/paket seviyesinde VCU kararını besler:
 | --- | --- | --- | --- | --- | --- |
 | `CAN_MOTOR_STATUS_TIMEOUT_MS` | 208 | 500 ms | `CanManager::updateMotorStatusValidity` → `TEL_motorTimeoutActive` → `VcuLogic::hasCriticalCondition` (IDLE dışında critical) | ✅ DOĞRULANDI (frame varlığı, ölçeğe bağlı değil) | ✅ CANLI |
 | `CAN_BMS_STATUS_TIMEOUT_MS` | 209 | 500 ms | `CanManager::updateBmsValidity` → `bms_evaluate_freshness` (G12: E000 **ve** E001 ID bazında ayrı izlenir; biri bayatlarsa timeout) → `TEL_bmsTimeoutActive` → `VcuLogic::hasCriticalCondition` (IDLE dışında critical) | ✅ DOĞRULANDI (E000+E001 frame varlığı) | ✅ CANLI |
-| `CAN_CHARGER_TIMEOUT_MS` | 213 | 2000 ms | Charger setpoint'lerini "bayat" işaretler; freshness sonucu (`CAN_chargerValid`) `getTelemetryData()` üzerinden `TEL_chargerActive` olarak yayınlanır → `VcuLogic` S1/S2 mod anahtarlaması girdisi (`RELAY_ROLES_ASSIGNED=1`, şartname 8.2.a.iii: charger aktifken S1 kapalı + READY reddi) | ✅ DOĞRULANDI | ⚠️ S1/S2 mod girdisi, yine `CAN_Event`/FAULT ÜRETMEZ (bilinçli tasarım, opsiyonel akış) |
+| `CAN_CHARGER_TIMEOUT_MS` | 213 | 2000 ms | Yalnızca `0x1806E5F4` setpoint'lerini "bayat" işaretler (`CAN_chargerValid`) → `getChargerCommand()` bench/diagnostik API'si | ✅ DOĞRULANDI | ❌ **HAYIR** (2026-07-29'da karar yolundan ÇIKARILDI — aşağıya bakınız) |
+| `CHARGE_DETECT_CURRENT_CENTI_A` | 876 | 200 (+2.0 A) | `ChargeDetect::update` → `TEL_chargerActive` → HMI `chg` göstergesi **ve** `VcuLogic::isReadyEntryPermitted` (şarj sürerken READY reddi, şartname 8.2.a.iii) | ✅ DOĞRULANDI (0xE000 byte[0:1]; iki canlı kayıt: şarjda değil −0.1/−0.2 A, şarjda +9.1…+10.0 A) | ✅ CANLI — şarj tespitinin TEK kaynağı |
+| `CHARGE_DETECT_DEBOUNCE_SAMPLES` | 880 | 3 | `ChargeDetect` açılış debounce'u (gürültü/tepe koruması) | — (CONFIG) | ✅ CANLI |
+| `CHARGE_DETECT_RELEASE_SAMPLES` | ~892 | 200 (≈2 sn @10 ms CAN tick) | `ChargeDetect` kapanış debounce'u — şarj sonu CV/taper dalgalanmasında bayrak çırpınmasın. Hareket kapısı bundan MUAF (rejen anında düşürür) | — (CONFIG) | ✅ CANLI |
+
+> **2026-07-29 — `CAN_chargerValid` karar yolundan çıkarıldı (SORUN 1).**
+> `TEL_chargerActive` eskiden `CAN_chargerValid || ChargeDetect` idi. İki canlı CAN
+> kaydı `0x1806E5F4`'ün araç şarjda olsun olmasın ~100 ms'de bir kesintisiz aktığını
+> gösterdi (o frame charger'ın değil, **BMS'in** setpoint broadcast'idir) — yani
+> OR'un sol tarafı 7/24 true kalıyor, araç sürekli "şarjda" sayılıyor ve START/DRIVE
+> reddediliyordu. OR kaldırıldı; şarj tespitinin tek dayanağı akımdır.
+> Ayrıntı: [CAN_Message_Table.md](CAN_Message_Table.md) § `0x1806E5F4`.
 
 ---
 
@@ -147,9 +158,12 @@ Bu satır bir FAULT/kontaktör kararı DEĞİLDİR; yalnızca Nextion `chg` alan
 > ekrandaki metnin eşiğini kaydırır.
 >
 > Şarj yönü için ayrı bir eşik YOKTUR ve olmamalıdır: `chg`'nin CHARGING dalı
-> `TEL_chargerActive` bayrağını doğrudan tüketir (charger frame tazeliği VEYA
-> `ChargeDetect` — eşik `CHARGE_DETECT_CURRENT_CENTI_A=200` + debounce +
-> hareketsizlik). "Şarjda mı?" sorusunun ikinci bir tanımı üretilmemelidir.
+> `TEL_chargerActive` bayrağını doğrudan tüketir. O bayrak artık **yalnızca**
+> `ChargeDetect`tir (eşik `CHARGE_DETECT_CURRENT_CENTI_A=200` + açılış debounce'u
+> `CHARGE_DETECT_DEBOUNCE_SAMPLES=3` + release debounce'u
+> `CHARGE_DETECT_RELEASE_SAMPLES=200` ≈ 2 sn + hareketsizlik kapısı); charger
+> frame tazeliği (`0x1806E5F4`) 2026-07-29'da bu OR'dan ÇIKARILDI.
+> "Şarjda mı?" sorusunun ikinci bir tanımı üretilmemelidir.
 
 ---
 

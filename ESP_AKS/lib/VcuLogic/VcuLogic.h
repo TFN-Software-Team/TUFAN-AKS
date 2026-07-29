@@ -326,10 +326,13 @@ inline bool isReadyEntryPermitted(const TelemetryData& VCU_data) {
         return false;
 
 #if RELAY_ROLES_ASSIGNED
-    // Şartname 8.2.a.iii: şarj modunda (charger CAN akışı taze) S1 kapalı /
-    // S2 açıktır — charger aktifken READY (sürüş bankını kapatma) YASAK.
-    // TEL_chargerActive, CAN_chargerValid'den türetilir (freshness dahil);
-    // charger bağlı değilken/bayatken false olur ve READY serbest kalır.
+    // Şartname 8.2.a.iii: araç FİİLEN ŞARJ OLURKEN S1 kapalı / S2 açıktır —
+    // şarj sürerken READY (sürüş bankını kapatma) YASAK.
+    // TEL_chargerActive artık YALNIZCA akımdan türetilir (>+2.0 A, araç
+    // duruyorken, debounce'lu — bkz. ChargeDetect.h). 0x1806E5F4 tazeliği bu
+    // karara GİRMEZ: o frame araç şarjda olmasa da sürekli aktığı için READY'yi
+    // 7/24 bloklıyordu (SORUN 1, 2026-07-29; iki canlı CAN kaydıyla kanıtlandı).
+    // Araç boştayken akım -0.1 A civarıdır → bayrak false → READY serbest.
     if (VCU_data.TEL_chargerActive)
         return false;
 #endif

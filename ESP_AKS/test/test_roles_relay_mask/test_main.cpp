@@ -42,10 +42,17 @@ void test_allOff_preserves_flasher_channel(void) {
             TEST_ASSERT_FALSE(RelayManager::instance().getRelayState(ch));
         }
     }
-    // Donanım seviyesi (active-low): state=0x020 → hw=~0x020 → OLATA=0xDF
-    // (bit5=kanal5 LOW: flaşör hâlâ enerjili), OLATB=0xFF.
-    TEST_ASSERT_EQUAL_HEX8(0xDF, fake_spi_get_reg(MCP23S17_OLATA));
-    TEST_ASSERT_EQUAL_HEX8(0xFF, fake_spi_get_reg(MCP23S17_OLATB));
+    // Donanım seviyesi: mantıksal state=0x020 (yalnız flaşör yanık). Beklenen
+    // pin deseni hwFromLogical'dan TÜRETİLİR — sabit yazılmaz, çünkü desen
+    // RELAY_INVERT_MASK'e (NC klemensli kanallar) bağlıdır. Maske 0 iken
+    // 0xDF/0xFF, fan tersken (0x080) 0x5F/0xFF olur; test ikisinde de geçer.
+    constexpr uint16_t hwFlasherOnly = RelayManager::hwFromLogical(1u << RELAY_CH_FLASHER);
+    TEST_ASSERT_EQUAL_HEX8(hwFlasherOnly & 0xFF, fake_spi_get_reg(MCP23S17_OLATA));
+    TEST_ASSERT_EQUAL_HEX8((hwFlasherOnly >> 8) & 0xFF, fake_spi_get_reg(MCP23S17_OLATB));
+    // Flaşör pini yükü ÇALIŞTIRAN seviyede olmalı (maskeden bağımsız iddia).
+    TEST_ASSERT_EQUAL_HEX8(
+        (RELAY_INVERT_MASK & (1u << RELAY_CH_FLASHER)) ? (1u << RELAY_CH_FLASHER) : 0u,
+        fake_spi_get_reg(MCP23S17_OLATA) & (1u << RELAY_CH_FLASHER));
 }
 
 // allOn, sönük flaşörü/fanı/farı YAKMAZ: yalnız bank kanalları
@@ -64,10 +71,11 @@ void test_allOn_does_not_energize_flasher(void) {
             TEST_ASSERT_TRUE(RelayManager::instance().getRelayState(ch));
         }
     }
-    // state=0x35B → hw=~0x035B=0xFCA4 → OLATA=0xA4 (bit2 far + bit5 flaşör +
-    // bit7 fan HIGH: sönük), OLATB=0xFC (kanal 8-9 bank içi: kapalı).
-    TEST_ASSERT_EQUAL_HEX8(0xA4, fake_spi_get_reg(MCP23S17_OLATA));
-    TEST_ASSERT_EQUAL_HEX8(0xFC, fake_spi_get_reg(MCP23S17_OLATB));
+    // state=0x35B (bank kapalı, bank dışı üç kanal sönük) → beklenen pin deseni
+    // yine hwFromLogical'dan türetilir (bkz. yukarıdaki gerekçe).
+    constexpr uint16_t hwBankOnly = RelayManager::hwFromLogical(RELAY_CONTACTOR_BANK_MASK);
+    TEST_ASSERT_EQUAL_HEX8(hwBankOnly & 0xFF, fake_spi_get_reg(MCP23S17_OLATA));
+    TEST_ASSERT_EQUAL_HEX8((hwBankOnly >> 8) & 0xFF, fake_spi_get_reg(MCP23S17_OLATB));
 }
 
 // allOff, yanık fan ve farı SÖNDÜRMEZ (bank DIŞI kanallar): sıcak batarya
@@ -152,11 +160,94 @@ void test_mask_contract_values(void) {
     TEST_ASSERT_EQUAL_UINT(0, RELAY_DRIVE_BANK_MASK & spares);
 }
 
+// ===========================================================================
+// SORUN 2 (2026-07-29) — NC klemensli fan kanalının polarite sözleşmesi.
+// Saha bulgusu: ekranda 32 °C okunurken fan dönüyordu. Yazılım fanı KAPALI
+// komutluyordu; fan NC (normalde kapalı) klemense bağlı olduğu için röle
+// enerjisizken yük ÇALIŞIYORDU. RELAY_INVERT_MASK bu kanalın mantıksal→pin
+// çevrimini tersler; aşağıdaki testler o sözleşmeyi kilitler.
+// ===========================================================================
+
+// Fan NC olarak işaretliyse RELAY_INVERT_MASK yalnız fan kanalını içermeli.
+void test_invert_mask_contract(void) {
+#if RELAY_CH_FAN_NC_WIRED
+    TEST_ASSERT_EQUAL_HEX16(1u << RELAY_CH_FAN, RELAY_INVERT_MASK);
+#else
+    TEST_ASSERT_EQUAL_HEX16(0, RELAY_INVERT_MASK);
+#endif
+    // GÜVENLİK: hiçbir kontaktör terslenemez — terslenirse allOff (güvenlik
+    // açması) o kontaktörü KAPATIRDI (şartname 8.2.a.vi'nin tam tersi).
+    TEST_ASSERT_EQUAL_UINT(0, RELAY_INVERT_MASK & (unsigned)RELAY_CONTACTOR_BANK_MASK);
+}
+
+// begin() sonrası fan pini "yük KAPALI" seviyesinde olmalı. NC kanalda bu
+// LOW'dur (bobin enerjili → NC kontağı açık → fan durur), sabit 0xFF DEĞİL.
+// Bu, 32 °C'de fanın boot anından itibaren dönmemesinin donanım seviyesi
+// garantisidir.
+void test_begin_leaves_fan_load_off(void) {
+    fake_spi_reset();
+    RelayManager::instance().resetForTest();
+    RelayManager::instance().begin();
+
+    const uint8_t olatA = fake_spi_get_reg(MCP23S17_OLATA);
+    const uint8_t fanBit = olatA & (1u << RELAY_CH_FAN);
+#if RELAY_CH_FAN_NC_WIRED
+    TEST_ASSERT_EQUAL_HEX8(0, fanBit);  // NC: yük KAPALI = pin LOW
+#else
+    TEST_ASSERT_EQUAL_HEX8(1u << RELAY_CH_FAN, fanBit);  // NO: yük KAPALI = pin HIGH
+#endif
+    TEST_ASSERT_FALSE(RelayManager::instance().getRelayState(RELAY_CH_FAN));
+}
+
+// setRelay(FAN, true/false) mantıksal durumu DEĞİŞTİRMEDEN raporlar (üst
+// katmanlar hep YÜK'ün durumunu konuşur) ama pin seviyesi NC'de terstir.
+void test_fan_pin_polarity_follows_invert_mask(void) {
+    fake_spi_reset();
+    RelayManager::instance().resetForTest();
+    RelayManager::instance().begin();
+
+    RelayManager::instance().setRelay(RELAY_CH_FAN, true);  // fan ÇALIŞSIN
+    TEST_ASSERT_TRUE(RelayManager::instance().getRelayState(RELAY_CH_FAN));
+    const uint8_t onBit = fake_spi_get_reg(MCP23S17_OLATA) & (1u << RELAY_CH_FAN);
+
+    RelayManager::instance().setRelay(RELAY_CH_FAN, false);  // fan DURSUN
+    TEST_ASSERT_FALSE(RelayManager::instance().getRelayState(RELAY_CH_FAN));
+    const uint8_t offBit = fake_spi_get_reg(MCP23S17_OLATA) & (1u << RELAY_CH_FAN);
+
+    // İki durum farklı pin seviyesi üretmeli (kanal gerçekten sürülüyor).
+    TEST_ASSERT_NOT_EQUAL(onBit, offBit);
+#if RELAY_CH_FAN_NC_WIRED
+    TEST_ASSERT_EQUAL_HEX8(1u << RELAY_CH_FAN, onBit);  // NC: ON = pin HIGH
+    TEST_ASSERT_EQUAL_HEX8(0, offBit);
+#else
+    TEST_ASSERT_EQUAL_HEX8(0, onBit);  // NO (active-low): ON = pin LOW
+    TEST_ASSERT_EQUAL_HEX8(1u << RELAY_CH_FAN, offBit);
+#endif
+}
+
+// Geri-okuma doğrulaması terslenmiş kanalla TUTARLI olmalı: fan çalışırken
+// verifyOutputs uyuşmazlık sanıp actuator fault LATCH'LEMEMELİ.
+void test_verify_consistent_with_inverted_fan_channel(void) {
+    primeRelay();
+    RelayManager::instance().setRelay(RELAY_CH_FAN, true);
+    RelayManager::instance().allOff();
+    TEST_ASSERT_TRUE(RelayManager::instance().getRelayState(RELAY_CH_FAN));
+    TEST_ASSERT_FALSE(RelayManager::instance().hasActuatorFault());
+
+    fake_spi_reset();
+    TEST_ASSERT_TRUE(RelayManager::instance().verifyOutputs());
+    TEST_ASSERT_FALSE(RelayManager::instance().hasActuatorFault());
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
+    RUN_TEST(test_invert_mask_contract);
+    RUN_TEST(test_begin_leaves_fan_load_off);
+    RUN_TEST(test_fan_pin_polarity_follows_invert_mask);
+    RUN_TEST(test_verify_consistent_with_inverted_fan_channel);
     RUN_TEST(test_allOff_preserves_flasher_channel);
     RUN_TEST(test_allOn_does_not_energize_flasher);
     RUN_TEST(test_allOff_preserves_fan_and_headlight);
