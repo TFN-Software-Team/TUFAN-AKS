@@ -38,7 +38,7 @@ The current firmware expects these object names on the Nextion page:
 | `rpm` | numeric | `rpm.val=<value>` |
 | `torque` | numeric | `torque.val=<value>` |
 | `temp` | numeric | `temp.val=<value>` |
-| `packv` | float (1 dp) | `packv.val=<deciV>` |
+| `packv` | float (1 dp) | `packv.val=<deciV>` — max 1 update/s, see ceiling below |
 | `packa` | float (2 dp) | `packa.val=<centiA>` |
 | `state` | text | `state.txt="..."` |
 | ~~`motorErr`~~ | text | **DEVRE DIŞI** — gönderim yoruma alındı (aşağıya bkz.) |
@@ -163,6 +163,40 @@ xfloat interprets the integer `.val` it receives as `display_value × 10^(decima
 
 Scaling lives in `HMI_packVoltageToXfloat` / `HMI_packCurrentToXfloat`
 (`HMIHelpers.h`). `temp` remains an integer `number` component and is not scaled.
+
+#### `packv` minimum update interval (display ceiling)
+
+`packv` is the **only** scalar field with a send-rate ceiling
+(`HMI_PACKV_MIN_UPDATE_INTERVAL_MS`, default **1000 ms**;
+`lib/DisplayHMI/UpdateThrottle.h`).
+
+Field report (2026-08-03): while charging, `packv` jumped ~10× per second and
+was unreadable. Structural cause — `HMI_Task` runs at 10 Hz and the source is
+deci-volt (0.1 V) resolution, so charger ripple + BMS measurement noise change
+the value on nearly every tick, and the change-compare cache dutifully sent each
+one.
+
+The ceiling limits **how often the field is written**, not the value itself: no
+filtering, rounding, or averaging (an EMA would show a number the BMS never
+measured, masking the real voltage during the CV/taper phase). The screen always
+shows a genuine sample, just less often.
+
+Contract details:
+
+- **Force paths are exempt.** `forceFullRefresh` (Nextion reset recovery) and
+  the round-robin resync send immediately — otherwise the field would stay wrong
+  for up to the ceiling after an undetected screen reset. Any real send restarts
+  the window.
+- **Skipped ticks do not update the cache.** `HMI_lastScreenData`'s `packv` entry
+  is restored to its previous value when a tick is throttled, so the pending
+  change is sticky and the latest value is written once the window opens. Without
+  this, a value that changed and then settled would be lost forever and the
+  screen would freeze on a stale number.
+- **No safety impact.** FAULT/contactor decisions read `TelemetryData` directly
+  and are never fed from the screen (Ek B). Telemetry uplink is unaffected.
+- Set the constant to `0` to disable the ceiling (pre-2026-08-03 behaviour).
+
+Tests: `test/test_native_hmi_helpers/test_update_throttle.cpp`.
 
 ## Text Formatting Rules
 

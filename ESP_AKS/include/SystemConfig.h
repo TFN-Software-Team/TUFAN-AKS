@@ -163,6 +163,26 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
               "HMI_RESYNC_INTERVAL_MS'i artirin (bkz. ustteki butce kaniti).");
 #endif
 
+// --- packv minimum güncelleme aralığı (GÖSTERİM tavanı) ---
+// SORUN (saha, 03.08.2026): şarj sırasında `packv` okunamayacak kadar hızlı
+// zıplıyordu. Sebep yapısal: HMI_Task 10 Hz döner, packv kaynağı deciV (0.1 V)
+// çözünürlüktedir ve şarjda paket gerilimi charger ripple + BMS ölçüm
+// gürültüsüyle bu çözünürlükte sürekli oynar → change-compare saniyede ~10
+// kez yeni sayı bastırıyordu.
+//
+// Bu bir GÖSTERİM tavanıdır (lib/DisplayHMI/UpdateThrottle.h): değeri
+// filtrelemez/yuvarlamaz, yalnız gönderim sıklığını sınırlar; ekranda her
+// zaman BMS'in GERÇEKTEN ölçtüğü bir örnek görünür, sadece daha seyrek.
+// GÜVENLİK KARARINA GİRMEZ — FAULT/kontaktör mantığı TelemetryData'yı doğrudan
+// okur, ekrandan beslenmez (Ek B).
+//
+// 1000 ms = saniyede 1 güncelleme (10 Hz → 1 Hz, 10× yavaşlama). CONFIG'tir:
+// hâlâ hızlı gelirse artırılabilir; 0 tavanı tamamen kapatır (eski davranış).
+// TAVAN GECİKMESİ: alan en kötü bu kadar geç güncellenir — sürüşte gerilim
+// çökmesini izlemek için 1 sn fazlasıyla yeterli (telemetri zaten 2 Hz).
+// Emniyet katmanlarını (forceFullRefresh, round-robin resync) BAĞLAMAZ.
+#define HMI_PACKV_MIN_UPDATE_INTERVAL_MS 1000U
+
 // --- BMS Panel Round-Robin Resync (24 hücre + özet alanlar) ---
 // Skalar resync katmanının 24 hücrelik panele uzantısı: her bu aralıkta bir
 // SIRADAKİ TEK slot'un (27 slot: 24 hücre üçlüsü cell/j/bal + cellmax +

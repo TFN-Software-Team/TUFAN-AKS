@@ -89,6 +89,16 @@ extern void test_resync_round_robin_order_and_wrap(void);
 extern void test_resync_covers_all_fields_within_full_cycle(void);
 extern void test_resync_tick_wraparound_safe(void);
 
+// packv gösterim tavanı — UpdateThrottle.h
+extern void test_throttle_first_call_is_due(void);
+extern void test_throttle_blocks_before_interval(void);
+extern void test_throttle_due_exactly_at_interval(void);
+extern void test_throttle_zero_interval_disables_ceiling(void);
+extern void test_throttle_stamp_restarts_window(void);
+extern void test_throttle_is_pure_query_does_not_mutate(void);
+extern void test_throttle_tick_wraparound_safe(void);
+extern void test_packv_interval_config_is_sane(void);
+
 // EMA speed filter
 extern void test_ema_speed_normal_operation(void);
 extern void test_ema_speed_stale_data_resets_filter(void);
@@ -179,6 +189,15 @@ int main(int /*argc*/, char ** /*argv*/) {
     RUN_TEST(test_resync_round_robin_order_and_wrap);
     RUN_TEST(test_resync_covers_all_fields_within_full_cycle);
     RUN_TEST(test_resync_tick_wraparound_safe);
+
+    RUN_TEST(test_throttle_first_call_is_due);
+    RUN_TEST(test_throttle_blocks_before_interval);
+    RUN_TEST(test_throttle_due_exactly_at_interval);
+    RUN_TEST(test_throttle_zero_interval_disables_ceiling);
+    RUN_TEST(test_throttle_stamp_restarts_window);
+    RUN_TEST(test_throttle_is_pure_query_does_not_mutate);
+    RUN_TEST(test_throttle_tick_wraparound_safe);
+    RUN_TEST(test_packv_interval_config_is_sane);
 
     RUN_TEST(test_ema_speed_normal_operation);
     RUN_TEST(test_ema_speed_stale_data_resets_filter);

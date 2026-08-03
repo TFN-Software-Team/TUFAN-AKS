@@ -24,6 +24,7 @@ DisplayHMI::DisplayHMI()
       m_lastSendmeTick(0),
       HMI_lastResyncTick(0),
       HMI_nextResyncField(0),
+      HMI_lastPackvSendTick(0),
       HMI_lastScreenData({}) {}
 
 bool DisplayHMI::begin() {
@@ -151,6 +152,10 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
 
     const bool HMI_forceRefresh = !HMI_hasCachedScreen;
 
+    // packv tavanı atlarsa geri yüklenecek cache değeri (aşağıya bkz.).
+    const uint16_t HMI_packvCachedBeforeUpdate =
+        HMI_lastScreenData.HMI_bmsPackVoltageDeciV;
+
     // Round-robin resync emniyet katmanı (bkz. ResyncPolicy.h): Startup
     // event'i brown-out sırasında RX hattında kaybolursa reset dedektörü kör
     // kalır — bu yüzden her HMI_RESYNC_INTERVAL_MS'te bir SIRADAKİ TEK alan
@@ -198,10 +203,24 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
     // packv Nextion'da 1 ondalıklı, packa 2 ondalıklı float (xfloat) —
     // ".val" packv için gerçek_değer×10, packa için gerçek_değer×100
     // olacak şekilde ölçeklenir (bkz. HMIHelpers.h).
-    HMI_sendNumericIfChanged(
-        "packv", HMI_packVoltageToXfloat(HMI_data.HMI_bmsPackVoltageDeciV),
-        HMI_packVoltageToXfloat(HMI_lastScreenData.HMI_bmsPackVoltageDeciV),
-        HMI_force(HMI_RESYNC_PACKV));
+    //
+    // packv'de EK OLARAK gösterim tavanı vardır (UpdateThrottle.h): şarjda
+    // 0.1 V çözünürlükte sürekli oynayan gerilim, 10 Hz change-compare ile
+    // ekranda okunamayacak kadar hızlı zıplıyordu. Force yolları (tam yenileme
+    // + round-robin resync) tavanı BAĞLAMAZ — aksi halde tespit edilemeyen bir
+    // ekran reset'inden sonra alan tavan süresi kadar yanlış kalırdı.
+    const bool HMI_packvForce = HMI_force(HMI_RESYNC_PACKV);
+    const bool HMI_packvSend =
+        HMI_packvForce ||
+        hmi_throttle_due(xTaskGetTickCount(), HMI_lastPackvSendTick,
+                         pdMS_TO_TICKS(HMI_PACKV_MIN_UPDATE_INTERVAL_MS));
+    if (HMI_packvSend) {
+        HMI_sendNumericIfChanged(
+            "packv", HMI_packVoltageToXfloat(HMI_data.HMI_bmsPackVoltageDeciV),
+            HMI_packVoltageToXfloat(HMI_lastScreenData.HMI_bmsPackVoltageDeciV),
+            HMI_packvForce);
+        hmi_throttle_stamp(xTaskGetTickCount(), HMI_lastPackvSendTick);
+    }
     HMI_sendNumericIfChanged(
         "packa", HMI_packCurrentToXfloat(HMI_data.HMI_bmsPackCurrentCentiA),
         HMI_packCurrentToXfloat(HMI_lastScreenData.HMI_bmsPackCurrentCentiA),
@@ -258,6 +277,15 @@ void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
         HMI_force(HMI_RESYNC_HEADLIGHT));
 
     HMI_lastScreenData = HMI_data;
+    // packv tavan yüzünden atlandıysa cache'i ESKİ değerde bırak: aksi halde
+    // change-compare bir sonraki tikte "değişmedi" der ve o güncelleme SONSUZA
+    // dek kaybolurdu (gerilim sabitlenirse ekran yanlış değerde donardı).
+    // Böylece bekleyen değişiklik yapışkan kalır ve pencere açılınca EN SON
+    // değer yazılır.
+    if (!HMI_packvSend) {
+        HMI_lastScreenData.HMI_bmsPackVoltageDeciV =
+            HMI_packvCachedBeforeUpdate;
+    }
     HMI_hasCachedScreen = true;
 }
 

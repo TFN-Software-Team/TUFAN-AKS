@@ -7,6 +7,7 @@
 #include "HMITouchParser.h"
 #include "NextionResetDetect.h"
 #include "ResyncPolicy.h"
+#include "UpdateThrottle.h"
 
 // HMI_VcuState ve saf metin/komut helper'ları HMIHelpers.h'ye taşındı; bu
 // header geriye uyumluluk için onu yeniden expose eder. DisplayHMI sınıfı
@@ -59,6 +60,10 @@ class DisplayHMI {
     // hattında kaybolursa devreye giren periyodik emniyet katmanı).
     uint32_t HMI_lastResyncTick;
     uint8_t HMI_nextResyncField;
+    // packv gösterim tavanı (bkz. UpdateThrottle.h): en son GERÇEKTEN packv
+    // gönderilen tick. Tavan aşılmadıysa alan atlanır ve HMI_lastScreenData'daki
+    // packv girdisi ESKİ değerde bırakılır — bekleyen değişiklik kaybolmaz.
+    uint32_t HMI_lastPackvSendTick;
     HMI_DisplayData HMI_lastScreenData;
     HMI_NextionResetDetect HMI_resetDetect;
     HMI_TouchParserState HMI_touchParserState;
