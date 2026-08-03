@@ -522,9 +522,8 @@ void CanManager::handleMotorStatus(const twai_message_t& msg) {
     CAN_confirmedErrorFlags = CAN_motorFaultConfirmed ? parsed.errorFlags : 0;
 
     // Motor rpm CAN'da işaretli (int16_t) gelir; geri yön dönüşü negatif olabilir.
-    // Güvenlik: INT16_MIN (-32768) gibi değerler için doğrudan saklıyoruz; 
-    // TelemetrySanitize::sanitizeRpm() negatif değerleri güvenli bir şekilde 0'a kırpar.
-    s_telemetryData.TEL_motorRpm = s_motorStatus.rpm;
+    // F5 FIX: Ekranda (HMI) ve telemetride 65436 gibi taşmaları önlemek için mutlak değer (abs) saklanıyor.
+    s_telemetryData.TEL_motorRpm = (s_motorStatus.rpm < 0) ? static_cast<uint16_t>(-s_motorStatus.rpm) : static_cast<uint16_t>(s_motorStatus.rpm);
     s_telemetryData.TEL_motorVoltageDeciV = s_motorStatus.motorVoltageDeciV;
     s_telemetryData.TEL_motorErrorFlags = CAN_confirmedErrorFlags;
     s_telemetryData.TEL_motorDataValid = s_motorStatus.isValid;
@@ -857,6 +856,7 @@ void CanManager::updateMotorStatusValidity() {
             s_motorStatus.isValid = false;
             s_telemetryData.TEL_motorDataValid = false;
             s_telemetryData.TEL_motorTimeoutActive = true;
+            s_telemetryData.TEL_motorRpm = 0;  // F10 FIX: Timeout anında bayat RPM sıfırlanıyor
             CAN_shouldLogTimeout = !CAN_motorTimeoutLogged;
             CAN_motorTimeoutLogged = true;
         }

@@ -98,7 +98,7 @@ da pack/paket seviyesinde VCU kararını besler:
 
 | Sabit | Satır | Değer | Tüketici | Sinyal Durumu | Karar Yolunda CANLI mı? |
 | --- | --- | --- | --- | --- | --- |
-| `CAN_MOTOR_STATUS_TIMEOUT_MS` | 208 | 500 ms | `CanManager::updateMotorStatusValidity` → `TEL_motorTimeoutActive` → `VcuLogic::hasCriticalCondition` (IDLE dışında critical) | ✅ DOĞRULANDI (frame varlığı, ölçeğe bağlı değil) | ✅ CANLI |
+| `CAN_MOTOR_STATUS_TIMEOUT_MS` | 917 | 1500 ms | `CanManager::updateMotorStatusValidity` → `TEL_motorTimeoutActive` → `VcuLogic::hasCriticalCondition` (IDLE dışında critical) | ✅ DOĞRULANDI (frame varlığı, ölçeğe bağlı değil) | ✅ CANLI |
 | `CAN_BMS_STATUS_TIMEOUT_MS` | 209 | 500 ms | `CanManager::updateBmsValidity` → `bms_evaluate_freshness` (G12: E000 **ve** E001 ID bazında ayrı izlenir; biri bayatlarsa timeout) → `TEL_bmsTimeoutActive` → `VcuLogic::hasCriticalCondition` (IDLE dışında critical) | ✅ DOĞRULANDI (E000+E001 frame varlığı) | ✅ CANLI |
 | `CAN_CHARGER_TIMEOUT_MS` | 213 | 2000 ms | Yalnızca `0x1806E5F4` setpoint'lerini "bayat" işaretler (`CAN_chargerValid`) → `getChargerCommand()` bench/diagnostik API'si | ✅ DOĞRULANDI | ❌ **HAYIR** (2026-07-29'da karar yolundan ÇIKARILDI — aşağıya bakınız) |
 | `CHARGE_DETECT_CURRENT_CENTI_A` | 876 | 200 (+2.0 A) | `ChargeDetect::update` → `TEL_chargerActive` → HMI `chg` göstergesi **ve** `VcuLogic::isReadyEntryPermitted` (şarj sürerken READY reddi, şartname 8.2.a.iii) | ✅ DOĞRULANDI (0xE000 byte[0:1]; iki canlı kayıt: şarjda değil −0.1/−0.2 A, şarjda +9.1…+10.0 A) | ✅ CANLI — şarj tespitinin TEK kaynağı |

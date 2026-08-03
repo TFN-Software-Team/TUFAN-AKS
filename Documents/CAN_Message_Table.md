@@ -130,9 +130,9 @@ sayaç değil.
 
 ---
 
-### `0x0000E001` — Sıcaklık + Bilinmeyen Analog Kanallar
+### `0x0000E001` — Sıcaklık + Hücre Voltayı Özeti
 
-Direction: `BMS → AKS` | DLC: 8 | Status: **Kısmi — byte[6:7] DOĞRULANDI, byte[0:5] BİLİNMİYOR**
+Direction: `BMS → AKS` | DLC: 8 | Status: **✅ DOĞRULANDI — tüm 4 alan (Min/Max/Avg Cell Voltage + Temp1/2)**
 
 | Byte | Alan Adı | Veri Tipi | Endian | İşaret | Ölçek / Çarpan | Durum | Kanıt |
 | --- | --- | --- | --- | --- | --- | --- | --- |

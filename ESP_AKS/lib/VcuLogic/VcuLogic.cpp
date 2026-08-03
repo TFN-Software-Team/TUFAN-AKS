@@ -60,6 +60,7 @@ static bool s_relaysOpenedInFault = false;
 static uint32_t s_lastEstopLogMs = 0;
 static uint32_t s_lastFaultLogMs = 0;
 static uint32_t s_autoResetTimer = 0;
+static uint8_t s_autoResetCount = 0;
 
 // ---------------------------------------------------------------------------
 // P3 GÜVENLİ KAPANIŞ SIRASI — sıfır-tork ile kontaktör açma arasındaki gecikme
@@ -809,8 +810,19 @@ static void handleFault() {
     if (isResetInterlockSatisfied()) {
         s_autoResetTimer += TASK_PERIOD_MS;
         if (s_autoResetTimer >= VCU_AUTO_RESET_DELAY_MS) {
-            ESP_LOGW(TAG, "Otomatik FAULT reset (ekran kopuklugu telafisi)");
-            postEvent(VcuEvent::RESET);
+            if (s_autoResetCount < VCU_MAX_AUTO_RESETS) {
+                s_autoResetCount++;
+                ESP_LOGW(TAG, "Otomatik FAULT reset (%u/%u, ekran kopuklugu telafisi)",
+                         (unsigned)s_autoResetCount, (unsigned)VCU_MAX_AUTO_RESETS);
+                postEvent(VcuEvent::RESET);
+            } else {
+                static uint32_t s_lastMaxResetLogMs = 0;
+                if (s_stateTimer - s_lastMaxResetLogMs >= 1000) {
+                    ESP_LOGW(TAG, "Otomatik RESET sinirine ulasildi (max %u), manuel RESET bekleniyor",
+                             (unsigned)VCU_MAX_AUTO_RESETS);
+                    s_lastMaxResetLogMs = s_stateTimer;
+                }
+            }
             s_autoResetTimer = 0;
         }
     } else {
@@ -878,6 +890,10 @@ static void transitionTo(VcuState next) {
     } else {
         // Güvenli kapanış epizodu bitti (IDLE/READY/DRIVE'a dönüldü).
         s_zeroTorqueSent = false;
+    }
+
+    if (next == VcuState::IDLE || next == VcuState::READY) {
+        s_autoResetCount = 0;
     }
 
 #if RELAY_ROLES_ASSIGNED

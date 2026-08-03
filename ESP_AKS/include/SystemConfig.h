@@ -118,6 +118,7 @@ typedef int esp_reset_reason_t;
 
 #define HMI_LINK_TIMEOUT_MS 5000       // Nextion koptu kabul etme suresi
 #define VCU_AUTO_RESET_DELAY_MS 10000  // FAULT'tan oto-reset icin bekleme
+#define VCU_MAX_AUTO_RESETS 3U         // Ust uste maksimum otomatik RESET siniri (F3)
 
 // --- HMI Round-Robin Resync (reset dedektörünün emniyet katmanı) ---
 // Startup event'i brown-out sırasında RX hattında bozulup KAYBOLABİLİR —

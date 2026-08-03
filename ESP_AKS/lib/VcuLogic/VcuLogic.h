@@ -307,9 +307,9 @@ inline bool isResetInterlockSatisfied(const TelemetryData& VCU_data,
     // SIFIRLAMAZ — son değer donar (bkz. CanManager.cpp motor timeout yolu).
     // Bayat bir RPM'e bakmak, sensör yüksek hızda sustuğunda reset'i KALICI
     // olarak bloklardı; bu yüzden RPM yalnızca veri TAZE iken değerlendirilir.
-    if (VCU_data.TEL_motorDataValid &&
-        (VCU_data.TEL_motorRpm >= VCU_RESET_MAX_RPM ||
-         VCU_data.TEL_motorRpm <= -VCU_RESET_MAX_RPM))
+    // Motor RPM mutlak büyüklük olarak tutulur (uint16_t). Hareket halinde (F9)
+    // (≥ VCU_RESET_MAX_RPM) RESET engellenir.
+    if (VCU_data.TEL_motorDataValid && VCU_data.TEL_motorRpm >= VCU_RESET_MAX_RPM)
         return false;
 
     return true;

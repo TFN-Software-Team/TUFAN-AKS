@@ -70,8 +70,8 @@ bool parseCharger1806E5F4(const twai_message_t& msg, ChargerCommand& out) {
 // --- sniffer loglarında görülen ancak alan anlamı henüz DOĞRULANMAMIŞ
 // --- ID'ler içindir. Ham byte'ları kabul eder ama TelemetryData'ya anlam
 // --- yüklenmez; gerçek anlam çözüldükçe içleri doldurulacaktır.
-// --- İSTİSNA: hemen aşağıdaki 0xE001 bu kapsamda DEĞİL — sıcaklık alanları
-// --- (byte[6:7]) DOĞRULANDI ve parse ediliyor; yalnız byte[0:5] bilinmiyor.
+// --- İSTİSNA: hemen aşağıdaki 0xE001 bu kapsamda DEĞİL — hem sıcaklık
+// --- alanları (byte[6:7]) hem de hücre voltaj özeti (byte[0:5]) DOĞRULANDI.
 
 // 0xE001 — Sıcaklık ve Hücre Özeti DOĞRULANDI (bkz. CAN_Message_Table.md)
 bool parseLbBmsE001(const twai_message_t& msg, TelemetryData& out) {
