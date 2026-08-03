@@ -1,5 +1,22 @@
 # "torque" Alanı (4. Alan) — Semantik Uyumsuzluk Karar Notu
 
+> ## ✅ KARAR VERİLDİ (2026-07-13) — ŞU AN AKSİYON GEREKTİRMEZ
+>
+> **Sonuç:** Alan 4 **mevcut haliyle kalıyor** — kaynak `TEL_motorVoltageDeciV`,
+> sözleşme etiketi `torque`. `sanitizeMotorVoltForTorqueField()` clamp'i frame
+> reddini imkânsız kıldığı için **çalışma riski YOKTUR**; geriye yalnızca
+> semantik/etiket uyumsuzluğu kalır.
+>
+> **Kalıcı çözüm ((i) yeniden adlandırma / (ii) rezerve etme) motor sürücüsü
+> entegrasyonuna ERTELENDİ** — o gün bu alan zaten yeniden gözden geçirilecek
+> (bkz. [MOTOR_ENTEGRASYON_NOTU.md](MOTOR_ENTEGRASYON_NOTU.md)). Yani bu, açık
+> bir "ekip kararı bekliyor" maddesi DEĞİL, bilinçli olarak ertelenmiş bir
+> karardır; tetikleyicisi `MOTOR_DRIVER_PRESENT=1` yapılmasıdır.
+>
+> Aşağıdaki "Kalıcı çözüm seçenekleri" bölümü, o gün masaya konacak
+> seçenekleri saklamak için korunmuştur — bugün uygulanacak bir iş listesi
+> değildir. Ayrıntılı gerekçe: aşağıdaki **"ARA KARAR (2026-07-13)"** bölümü.
+
 ## Durum
 
 AKS↔UKS telemetri sözleşmesinde (`UKS-Telemetry/README.md`, `tools/e2e/contract.py`

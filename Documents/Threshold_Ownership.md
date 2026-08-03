@@ -2,10 +2,14 @@
 
 Repoda birbirinden habersiz **iki ayrı batarya eşik seti** var:
 
-1. `include/SystemConfig.h` — **pack-bazlı** (deciV / centi-A / °C), `src/VcuLogic.h`
-   (`hasWarningCondition` / `hasCriticalCondition`) ve `lib/CanManager/CanManager.cpp`
-   (`checkPackVoltageFault` üzerinden) tarafından tüketiliyor. Bu set VCU durum
+1. `include/SystemConfig.h` — **pack-bazlı** (deciV / centi-A / °C),
+   `lib/VcuLogic/VcuLogic.h` (`hasWarningCondition` / `hasCriticalCondition`) ve
+   `lib/CanParse/CanParse.cpp` (`checkPackVoltageFault`, çağrıldığı yer
+   `lib/CanManager/CanManager.cpp:560`) tarafından tüketiliyor. Bu set VCU durum
    makinesini (FAULT / kontaktör) besler.
+   <br>*(Yol düzeltmesi 03.08.2026: bu satır eskiden `src/VcuLogic.h` diyordu —
+   öyle bir dosya YOK; VcuLogic, M5 konvansiyonu gereği `lib/VcuLogic/`
+   altındadır. `src/` içinde yalnız `main.cpp` ve `e22_diagnostic.cpp` var.)*
 2. `lib/BmsAlgo/BmsAlgo.h` — **hücre-bazlı** (mV / °C), `computePack()` tarafından
    tüketiliyor. Çıktısı (`BmsComputed`) şu an yalnızca Nextion HMI'ye
    (`BmsNextionPacket.cpp`) gidiyor; VCU kararına bağlı DEĞİL.

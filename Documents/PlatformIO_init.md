@@ -12,27 +12,35 @@ This guide helps beginners open, build, and run the ESP_AKS project using Platfo
 
 ## Open the Existing Project
 1. Open VS Code.
-2. Use **File > Open Folder...** and select `/Users/melekzevit/Desktop/Ali-Okul/TFN-Codes/TUFAN-AKS/ESP_AKS`.
+2. Use **File > Open Folder...** and select the `ESP_AKS/` directory inside your
+   clone of this repository (i.e. `<repo>/ESP_AKS`). PlatformIO must be opened
+   on `ESP_AKS/`, **not** on the repository root — `platformio.ini` lives there.
 3. PlatformIO should detect the project and load the environment from `platformio.ini`.
 
 ## Project Layout
 ```
 ESP_AKS/
-├── include/          # Shared configuration headers
-│   └── SystemConfig.h
-├── lib/              # Project libraries and modules
-│   ├── CanManager/
-│   ├── DisplayHMI/
-│   ├── RelayManager/
-│   └── Telemetry/
+├── include/          # Project-wide config headers ONLY
+│   ├── SystemConfig.h
+│   ├── E22Regs.h
+│   └── VehicleParams.h
+├── lib/              # 13 modules; pure/native-testable ones live here
+│   ├── CanManager/   DisplayHMI/   RelayManager/   Telemetry/
+│   ├── VcuLogic/     CanParse/     BmsAlgo/        BmsModel/
+│   └── HMIHelpers/   OfflineBuffer/ VehicleData/   LoraLink/  E22Config/
 ├── src/              # Application sources
-│   ├── main.cpp
-│   ├── VcuLogic.cpp
-│   └── VcuLogic.h
+│   └── main.cpp      # entry point + task setup
+├── test/             # native (host) test packages — see TEST_BASELINE.md
+├── tools/e2e/        # AKS<->UKS contract (drift) tests, pytest
 ├── platformio.ini    # PlatformIO build configuration
 ├── sdkconfig.esp32dev
 └── .pio/             # Build artifacts (do not edit)
 ```
+
+> **Düzeltme (03.08.2026):** Bu ağaç eskiden `src/VcuLogic.cpp` / `src/VcuLogic.h`
+> gösteriyordu. VCU durum makinesi **`lib/VcuLogic/` altındadır** (M5 kod
+> yerleşim konvansiyonu — bkz. [CONTRIBUTING.md](CONTRIBUTING.md)); `src/`
+> içinde yalnızca `main.cpp` ve tanılama kaynakları vardır.
 
 ## What This Project Uses
 - `platformio.ini` defines:
@@ -41,16 +49,19 @@ ESP_AKS/
   - `framework = espidf`
   - `monitor_speed = 115200`
   - `build_flags = -std=gnu++17`
-- `src/main.cpp` starts three FreeRTOS tasks:
-  - CAN communication task
-  - HMI display task
-  - VCU logic task
-- `include/SystemConfig.h` holds pin assignments and UART/SPI settings.
+- `src/main.cpp` starts **four** FreeRTOS tasks (`xTaskCreatePinnedToCore`):
+  - `CAN_Task` — TWAI RX/TX, BMS + motor frame parsing, freshness tracking
+  - `VCU_Task` — state machine, safety thresholds, relay/contactor decisions
+  - `HMI_Task` — Nextion display output + touch command reading
+  - `LoRa_Task` — UKS uplink scheduling, offline buffer/replay, heartbeat
+- `include/SystemConfig.h` holds pin assignments, CAN IDs, timing constants,
+  thresholds and build flags.
 
 ## Key Files to Explore
 - `src/main.cpp` — application entry point and task setup
-- `src/VcuLogic.cpp` — vehicle control logic stub
-- `include/SystemConfig.h` — board pin configuration
+- `lib/VcuLogic/VcuLogic.cpp` — VCU state machine (**not** a stub; the 6-state
+  safety machine `INIT/IDLE/READY/DRIVE/EMERGENCY_STOP/FAULT` lives here)
+- `include/SystemConfig.h` — pin map, thresholds, build flags
 - `lib/CanManager/CanManager.h` — CAN bus manager interface
 - `lib/DisplayHMI/DisplayHMI.h` — display/HMI interface
 - `lib/RelayManager/RelayManager.h` — relay control abstractions
@@ -76,7 +87,7 @@ platformio device monitor -e esp32dev --baud 115200
 ## What to Change as a Beginner
 - Update pin definitions in `include/SystemConfig.h` if your hardware wiring differs.
 - Add CAN message handling and sensor reads inside `src/main.cpp` and `lib/CanManager`.
-- Implement state transitions and contactor logic in `src/VcuLogic.cpp`.
+- Implement state transitions and contactor logic in `lib/VcuLogic/VcuLogic.cpp`.
 - Add display updates to `lib/DisplayHMI` and call them from the HMI task.
 
 ## Troubleshooting

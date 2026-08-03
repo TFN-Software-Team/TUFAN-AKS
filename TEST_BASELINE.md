@@ -5,8 +5,15 @@
 > sayı düşer ama takım yine "PASSED" görünebilir. Bu dosya, her koşumda
 > karşılaştırılacak **beklenen** sayıları tutar.
 >
-> **Son güncelleme:** 28.07.2026 · **Dal:** `okan/aks-kod-duzeltmeleri`
-> · **Ölçüm:** aşağıdaki komutlar birebir koşturularak alındı.
+> **Son güncelleme:** 03.08.2026 · **Dal:** `main`
+> · **Ölçüm:** `native` / `native_roles` sayıları bu güncellemede
+> `test/` altındaki **`RUN_TEST` çağrıları statik olarak sayılarak** alındı
+> (PlatformIO o makinede kurulu değildi). Tüm `RUN_TEST` satırlarının
+> koşulsuz olduğu (yorum/`#if` arkasında olmadığı) tek tek doğrulandı, ama
+> **bu bir koşum çıktısı değildir** — bir sonraki gerçek `pio test`
+> koşumunda sayılar birebir teyit edilmeli, sapma varsa bu satır
+> "koşturularak alındı" olarak güncellenmelidir. `tools/e2e` sayıları
+> `def test_` sayımıyla doğrulandı ve DEĞİŞMEDİ.
 
 ---
 
@@ -37,31 +44,47 @@ pytest tools/e2e/ -v          # TUFAN_UKS_REPO ortam değişkeni gerekebilir
 
 ---
 
-## 1 · `pio test -e native` — **555 test / 18 paket**
+## 1 · `pio test -e native` — **570 test / 18 paket**
 
 Varsayılan derleme ortamı (`RELAY_ROLES_ASSIGNED=0`, `MOTOR_DRIVER_PRESENT=0`).
 
-| Paket | Test | Önceki taban (25.07) |
+| Paket | Test | Önceki taban (28.07) |
 |---|---:|---:|
 | `test_native_bms_algo` | 41 | 41 |
 | `test_native_bms_freshness` | 6 | 6 |
-| `test_native_can_parsing` | 76 | 76 |
-| `test_native_charge_detect` | 14 | 14 |
+| `test_native_can_parsing` | 77 | 76 ◆ |
+| `test_native_charge_detect` | 19 | 14 ◆ |
 | `test_native_e22_config` | 18 | 18 |
-| `test_native_hmi` | 18 | 5 † |
-| `test_native_hmi_helpers` | 71 | 60 † |
+| `test_native_hmi` | 18 | 18 |
+| `test_native_hmi_helpers` | 79 | 71 ◆ |
 | `test_native_link_monitor` | 11 | 11 |
 | `test_native_lora_rx_handler` | 7 | 7 |
 | `test_native_motor_debounce` | 5 | 5 |
 | `test_native_offline_buffer` | 18 | 18 |
-| `test_native_ready_motor` | 9 | 2 ‡ |
+| `test_native_ready_motor` | 9 | 9 |
 | `test_native_relay` | 29 | 29 |
 | `test_native_sysstate_derive_enabled` | 6 | 6 |
 | `test_native_telemetry` | 63 | 63 |
 | `test_native_uart_init_retry` | 8 | 8 |
 | `test_native_uplink_scheduler` | 6 | 6 |
-| `test_native_vcu_logic` | 149 | 140 ‡ § ¶ |
-| **TOPLAM** | **555** | **515** |
+| `test_native_vcu_logic` | 150 | 149 ◆ |
+| **TOPLAM** | **570** | **555** |
+
+> **◆ 03.08.2026 yeniden sayımı (+15, hepsi ARTIŞ — kayıp YOK):** taban
+> 28.07'den bu yana güncellenmemişti. Dört pakette artış ölçüldü:
+> `test_native_charge_detect` (+5), `test_native_hmi_helpers` (+8),
+> `test_native_can_parsing` (+1), `test_native_vcu_logic` (+1). Paket
+> SAYISI değişmedi (18) — yani bir paket düşmüş değil, mevcut paketlere
+> test eklenmiş. Artışların hangi commit'lerden geldiği bu güncellemede
+> commit bazında ayrıştırılmadı; sayılar bugünkü çalışma ağacından
+> okundu.
+
+<details>
+<summary><b>Tarihsel — 25.07 → 28.07 arası değişimin gerekçeleri († ‡ § ¶)</b></summary>
+
+Aşağıdaki dipnotlar, tablodan kaldırılan **25.07 sütununa** aittir ve
+tarihsel kayıt olarak korunmuştur; bugünkü tabloda † ‡ § ¶ işaretleri
+ARTIK YOKTUR.
 
 > **† Taban güncel değildi:** `test_native_hmi` (+13) ve `test_native_hmi_helpers`
 > (+11) 25.07 ölçümünden bu yana büyümüş ama bu dosya güncellenmemiş. Bu 24 test
@@ -92,22 +115,34 @@ Varsayılan derleme ortamı (`RELAY_ROLES_ASSIGNED=0`, `MOTOR_DRIVER_PRESENT=0`)
 > düzeltildi (re-assert sınırı t=1000 değil t=1020). Bkz.
 > `Documents/MOTOR_ENTEGRASYON_NOTU.md` §7.
 
-## 2 · `pio test -e native_roles` — **38 test / 3 paket**
+</details>
+
+## 2 · `pio test -e native_roles` — **45 test / 3 paket**
 
 `RELAY_ROLES_ASSIGNED=1` varyantı: S1/S2 mod anahtarlaması, flaşör, fan ve far
 mantığı YALNIZ bu ortamda derlenir.
 
-| Paket | Test |
-|---|---:|
-| `test_roles_hmi_mappings` | 2 |
-| `test_roles_relay_mask` | 6 |
-| `test_roles_vcu_logic` | 30 |
-| **TOPLAM** | **38** |
+| Paket | Test | Önceki taban (28.07) |
+|---|---:|---:|
+| `test_roles_hmi_mappings` | 3 | 2 ◆ |
+| `test_roles_relay_mask` | 10 | 6 ◆ |
+| `test_roles_vcu_logic` | 32 | 30 ◆ |
+| **TOPLAM** | **45** | **38** |
 
-> **NOT — BENI_OKU.md 1.1 güncellemesi:** orada "36 rol testi geçmeli"
-> yazıyor. Doğru sayı artık **38**'dir (link düzeltildikten sonra
-> `test_roles_hmi_mappings` de koşuyor). Bayrağı açmadan önce bu tabloya
-> bakın, 36'ya değil.
+> **◆ 03.08.2026 yeniden sayımı (+7, hepsi ARTIŞ):** üç paketin üçünde de
+> test eklenmiş. `test_roles_relay_mask` artışının (+4) bir kısmı fan
+> kanalının NC klemense alınmasıyla gelen polarite/invert-maske
+> testleridir (`test_invert_mask_contract`,
+> `test_fan_pin_polarity_follows_invert_mask` vb. — bkz. commit `865f8f6`).
+> Bu ortamda `RUN_TEST` çağrılarının hiçbiri `#if` arkasında değildir;
+> dosyadaki `#if RELAY_CH_FAN_NC_WIRED` blokları test GÖVDELERİ içindeki
+> beklenti varyantlarıdır, çağrı sayısını değiştirmez.
+
+> **NOT — "36 rol testi" diyen eski metin:** Bu sayıya atıf yapan
+> `BENI_OKU.md` **bu repoda mevcut değildir** (git geçmişinde de hiç
+> oluşturulmamış — bkz. aşağıdaki "İLGİLİ DOSYALAR" notu). Rol testi sayısı
+> için tek doğruluk kaynağı yukarıdaki tablodur: **45**. Bayrağı açmadan
+> önce 36'ya veya 38'e değil, buraya bakın.
 
 ## 3 · `pytest tools/e2e/` — **33 passed + 1 xfailed**
 
@@ -145,6 +180,13 @@ güncellenmesi gerektiğinin sinyalidir (bkz. `CLAUDE.md` §5).
 
 | Konu | Dosya |
 |---|---|
-| Kalan açık konular / teknik kontrol listesi | `BENI_OKU.md` |
+| Kalan açık konular / teknik kontrol listesi | `ESP_AKS/TEKNIK_KONTROL_PROVASI.md` |
 | Protokol sözleşmesi ve test zorunluluğu | `CLAUDE.md` |
-| Kanal-klemens eşlemesi | `RELAY_CHANNEL_TABLE.md` |
+| Kanal-klemens eşlemesi | `Documents/RELAY_CHANNEL_TABLE.md` |
+| Test altyapısı / yeni test ekleme | `Documents/Test_Guide.md` |
+
+> ⚠️ **`BENI_OKU.md` bu repoda YOKTUR.** Bu dosya birkaç dokümanda
+> (eskiden burada da) kaynak olarak gösteriliyordu, ancak
+> `git log --all -- "*BENI_OKU*"` **hiçbir kayıt döndürmüyor** — dosya hiç
+> oluşturulmamış. Ona yapılan atıflar 03.08.2026'da gerçek muadilleriyle
+> değiştirildi; yeni dokümanlarda `BENI_OKU.md`'ye atıf YAPMAYIN.

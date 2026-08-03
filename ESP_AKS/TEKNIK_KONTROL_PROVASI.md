@@ -75,7 +75,8 @@ satırı bu kararı görünür kılar. Teknik kontrol sırasında 24 hücre volt
 (E015-E020), sıcaklık, akım ve SoC'un **gerçek ve doğrulanmış** olduğu
 belirtilmelidir. Kalan CAN ID'leri (E002-E006, E032, E033) araç yola çıktıktan
 sonra sniffer loglarıyla çözülmeye devam edilecektir (bkz.
-`Documents/CAN_Message_Table.md`, `BENI_OKU.md` 5.1).
+`Documents/CAN_Message_Table.md` — çözülemeyen CAN ID'leri için tek
+doğruluk kaynağı).
 
 ---
 

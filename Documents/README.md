@@ -1,93 +1,76 @@
-# TUFAN-AKS
+# Documents/ — Doküman Dizini ve Otorite Haritası
 
-TUFAN-AKS is the Vehicle Control Unit (VCU / AKS) firmware for the TUFAN electric vehicle platform. The project targets ESP32 with ESP-IDF through PlatformIO, uses FreeRTOS for task-based concurrency, and keeps all application code in C++17 without Arduino core dependencies.
+> **Bu dosya bir INDEX'tir, içerik taşımaz.**
+>
+> 03.08.2026'ya kadar bu dosya kök [`README.md`](../README.md)'nin **bayat bir
+> kopyasıydı**: kendi CAN kapsam tablosunu, röle durumunu ve katkıcı listesini
+> tekrar ediyordu ve bunların hepsi gerçekle çelişecek kadar eskimişti
+> (ör. `0xE000`'i "BMS config", `0xE001`'i "BMS live" diye tanımlıyordu — ikisi
+> de yanlış; "10 rölenin tamamı tek kontaktör bankıdır" diyordu — bu, rol
+> makroları geldiğinden beri geçerli değil). İki README'yi senkron tutma
+> zorunluluğunu ortadan kaldırmak için içerik silindi ve yerine bu dizin
+> konuldu.
+>
+> **Projeye genel bakış için: kök [`README.md`](../README.md).**
 
-## Build Environment
+---
 
-- PlatformIO environment: `env:esp32dev`
-- Framework: ESP-IDF
-- Language standard: C++17
-- Main transport interfaces: CAN, SPI, UART
+## Otorite Kuralı — hangi konunun TEK DOĞRULUK KAYNAĞI hangi dosya?
 
-## Repository Layout
+Bir konu birden fazla dosyada geçiyorsa, **yalnız aşağıdaki "otorite" dosyada
+tam içerik bulunur**; diğer dosyalar 1-2 cümle özet + bu dosyaya link verir,
+tabloyu KOPYALAMAZ. (Kural: [`CLAUDE.md`](../CLAUDE.md) §5 — kod davranışı
+değişince ilgili `.md` aynı commit'te güncellenir. Tek otorite, tek güncelleme
+noktası demektir.)
 
-The current firmware repository is organized around seven runtime nodes / code areas:
+| Konu | OTORİTE dosya |
+| --- | --- |
+| CAN frame'leri, byte-byte alan anlamları, doğrulama seviyeleri | [CAN_Message_Table.md](CAN_Message_Table.md) |
+| Röle kanal ↔ klemens ↔ yük haritası, bank maskeleri, polarite | [RELAY_CHANNEL_TABLE.md](RELAY_CHANNEL_TABLE.md) |
+| Batarya eşikleri (pack vs hücre), hangi eşik neyi tetikler | [Threshold_Ownership.md](Threshold_Ownership.md) |
+| Ekran (Nextion) alan sözleşmesi, buton komutları, `.pic` eşlemeleri | [HMI_Field_Map.md](HMI_Field_Map.md) |
+| Beklenen test sayıları (sessiz test kaybı bekçisi) | [`../TEST_BASELINE.md`](../TEST_BASELINE.md) |
+| AKS↔UKS LoRa protokolü, 19 alanlı `TEL,...` sözleşmesi | [UKS_LoRa_Protocol.md](UKS_LoRa_Protocol.md) |
+| Katkı kuralları: dal adlandırma, önek şeması, kod yerleşimi (M5) | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Çalışma kuralları, çapraz-repo sözleşmesi, test zorunluluğu | [`../CLAUDE.md`](../CLAUDE.md) |
 
-1. `src/main.cpp`
-Application entry point, task creation, watchdog refresh points, and inter-task queue wiring.
+---
 
-2. `src/VcuLogic.*`
-Event-driven VCU state machine for `INIT`, `IDLE`, `READY`, `DRIVE`, `EMERGENCY_STOP`, and `FAULT`.
+## Dosyalar
 
-3. `lib/CanManager`
-TWAI/CAN transport, motor driver communication, BMS frame parsing, and CAN-originated fault reporting.
+### Aktif — sahada/bench'te kullanılan
 
-4. `lib/RelayManager`
-MCP23S17-based active-low relay control for the positive contactor bank.
+| Dosya | Konu |
+| --- | --- |
+| [BRING_UP_CHECKLIST.md](BRING_UP_CHECKLIST.md) | Kart bring-up: pin bağlantıları, boot logu, sorun giderme, **ekran butonu doğrulaması**, HV testleri. Bring-up için tek checklist. |
+| [ACCEPTANCE_TEST.md](ACCEPTANCE_TEST.md) | BMS + Nextion uçtan uca kabul testi prosedürü |
+| [CAN_Message_Table.md](CAN_Message_Table.md) | **OTORİTE** — tüm CAN frame'leri, alan alan kanıt/doğrulama durumu |
+| [RELAY_CHANNEL_TABLE.md](RELAY_CHANNEL_TABLE.md) | **OTORİTE** — 10 röle kanalı, bank üyelikleri, Faz 1/Faz 2 doğrulama |
+| [Threshold_Ownership.md](Threshold_Ownership.md) | **OTORİTE** — `SystemConfig.h` (pack, güvenlik) vs `BmsAlgo.h` (hücre, gösterim) eşikleri |
+| [HMI_Field_Map.md](HMI_Field_Map.md) | **OTORİTE** — firmware → Nextion alan eşlemesi, buton komut sözleşmesi |
+| [UKS_LoRa_Protocol.md](UKS_LoRa_Protocol.md) | **OTORİTE** — AKS↔UKS telemetri/komut sözleşmesi |
+| [Test_Guide.md](Test_Guide.md) | Test altyapısı, testleri çalıştırma, yeni test ekleme rehberi |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | **OTORİTE** — dal adlandırma, değişken önekleri, kod yerleşimi (M5) |
+| [PlatformIO_init.md](PlatformIO_init.md) | Yeni başlayanlar için PlatformIO kurulum/derleme rehberi |
+| [LoRa_Link_Analysis.md](LoRa_Link_Analysis.md) | Bant genişliği bütçesi, link flapping düzeltmesi, TX periyodu gerekçesi |
+| [E22_CRYPT_SENKRON.md](E22_CRYPT_SENKRON.md) | G7 heartbeat-injection açığı ve CRYPT anahtarı çapraz-repo senkronu |
+| [E22_ZORLA_YAZMA_CHECKLIST.md](E22_ZORLA_YAZMA_CHECKLIST.md) | Yanlış CRYPT ile flash'lanmış eski E22 modüllerini kurtarma |
+| [NEXTION_EKRAN_YAPILACAKLAR.md](NEXTION_EKRAN_YAPILACAKLAR.md) | Nextion Editor'de **elle** yapılacak ekran işleri (`.HMI` ikili format) |
 
-5. `lib/DisplayHMI`
-Nextion HMI UART transport and command handling.
+### Açık iş / karar bekleyen
 
-6. `lib/Telemetry`
-LoRa / telemetry packet formatting and UART uplink support.
+| Dosya | Durum |
+| --- | --- |
+| [MOTOR_ENTEGRASYON_NOTU.md](MOTOR_ENTEGRASYON_NOTU.md) | ⏳ Motor sürücüsü henüz araçta yok (`MOTOR_DRIVER_PRESENT=0`); entegrasyon günü yapılacaklar listesi |
+| [VEHICLE_PARAMS_TEYIT.md](VEHICLE_PARAMS_TEYIT.md) | Madde 1–4 ✅ tamamlandı; **yalnız madde 5 (saha hız provası) açık** |
+| [TORQUE_ALAN_KARAR_NOTU.md](TORQUE_ALAN_KARAR_NOTU.md) | ✅ Ara karar verildi (2026-07-13): alan mevcut haliyle kalıyor, kalıcı çözüm motor entegrasyonuna ertelendi |
 
-7. `include/SystemConfig.h`
-Shared pin map, message IDs, timing constants, LoRa mode defaults, and relay channel definitions.
+### Tarihsel kayıt — çözülmüş, aksiyon gerektirmez
 
-## Current CAN Coverage
+| Dosya | Sonuç |
+| --- | --- |
+| [CELL_VOLTAGE_INVESTIGATION.md](CELL_VOLTAGE_INVESTIGATION.md) | ✅ ÇÖZÜLDÜ — 24 hücre voltajı `0xE015–0xE020`'de bulundu ve entegre edildi |
+| [BENCH_E22_TEYIT.md](BENCH_E22_TEYIT.md) | ✅ DOĞRULANDI (2026-07-15 bench dump) — prosedür yeni modül provizyonu için korunuyor |
 
-The active CAN message set is documented in [CAN_Message_Table.md](CAN_Message_Table.md).
-
-Implemented frames:
-
-- `0x100`: torque command
-- `0x200`: motor status
-- `0xE000`: Lithium Balance BMS config
-- `0xE001`: Lithium Balance BMS live
-
-## Battery Threshold Ownership
-
-`SystemConfig.h` (pack-based, VCU safety authority) and `BmsAlgo.h` (cell-based, display layer) each define their own battery thresholds — see [Threshold_Ownership.md](Threshold_Ownership.md) for which constants are live, which are currently dead, and the known NMC-vs-LiFePO4 threshold conflict.
-
-## LoRa / E22 Baseline
-
-The radio module is E22-400T30D-V2 (SX1268), a pin-compatible successor to
-the retired E32-433T30D. Pin assignments are unchanged; the register-based
-configuration protocol and config-mode pin levels are not (see
-`include/E22Regs.h` for the address/value contract and
-`lib/E22Config` for the pure command-build / response-parse helpers).
-
-Startup mode for normal (transparent) operation:
-
-- `M0 = 0`
-- `M1 = 0`
-
-Config mode (boot-time register sync against the contract):
-
-- `M0 = 0`
-- `M1 = 1`
-
-Integration notes:
-
-- Configure `LORA_M0_PIN` and `LORA_M1_PIN` before UART traffic starts.
-- Use `LORA_AUX_PIN` as a readiness gate before telemetry transmission.
-- Keep telemetry TX in transparent UART mode; radio register configuration
-  happens once at boot in `vTask_LoRa_UKS` before entering the main loop.
-
-## Relay Mapping Status
-
-All ten relay channels are currently treated as positive contactor outputs. The software channel numbers are fixed, but the final harness-level physical assignments still need to be validated against the wiring package. Until that validation is complete, `allOn()` and `allOff()` should be treated as bank-wide operations on the positive contactor group, not as independently named vehicle loads.
-
-## Contributors
-
-Based on current git history, the repository contributors are:
-
-- Seqat
-- incubation-0
-- Mesalt-f4
-- Order
-- Sedat Ali Zevit
-
-## Development Rules
-
-Contributor workflow and naming rules are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+> Ayrıca `ESP_AKS/UYUM_NOTU.md` **E32 dönemine ait tarihsel bir kayıttır**,
+> güncel E22 değerleri için kullanılmamalıdır.

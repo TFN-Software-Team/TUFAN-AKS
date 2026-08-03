@@ -1,5 +1,18 @@
 # E22 Bench Doğrulama Prosedürü (P10) — "V2 varsayımı" teyidi
 
+> # ✅ SONUÇ — DOĞRULANDI, AKSİYON GEREKTİRMEZ
+>
+> E22-400T30D-V2 register haritası **2026-07-15'te gerçek bench dump'ı ile
+> DOĞRULANDI**; "V2 varsayımı" artık varsayım değil, teyitli bir gerçektir
+> (sonuç kaydı bu dosyanın sonundaki "Sonuç Kaydı" bölümünde). Bu dosya bir
+> "yapılacaklar listesi" DEĞİLDİR — aşağıdaki adımlar, **ileride yeni bir E22
+> modülü provizyonlanırsa** tekrar kullanılmak üzere korunan bir prosedürdür.
+> Bugün çalıştırılması gereken bir adım yoktur.
+>
+> Kod değişikliği içermez. Yanlış CRYPT ile flash'lanmış eski modüllerin
+> kurtarılması ayrı bir konudur:
+> [E22_ZORLA_YAZMA_CHECKLIST.md](E22_ZORLA_YAZMA_CHECKLIST.md).
+
 > **Durum (2026-07-15 itibarıyla ÇÖZÜLDÜ):** UKS README §11 "Bilinen Açık
 > Konular" ve §3 "DOĞRULAMA NOTU" — E22-400T30D-V2 register haritası
 > (`Core/Inc/e22_regs.h` / AKS `include/E22Regs.h`) bench dump ile

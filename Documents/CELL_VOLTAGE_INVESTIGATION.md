@@ -1,7 +1,24 @@
 # Lithium Balance c-BMS 24 Hücre Voltajı Analizi ve Çözüm Yolları
 
-> **GÜNCELLEME (2026-07-11): BU KONU ÇÖZÜLMÜŞTÜR.**
-> Yapılan son çalışmalarla 24 hücre voltajı verisinin CAN ID **0xE015** ile **0xE020** aralığında (her biri 4 hücre barındıracak şekilde) aktarıldığı doğrulanmış ve parseLbBmsE015..E020 fonksiyonlarıyla firmware'e entegre edilmiştir. Bu doküman tarihsel bilgi (araştırma adımları) amacıyla korunmaktadır.
+> # 📌 TARİHSEL KAYIT — AKSİYON GEREKTİRMEZ
+>
+> **SONUÇ (2026-07-11, kod ile 03.08.2026'da yeniden teyit edildi):** 24 hücre
+> voltajı **ÇÖZÜLDÜ ve firmware'e entegre edildi**. Veri, CAN ID **0xE015–0xE020**
+> aralığında (frame başına 4 hücre) yayınlanır ve `parseLbBmsE015..E020`
+> fonksiyonlarıyla ayrıştırılır. Ekrandaki 24'lük hücre bar paneli **artık
+> gerçek veriyle doludur** — `HMI_CELL_VOLTAGE_SOURCE_VERIFIED = true`
+> (`lib/HMIHelpers/HMIHelpers.h:97`).
+>
+> **Bu dosyadaki araştırma yöntemleri (Yöntem 1 / Yöntem 2) UYGULANMAYACAKTIR**
+> — yalnızca sürecin nasıl yürütüldüğünü gösteren tarihsel kayıttır. Aşağıdaki
+> "Sorunun Tespiti" bölümü, konu çözülmeden ÖNCEKİ durumu anlatır.
+>
+> Güncel CAN alan tanımları için tek doğruluk kaynağı:
+> [CAN_Message_Table.md](CAN_Message_Table.md).
+>
+> **Kalan tek açık iş:** hücrelerin FİZİKSEL sıralaması (hangi frame'deki hangi
+> hücrenin pakette hangi konumda olduğu) sahada teyit edilecek — bkz.
+> `ESP_AKS/TEKNIK_KONTROL_PROVASI.md` §1.
 
 Bu doküman, geçmişte ESP-AKS repomuzda henüz CAN ID'si bilinmeyen ve Nextion HMI ekranında "--" olarak gösterilen 24 hücre voltajı (`TEL_bmsCellVoltages[24]`) verisinin **nasıl bulunacağı** ve **sisteme nasıl entegre edileceği** süreçlerini açıklar.
 
@@ -64,7 +81,16 @@ Eğer Yöntem 1'de hücre voltajları CAN hattında hiç bulunamazsa, BMS konfig
 
 ## Mutlak Kural: Doğrulanana Kadar HMI'a Veri Uydurmamak
 
-Mevcut yazılımda `HMI_CELL_VOLTAGE_SOURCE_VERIFIED = false` (veya testlerde `false` dönecek şekilde kurgulanmış) olduğu için Nextion ekranda hücre voltajı barları boş ve değerleri `--` olarak görünmektedir. 
+> **DURUM GÜNCELLEMESİ (03.08.2026):** Bu bölümün altındaki KURAL hâlâ
+> geçerlidir, ancak aşağıdaki "mevcut durum" tasviri ARTIK GEÇERLİ DEĞİLDİR:
+> kaynak çözüldüğü için `HMI_CELL_VOLTAGE_SOURCE_VERIFIED` bugün **`true`**
+> (`lib/HMIHelpers/HMIHelpers.h:97`) ve hücre barları ekranda **gerçek
+> değerleri gösterir**, `--` DEĞİL. Yani bu bölümdeki "yapılması gereken"
+> maddesi FİİLEN TAMAMLANMIŞTIR.
 
-- **KESİNLİKLE YAPILMAMASI GEREKENLER:** Pack voltajını (`TEL_bmsPackVoltageDeciV`) 24'e bölüp hücrelere suni ortalama değerler YAZMAYIN. Bu (G8/M4) hatasıdır ve bataryada arızalı/dengesiz bir hücre olduğunda bunu ekranda GİZLEYEREK yangın veya arıza riskini artırır.
-- **YAPILMASI GEREKEN:** `VehicleData.h` içindeki `TEL_bmsCellVoltages[24]` dizisi sıfırda kalmaya devam etmelidir. Yukarıdaki yöntemlerden biriyle verinin gerçek CAN kaynağı çözülene kadar hücre voltajları ekranda `--` kalacaktır. Çözüldüğünde diziyi doldurun ve HMI gönderim bayrağını `true` yapın.
+Konu çözülmeden önceki durum (tarihsel): `HMI_CELL_VOLTAGE_SOURCE_VERIFIED = false`
+olduğu için Nextion ekranda hücre voltajı barları boş ve değerleri `--` olarak
+görünüyordu.
+
+- **KESİNLİKLE YAPILMAMASI GEREKENLER (KURAL — HÂLÂ GEÇERLİ):** Pack voltajını (`TEL_bmsPackVoltageDeciV`) 24'e bölüp hücrelere suni ortalama değerler YAZMAYIN. Bu (G8/M4) hatasıdır ve bataryada arızalı/dengesiz bir hücre olduğunda bunu ekranda GİZLEYEREK yangın veya arıza riskini artırır. Bu yasak, kaynak çözülmüş olsa da geçerlidir: veri bayat/geçersizse hücreler `--` gösterilir, UYDURULMAZ.
+- **YAPILMASI GEREKEN (✅ TAMAMLANDI):** `VehicleData.h` içindeki `TEL_bmsCellVoltages[24]` dizisi, gerçek CAN kaynağı (0xE015–0xE020) çözüldüğünde doldurulacak ve HMI bayrağı `true` yapılacaktı — **ikisi de yapıldı**.

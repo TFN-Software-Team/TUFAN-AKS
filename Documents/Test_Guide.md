@@ -173,7 +173,7 @@ Native ortam, `src/` klasöründeki production dosyalarını **otomatik olarak d
 build_src_filter = -<*>    # src/ altındaki tüm dosyaları hariç tut
 ```
 
-Bu gereklidir çünkü `src/main.cpp` ve `src/VcuLogic.cpp` gibi dosyalar ESP-IDF API'lerine bağımlıdır (`esp_task_wdt.h`, `freertos/FreeRTOS.h` vb.) ve host derleyicide bu başlıklar bulunmaz.
+Bu gereklidir çünkü `src/main.cpp` gibi dosyalar ESP-IDF API'lerine bağımlıdır (`esp_task_wdt.h`, `freertos/FreeRTOS.h` vb.) ve host derleyicide bu başlıklar bulunmaz. (Not: `VcuLogic` **`lib/VcuLogic/`** altındadır, `src/` içinde değil; `[env:native]` onu `lib_ignore` ile dışlayıp test tarafında saf başlıklarını derler.)
 
 ### Wrapper Dosyası Yaklaşımı
 

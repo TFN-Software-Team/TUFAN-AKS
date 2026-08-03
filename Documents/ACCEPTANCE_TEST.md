@@ -23,7 +23,7 @@ D (xx) CanManager: LB-E001: temp1=25 C, temp2=24 C
 - **packa:** Deşarj anında negatif bir sayı (örn: `-1.10`)
 - **temp:** `25` (maksimum hücre sıcaklığı `int16_t` tam sayı olarak)
 - **bat (SoC):** `%98` (yüzdelik tam sayı)
-- **Hücre Voltaj Barları:** Boş / `--` (Kaynak ID doğrulanmadığı için `HMI_CELL_VOLTAGE_SOURCE_VERIFIED = false` kuralı işler).
+- **Hücre Voltaj Barları:** **24 hücrenin GERÇEK değerleri dolu.** (Kaynak ID'ler 0xE015–0xE020 olarak DOĞRULANDI; `HMI_CELL_VOLTAGE_SOURCE_VERIFIED = true`, `lib/HMIHelpers/HMIHelpers.h:97`. Bu satır 03.08.2026'da güncellendi — eskiden "boş / `--`" bekleniyordu, o beklenti ARTIK YANLIŞTIR.)
 
 ---
 
@@ -48,5 +48,18 @@ E (xx) VcuLogic: FAULT_DETECTED: BMS baglantisi koptu
 ## Adım 3: Hücre Voltajı Kısıtı (Spoofing Yasağı)
 
 **İşlem:** Hücre voltajı göstergelerini inceleyin.
-**Beklenen Durum:**
-Sistem hücre voltajını packV / 24 olarak hesaplayıp ekrana SÜREMEZ. Gerçek CAN ID'si bulunana kadar hücre göstergeleri kör kalmalıdır. Tüm hücreler `--` göstermelidir. Bu, hatalı/dengesiz hücrelerin gözden kaçıp yangın riskine yol açmasını engelleyen bir korumadır. 
+
+**Beklenen Durum (03.08.2026 itibarıyla):**
+Hücre voltajlarının gerçek CAN kaynağı **bulundu** (0xE015–0xE020), bu yüzden
+normal çalışmada 24 hücre **gerçek** değerlerini gösterir. Sınanan koruma
+şudur: sistem hücre voltajını **packV / 24 olarak HESAPLAYIP ekrana SÜREMEZ**.
+
+- BMS verisi taze iken: 24 hücre gerçek, birbirinden FARKLI değerler gösterir
+  (hepsi birbirinin aynısı / tam olarak packV/24 ise bu bir SPOOFING
+  belirtisidir ve kabul testi BAŞARISIZDIR).
+- BMS verisi bayat/kopuk iken (Adım 2): hücreler `--` gösterir, `0` veya
+  uydurma bir ortalama DEĞİL.
+
+Bu, hatalı/dengesiz hücrelerin gözden kaçıp yangın riskine yol açmasını
+engelleyen bir korumadır (G8/M4). Ayrıntı:
+[CELL_VOLTAGE_INVESTIGATION.md](CELL_VOLTAGE_INVESTIGATION.md).

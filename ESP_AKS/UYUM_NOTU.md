@@ -1,5 +1,30 @@
-> **DİKKAT: BU DOKÜMAN E32 DÖNEMİNE AİTTİR, E22 GEÇİŞİ SONRASI GÜNCELLİĞİNİ YİTİRMİŞTİR.**
-> Proje artık E22-400T30D-V2 (SX1268) modülünü kullanmaktadır. Güncel register tabanlı konfigürasyon detayları için `include/E22Regs.h` ve `Documents/README.md` dosyalarına başvurunuz. Güncel hava hızı/periyot değerleri için `Documents/LoRa_Link_Analysis.md`'ye bakınız.
+> # 🗄️ TARİHSEL KAYIT — GÜNCEL DEĞİL, AKSİYON GEREKTİRMEZ
+>
+> **BU DOKÜMAN E32 DÖNEMİNE AİTTİR ve E22 GEÇİŞİ SONRASI GEÇERLİLİĞİNİ
+> YİTİRMİŞTİR.** Aşağıdaki `SPED=0xC4`, `OPTION=0x47`, "E32 config dogrulandi"
+> gibi tüm değerler **ESKİ E32-433T30D modülüne** aittir ve bugünkü firmware
+> ile eşleşmez — buradaki hiçbir değeri koda veya bench prosedürüne
+> KOPYALAMAYIN.
+>
+> Güncel karşılıkları:
+>
+> | Konu | Güncel kaynak |
+> | --- | --- |
+> | E22 register adres/değer sözleşmesi | `ESP_AKS/include/E22Regs.h` (tek doğruluk kaynağı) |
+> | Hava hızı / TX periyodu / link zaman aşımı | [`Documents/LoRa_Link_Analysis.md`](../Documents/LoRa_Link_Analysis.md) |
+> | Protokol / alan sözleşmesi | [`Documents/UKS_LoRa_Protocol.md`](../Documents/UKS_LoRa_Protocol.md) |
+> | Bench'te register teyidi prosedürü | [`Documents/BENCH_E22_TEYIT.md`](../Documents/BENCH_E22_TEYIT.md) |
+> | CRYPT senkronu (G7) | [`Documents/E22_CRYPT_SENKRON.md`](../Documents/E22_CRYPT_SENKRON.md) |
+>
+> **Düzeltme (03.08.2026):** Bu banner eskiden güncel E22 detayları için
+> `Documents/README.md`'ye yönlendiriyordu; o dosya E22 ile ilgili DEĞİLDİR
+> (kök README'nin bayat bir kopyasıdır), bu yüzden yönlendirme yukarıdaki
+> tabloyla değiştirildi.
+>
+> Aşağıdaki "Saha Menzil Testi" prosedürünün *yöntemi* (kademeli mesafe +
+> paket kaybı eşikleri) hâlâ mantıklıdır, ancak içindeki SPED/OPTION
+> değerleri E32'ye aittir — menzil testi yapılacaksa eşikler korunup
+> register değerleri güncel E22 kaynaklarından alınmalıdır.
 
 # AKS–UKS LoRa Uyum Notları
 

@@ -2,6 +2,13 @@
 
 Bu doküman, ESP-AKS kodunun harici breadboard/ESP32'den, araçtaki **gerçek AKS anakartına** (dahili ESP32, dahili TWAI, TJA1050) taşınması sırasında donanım ve yazılımın doğrulanması için hazırlanmıştır.
 
+> **Bu dosya bring-up konusunda TEK DOĞRULUK KAYNAĞIDIR.** 03.08.2026'da
+> `ESP_AKS/Documents/BRING_UP_CHECKLIST.md` adlı ikinci ve çok daha kısa bir
+> kopya vardı; aynı isimde iki farklı içerik kafa karışıklığı yarattığı için
+> oradaki tek özgün bölüm ("HV Testleri") aşağıya **bölüm 6** olarak taşındı
+> ve o dosya kaldırıldı. Bring-up ile ilgili yeni madde EKLERKEN bu dosyayı
+> kullanın, ikinci bir kopya AÇMAYIN.
+
 ## 1. Donanım Pin Bağlantıları (SystemConfig.h Referansı)
 
 | Birim | ESP32 Pini (GPIO) | Kart/Şema Etiketi | Açıklama |
@@ -224,3 +231,29 @@ Firmware boot'ta hâlâ teyitsiz olan CONFIG değerlerini loglar. **Yarışa
 - [ ] `W (xx) APP_MAIN: Ignored/Unknown HMI command received: <n>` satırı
       beklenmedik bir `n` ile düşüyorsa ekran projesindeki buton komut
       numarası yanlıştır (`HMI_CMD_*` ile karşılaştırın).
+
+## 6. HV Testleri (gömülü röle smoke testi)
+
+> Bu bölüm 03.08.2026'da `ESP_AKS/Documents/BRING_UP_CHECKLIST.md`'den
+> buraya taşındı (bkz. dosya başındaki not).
+
+⚠️ **`test_embedded_smoke` KONTAKTÖRLERİ KAPATIR.** Araç montajlıyken
+çalıştırmayın — tekerlekler yerden kesik / HV ayrık olmalıdır.
+
+- [ ] `TUFAN_ALLOW_HV_TEST` bayrağı olmadan gömülü röle testleri
+      **derlenmez**: `test/test_embedded_smoke/test_relay_smoke.cpp:1-2`
+      içindeki `#ifndef TUFAN_ALLOW_HV_TEST` / `#error` bunu derleme
+      zamanında bloklar.
+- [ ] `test_embedded_smoke`, `platformio.ini` `[env:esp32dev]` içindeki
+      `test_ignore` listesinde olduğu için normal `pio test -e esp32dev`
+      koşumunda **atlanır** — yani araç montajlıyken kazayla çalışmaz.
+- [ ] HV testini **bilinçli olarak** çalıştırmak için bayrağı tanımlayın:
+      `pio test -e esp32dev -- -D TUFAN_ALLOW_HV_TEST=1`
+      ⚠️ **Bench'te teyit edilecek:** `test_ignore` aynı ortamda
+      `test_embedded_smoke`'u dışladığı için bu komutun tek başına yeterli
+      olup olmadığı (ek bir `test_filter`/`--ignore` override'ı gerekip
+      gerekmediği) DOĞRULANMADI. İlk çalıştırmada paketin gerçekten
+      koştuğunu SUMMARY çıktısından teyit edin.
+- [ ] Diag firmware yüklendiyse (`pio run -e esp32dev_diag --target upload`)
+      normal firmware geri yüklendi mi?
+      `pio run -e esp32dev --target upload`

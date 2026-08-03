@@ -1,4 +1,10 @@
-> ⚠️ **BU DİZİN (repo kökü) ASIL ARAÇ FİRMWARE'İNİ İÇERMEZ.** Bu, bataryayı ilk keşif/test amaçlı kullanılan bir CAN sniffer aracıdır. Asıl AKS firmware'i için `ESP_AKS/` dizinine bakınız (`ESP_AKS/README.md`).
+> ℹ️ **Yerleşim:** Repo kökünde kaynak kod YOKTUR — kök yalnızca bu README,
+> [CLAUDE.md](CLAUDE.md) (çalışma kuralları), [TEST_BASELINE.md](TEST_BASELINE.md)
+> ve [Documents/](Documents/) (dokümantasyon) içerir. **Asıl AKS firmware'i
+> [ESP_AKS/](ESP_AKS/) altındadır** (`src/`, `lib/`, `include/`, `test/`,
+> `tools/`) ve derleme/test komutları `ESP_AKS/` dizininden çalıştırılır.
+> **Bu dosya reponun ANA README'sidir** — `ESP_AKS/README.md` diye bir dosya
+> yoktur, aramayın.
 
 # TUFAN-AKS
 
@@ -66,8 +72,8 @@ pio device monitor
 ## Testler
 
 ```bash
-pio test -e native          # varsayılan derleme (RELAY_ROLES_ASSIGNED=0)
-pio test -e native_roles    # rol mantığı varyantı (bayrak=1)
+pio test -e native          # native test ortamı — bayrağı 0'a ZORLAR
+pio test -e native_roles    # rol mantığı varyantı (bayrak=1, firmware ile aynı)
 pytest tools/e2e/ -v        # AKS↔UKS sözleşme testleri
 ```
 
@@ -78,7 +84,7 @@ Sayı düştüyse bir paket sessizce çalışmıyor olabilir — o dosyaya bakı
 
 | Bayrak | Varsayılan | Anlamı |
 | --- | --- | --- |
-| `RELAY_ROLES_ASSIGNED` | **0** | S1/S2 ayrımı, flaşör, fan, far mantığı. **0 çünkü Faz 2 (klemens↔yük) kablolaması bitmedi** — aşağıya bkz. |
+| `RELAY_ROLES_ASSIGNED` | **1** | S1/S2 ayrımı, flaşör, fan, far mantığı. Firmware varsayılanı `1` — `SystemConfig.h:379` (`#ifndef`/`#define 1`) **ve** `platformio.ini` `[env:esp32dev]` (`-D RELAY_ROLES_ASSIGNED=1`). ⚠️ Yalnız native test ortamı `[env:native]` bunu açıkça `0` yapar (eski tek-bank regresyonlarını korumak için); `[env:native_roles]` yine `1`'dir. |
 | `MOTOR_DRIVER_PRESENT` | **0** | Motor sürücüsü henüz yok; tork komutu ÜRETİLMEZ **ve** motor CAN'i (`0x200`) karar mantığına bağlı DEĞİL — frame'i bugün hall-effect hız sensörü üretiyor, akışın kesilmesi FAULT/kontaktör açma sebebi değil (bkz. [MOTOR_ENTEGRASYON_NOTU.md](Documents/MOTOR_ENTEGRASYON_NOTU.md) §6) |
 | `SYSSTATE_DERIVE_FROM_CURRENT` | **1** | BMS durum alanı, doğrulanmış akımdan çalışma modu taşır (Y33) |
 
@@ -131,7 +137,7 @@ Röle katmanı artık şartname Bölüm 3'e (6.e.ii/6.e.iii sıcaklık uyarı fl
 Doğrulama iki aşamalıdır: **Faz 1 (yazılım kanalı ↔ kart klemensi) DOĞRULANDI** — 2026-07-22, çıplak kartta (klemensler boş, HV ayrık) 10 kanal sırayla sürülüp durum LED'iyle eşlendi, 10/10 şemayla birebir uyuştu (ch0→OUT0/D8 … ch9→OUT9/D23; ⚠️ röle ref. K1/K3… klemens sırasıyla karışık — kablolamada OUT etiketine bakılır). **Faz 2 (klemens ↔ fiziksel yük kablolaması) HENÜZ DEĞİL** — donanım ekibi harness'i çekince tamamlanacak. Rol mantığı `RELAY_ROLES_ASSIGNED` derleme bayrağının arkasındadır; bayrak `SystemConfig.h` içinde **şu anda `1`** ("fiziksel röle yük eşlemesi aktifleştirildi") — `0` yapılırsa eski tek-bank davranışına dönülür ve `#warning` basılır. ⚠️ Faz 2 harness'i çekilmeden HV ile sahada çalıştırmadan önce yük kablolaması `RELAY_CHANNEL_TABLE.md` Faz 2 tablosuyla teyit edilmelidir. LED/test-noktası tablosu ve Faz 2 yük atamaları: [RELAY_CHANNEL_TABLE.md](Documents/RELAY_CHANNEL_TABLE.md).
 
 - **Bayrak=0 (eski davranış):** 10 kanalın tamamı tek pozitif kontaktör bankıdır (`RELAY_CONTACTOR_BANK_MASK=0x3FF`); `allOn()`/`allOff()` davranışı önceki sürümle bayt-bayt aynıdır. Flaşör / fan / far ve S1/S2 mantığı derlenmez.
-- **Bayrak=1 (kodda şu anki varsayılan):** `RELAY_CONTACTOR_BANK_MASK=0x35B` (flaşör 5 + fan 7 + far 2 hariç) olur; `allOff()` güvenlik açması S1+S2+HV−+yedekleri açar ama flaşörü/fanı/farı söndürmez. Flaşör, doğrulanmış BMS sıcaklığından 55 °C'de yanar, 53 °C altında söner (`FLASHER_HYSTERESIS_C=2`). Soğutma fanı (şartname B3 7.a-b) aynı desenle 40 °C'de açılır, 35 °C'ye inince kapanır (`FAN_ON_TEMP_C`/`FAN_OFF_TEMP_C`, CONFIG); FAULT/E-STOP dahil her durumda çalışır (sıcak batarya soğutması kesilmez), bayat BMS verisinde dokunulmaz. Far (şartname B2 9.19.c) artık **fiziksel bir düğmeyle** (`HEADLIGHT_SWITCH_PIN`=GPIO27, doğrudan ESP32 GPIO + INPUT_PULLUP, SPI'dan bağımsız) kontrol edilir; ekran farı KONTROL ETMEZ, yalnız durumunu GÖSTERİR (`far.pic`, Nextion Picture bileşeni "far"). Düğme tipi `HEADLIGHT_SWITCH_LATCHING` (varsayılan 1 = kalıcı/anahtarlı, otomotiv normu — ESP reset'inde far anahtar konumundan geri gelir), debounce `HEADLIGHT_DEBOUNCE_MS`=40 ms; saf karar mantığı `lib/VcuLogic/HeadlightSwitch.h` (native test edilir). BMS'ten bağımsız, FAULT/E-STOP/READY'de korunur (bank dışı kanal). ⚠️ **AÇIK ÇELİŞKİ — ekran komutu 5 (far toggle):** Bu satır eskiden "komut 5 KALDIRILDI ve kalıcı olarak rezerve edildi" diyordu, ama **kod hâlâ komut 5'i işliyor** (`src/main.cpp` → `case 5` → `VcuEvent::HEADLIGHT_TOGGLE`, `VcuLogic.cpp` içinde `RELAY_ROLES_ASSIGNED` arkasında). Yani ekran farı hâlâ toggle edebiliyor. Üstelik fiziksel düğme mantığı her tick'te far durumunu anahtar konumuna eşitlediğinden (latching mod), ekrandan yapılan toggle bir sonraki tick'te **geri alınır** — iki sürücü aynı kanala yazıyor. Karar verilip tek yol bırakılmalı (bkz. `BENI_OKU.md`). S1/S2 mod anahtarlaması: **IDLE'da S1 koşulsuz kapalıdır** ("şarja hazır" duruşu — 2026-07-29 politika değişikliği: şarj tespiti artık yalnız akım tabanlı olduğundan S1'i o bayrağa bağlamak kilitlenme yaratırdı, akım akması için S1'in kapalı olması gerekir); şarj akımı tespit edilirken (`TEL_chargerActive`) ayrıca READY reddedilir (8.2.a.iii); READY/DRIVE'da S1 açıkça açılır + sürüş bankı (`RELAY_DRIVE_BANK_MASK=0x012` — YALNIZ S2 + HV−) kapalı (8.2.a.vii); güvenlik probleminde hepsi açık (8.2.a.vi). Soğutma fanı kanalı (OUT7) **NC klemense** bağlıdır; `RELAY_INVERT_MASK` o kanalın mantıksal→pin çevrimini tersler (bkz. [RELAY_CHANNEL_TABLE.md](Documents/RELAY_CHANNEL_TABLE.md) "Per-channel polarity"). İki maske bilinçli olarak ASİMETRİKTİR: kablosuz yedek kanallar (ch3/6/8/9) kontaktör bankının içinde ama sürüş bankının dışındadır — READY onları gereksiz yere enerjilendirmez, `allOff` güvenlik açması yine de açar. Ayrıntı: [RELAY_CHANNEL_TABLE.md](Documents/RELAY_CHANNEL_TABLE.md).
+- **Bayrak=1 (kodda şu anki varsayılan):** `RELAY_CONTACTOR_BANK_MASK=0x35B` (flaşör 5 + fan 7 + far 2 hariç) olur; `allOff()` güvenlik açması S1+S2+HV−+yedekleri açar ama flaşörü/fanı/farı söndürmez. Flaşör, doğrulanmış BMS sıcaklığından 55 °C'de yanar, 53 °C altında söner (`FLASHER_HYSTERESIS_C=2`). Soğutma fanı (şartname B3 7.a-b) aynı desenle 40 °C'de açılır, 35 °C'ye inince kapanır (`FAN_ON_TEMP_C`/`FAN_OFF_TEMP_C`, CONFIG); FAULT/E-STOP dahil her durumda çalışır (sıcak batarya soğutması kesilmez), bayat BMS verisinde dokunulmaz. Far (şartname B2 9.19.c) artık **fiziksel bir düğmeyle** (`HEADLIGHT_SWITCH_PIN`=GPIO27, doğrudan ESP32 GPIO + INPUT_PULLUP, SPI'dan bağımsız) kontrol edilir; ekran farı KONTROL ETMEZ, yalnız durumunu GÖSTERİR (`far.pic`, Nextion Picture bileşeni "far"). Düğme tipi `HEADLIGHT_SWITCH_LATCHING` (varsayılan 1 = kalıcı/anahtarlı, otomotiv normu — ESP reset'inde far anahtar konumundan geri gelir), debounce `HEADLIGHT_DEBOUNCE_MS`=40 ms; saf karar mantığı `lib/VcuLogic/HeadlightSwitch.h` (native test edilir). BMS'ten bağımsız, FAULT/E-STOP/READY'de korunur (bank dışı kanal). ✅ **Ekran komutu 5 (far toggle) — ÇÖZÜLDÜ (28.07.2026), açık çelişki KALMADI:** `src/main.cpp` içindeki `case 5` dalı ve `VcuLogic.cpp` içindeki `HEADLIGHT_TOGGLE` işleme dalı **SİLİNDİ** (03.08.2026'da kodda tekrar doğrulandı: `grep HEADLIGHT_TOGGLE` yalnız "KALDIRILDI" yorumlarını ve rezerve enum girdisini buluyor). Eski ekran projelerinden gelebilecek `5A 05 FA` çerçevesi `default` dalına düşer, yalnız `Ignored/Unknown HMI command received: 5` WARN'ı basılır ve **röleye dokunulmaz**. Farın tek sürücüsü fiziksel düğmedir; `VcuEvent::HEADLIGHT_TOGGLE` enum girdisi rezerve olarak durur, başka komuta atanmamalıdır. Bench doğrulaması: [BRING_UP_CHECKLIST.md](Documents/BRING_UP_CHECKLIST.md) §5.7. S1/S2 mod anahtarlaması: **IDLE'da S1 koşulsuz kapalıdır** ("şarja hazır" duruşu — 2026-07-29 politika değişikliği: şarj tespiti artık yalnız akım tabanlı olduğundan S1'i o bayrağa bağlamak kilitlenme yaratırdı, akım akması için S1'in kapalı olması gerekir); şarj akımı tespit edilirken (`TEL_chargerActive`) ayrıca READY reddedilir (8.2.a.iii); READY/DRIVE'da S1 açıkça açılır + sürüş bankı (`RELAY_DRIVE_BANK_MASK=0x012` — YALNIZ S2 + HV−) kapalı (8.2.a.vii); güvenlik probleminde hepsi açık (8.2.a.vi). Soğutma fanı kanalı (OUT7) **NC klemense** bağlıdır; `RELAY_INVERT_MASK` o kanalın mantıksal→pin çevrimini tersler (bkz. [RELAY_CHANNEL_TABLE.md](Documents/RELAY_CHANNEL_TABLE.md) "Per-channel polarity"). İki maske bilinçli olarak ASİMETRİKTİR: kablosuz yedek kanallar (ch3/6/8/9) kontaktör bankının içinde ama sürüş bankının dışındadır — READY onları gereksiz yere enerjilendirmez, `allOff` güvenlik açması yine de açar. Ayrıntı: [RELAY_CHANNEL_TABLE.md](Documents/RELAY_CHANNEL_TABLE.md).
 
 Sıcaklık eşikleri 55/70 °C (uyarı/kapanma, 15 °C sabit aralık — şartname 6.e.iii) `SystemConfig.h` ve `VcuLogic.h` içindeki `static_assert`'lerle derleme zamanında kilitlidir. Bayrak=1 varyantının testleri `pio test -e native_roles` ile çalışır (`test_roles_*` suite'leri).
 
@@ -139,18 +145,34 @@ Sıcaklık eşikleri 55/70 °C (uyarı/kapanma, 15 °C sabit aralık — şartna
 
 ## Contributors
 
-Based on current git history, the repository contributors are:
+`git shortlog -sne --all` çıktısından türetilmiştir (03.08.2026; aynı kişiye
+ait birden fazla isim/e-posta birleştirildi, commit sayısına göre sıralı).
+Otomatik commit'ler (`Claude <noreply@anthropic.com>`) hariç tutulmuştur.
 
-- Sedat Ali Zevit - Seqat
-- Şebnem Orel - sebnemorel
-- incubation-0
-- Mesalt-f4
-- Order
-- Nisa Köken - NisaKoken
+| Katkıcı | Git isim(ler)i | Commit |
+| --- | --- | ---: |
+| Ravzanur Taşdemir | `Ravzanur Taşdemir` | 75 |
+| Nisa Köken | `nisa`, `NisaKoken` | 43 |
+| Okan Doğan | `okanxdogan`, `Okan Doğan` | 40 |
+| Sedat Ali Zevit | `Seqat`, `Sedat Ali Zevit` | 27 |
+| Şebnem Orel | `Şebnem OREL`, `sebnemorel` | 21 |
+| termesos | `termesos` | 20 |
+| incubation-0 / Order | `incubation-0`, `Order` | 18 |
+| Bilgehan Çelik | `bilgehan0345`, `Bilgehan` | 8 |
+| Mesalt-f4 | `Mesalt-f4` | 2 |
+
+> Önceki liste 03.08.2026'da düzeltildi: **en çok katkı yapan kişi (Ravzanur
+> Taşdemir, 75 commit) listede hiç yoktu**; Okan Doğan, termesos ve Bilgehan
+> Çelik de eksikti.
 
 ## Development Rules
 
-Contributor workflow and naming rules are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
+Katkı akışı, dal adlandırma, değişken önek şeması ve kod yerleşim (M5)
+konvansiyonu tek dosyada: [Documents/CONTRIBUTING.md](Documents/CONTRIBUTING.md).
+(Bu bağlantı eskiden kökteki var olmayan bir `CONTRIBUTING.md`'yi gösteriyordu.)
+
+Protokol sözleşmesi, çapraz-repo değişiklik ve test zorunluluğu kuralları:
+[CLAUDE.md](CLAUDE.md).
 
 ## Batarya Entegrasyonu Durumu
 
@@ -163,6 +185,6 @@ ESP-AKS ve Lithium Balance c-BMS entegrasyonu başarıyla devreye alınmıştır
 - **0x1806E5F4**: BMS'in şarj cihazına duyurduğu gerilim/akım setpoint'i (sadece okunuyor). ⚠️ **Bu frame bir "şarj var" göstergesi DEĞİLDİR:** BMS ayakta olduğu sürece, araç şarjda olsun olmasın ~100 ms'de bir kesintisiz yayınlanır (iki canlı CAN kaydıyla kanıtlandı, 2026-07-29). Eskiden tazeliği `TEL_chargerActive`e OR'lanıyordu ve sistem 7/24 yanlış pozitif şarj durumunda kalıp START/DRIVE'ı reddediyordu; bu bağ KOPARILDI. Şarj tespitinin tek kaynağı artık pack akımıdır (`0xE000` byte[0:1] > +2.0 A, araç duruyorken, debounce'lu — `lib/CanManager/ChargeDetect.h`). Ayrıntı: [CAN_Message_Table.md](Documents/CAN_Message_Table.md).
 
 **Açık İşler ve Bilinmeyenler (BİLİNMİYOR):**
-- **0xE002-0xE006, 0xE032, 0xE033**: BMS statik durumu / limit parametreleri / alarm bitfield adayı olduğu düşünülüyor; alan anlamları çözülemedi. Karar mantığını ETKİLEMEZ. Bkz. `BENI_OKU.md` 5.1.
+- **0xE002-0xE006, 0xE032, 0xE033**: BMS statik durumu / limit parametreleri / alarm bitfield adayı olduğu düşünülüyor; alan anlamları çözülemedi. Karar mantığını ETKİLEMEZ. Bkz. [CAN_Message_Table.md](Documents/CAN_Message_Table.md) (çözülemeyen ID'lerin tek doğruluk kaynağı).
 - **BMS sağlık durumu (OK/FAULT) için CAN ID YOK** (Y33, 24.07.2026) ve aranmayacak. Telemetrideki `sysState` alanı bunun yerine **doğrulanmış akımdan türetilen çalışma modunu** taşır (1=Deşarj, 2=Boşta, 3=Şarj); FAULT üretilmez. "BMS verisi yok" bilgisi ayrı bir alandan (`bmsValid`) gider. Bkz. `lib/Telemetry/SysStateDerive.h`.
 - **Bitrate:** 500 kbps kullanılıyor ve sahada çalışıyor. cBMS24 föyü 125–1000 kbit/s aralığını desteklediğinden bir çelişki YOK. `CanManager::begin()` içindeki **otomatik hız bulucu (auto-baud)** yine de kalıcı bir güvence olarak duruyor (bkz. [BRING_UP_CHECKLIST.md](Documents/BRING_UP_CHECKLIST.md)).
