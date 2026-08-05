@@ -389,12 +389,12 @@ void CanManager::processRxMessages() {
                 case CAN_ID_LB_BMS_E006:
                     handleLbBmsStub(msg, msg.identifier);
                     break;
-                case CAN_ID_LB_BMS_E015: handleLbBmsE015(msg); break;
-                case CAN_ID_LB_BMS_E016: handleLbBmsE016(msg); break;
-                case CAN_ID_LB_BMS_E017: handleLbBmsE017(msg); break;
-                case CAN_ID_LB_BMS_E018: handleLbBmsE018(msg); break;
-                case CAN_ID_LB_BMS_E019: handleLbBmsE019(msg); break;
-                case CAN_ID_LB_BMS_E020: handleLbBmsE020(msg); break;
+                case CAN_ID_LB_BMS_E015: handleCellVoltageBlock(msg, 0); break;
+                case CAN_ID_LB_BMS_E016: handleCellVoltageBlock(msg, 1); break;
+                case CAN_ID_LB_BMS_E017: handleCellVoltageBlock(msg, 2); break;
+                case CAN_ID_LB_BMS_E018: handleCellVoltageBlock(msg, 3); break;
+                case CAN_ID_LB_BMS_E019: handleCellVoltageBlock(msg, 4); break;
+                case CAN_ID_LB_BMS_E020: handleCellVoltageBlock(msg, 5); break;
                 case CAN_ID_LB_BMS_E032:  // gözlemlenen oturumda hep sıfır — reserved/heartbeat adayı
                 case CAN_ID_LB_BMS_E033:  // gözlemlenen oturumda hep sıfır — reserved/heartbeat adayı
                     handleLbBmsStub(msg, msg.identifier);
@@ -649,94 +649,48 @@ void CanManager::handleLbBmsE001(const twai_message_t& msg) {
              parsed.TEL_bmsTempLowestC);
 }
 
-void CanManager::handleLbBmsE015(const twai_message_t& msg) {
+// DÜŞÜK-3 FIX: Eski 6 ayrı handler (handleLbBmsE015..E020) tek bir parametreli
+// yardımcıya indirildi. Altısı birbirinin ~15 satırlık kopyasıydı (yalnız
+// indeks aralığı ve maske biti değişiyordu) ve nullptr guard'ı EKSIKTI —
+// diğer tüm handler'lar bu kontrolü yapıyordu. Artık guard ve mantık tek
+// yerde durur; gelecekteki değişiklikler 6 yerde tekrarlanmaz.
+void CanManager::handleCellVoltageBlock(const twai_message_t& msg,
+                                         uint8_t blockIndex) {
+    if (s_mutex == nullptr) {
+        ESP_LOGW(TAG, "Cell voltage E0%u received before mutex initialization",
+                 (unsigned)(0x15 + blockIndex));
+        return;
+    }
+
     TelemetryData parsed{};
-    if (!CanParse::parseLbBmsE015(msg, parsed)) return;
+    // Her blok ayrı bir CanParse fonksiyonu kullanır (E015..E020).
+    // blockIndex'ten doğru parser'a dispatch:
+    bool ok = false;
+    switch (blockIndex) {
+        case 0: ok = CanParse::parseLbBmsE015(msg, parsed); break;
+        case 1: ok = CanParse::parseLbBmsE016(msg, parsed); break;
+        case 2: ok = CanParse::parseLbBmsE017(msg, parsed); break;
+        case 3: ok = CanParse::parseLbBmsE018(msg, parsed); break;
+        case 4: ok = CanParse::parseLbBmsE019(msg, parsed); break;
+        case 5: ok = CanParse::parseLbBmsE020(msg, parsed); break;
+        default: return;
+    }
+    if (!ok) return;
+
+    const uint8_t startCell = blockIndex * 4;
+
     // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         ESP_LOGE(TAG, "s_mutex timeout!");
         return;
     }
-    for (int i=0;i<4;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
+    for (int i = startCell; i < startCell + 4; i++)
+        s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
     CAN_lastCellVoltageTick = xTaskGetTickCount();
     CAN_hasSeen_CellVoltage = true;
-    CAN_cellVoltageSeenMask |= (1<<0);
-    if (CAN_cellVoltageSeenMask == 0x3F) s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
-    xSemaphoreGive(s_mutex);
-}
-void CanManager::handleLbBmsE016(const twai_message_t& msg) {
-    TelemetryData parsed{};
-    if (!CanParse::parseLbBmsE016(msg, parsed)) return;
-    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        ESP_LOGE(TAG, "s_mutex timeout!");
-        return;
-    }
-    for (int i=4;i<8;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
-    CAN_lastCellVoltageTick = xTaskGetTickCount();
-    CAN_hasSeen_CellVoltage = true;
-    CAN_cellVoltageSeenMask |= (1<<1);
-    if (CAN_cellVoltageSeenMask == 0x3F) s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
-    xSemaphoreGive(s_mutex);
-}
-void CanManager::handleLbBmsE017(const twai_message_t& msg) {
-    TelemetryData parsed{};
-    if (!CanParse::parseLbBmsE017(msg, parsed)) return;
-    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        ESP_LOGE(TAG, "s_mutex timeout!");
-        return;
-    }
-    for (int i=8;i<12;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
-    CAN_lastCellVoltageTick = xTaskGetTickCount();
-    CAN_hasSeen_CellVoltage = true;
-    CAN_cellVoltageSeenMask |= (1<<2);
-    if (CAN_cellVoltageSeenMask == 0x3F) s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
-    xSemaphoreGive(s_mutex);
-}
-void CanManager::handleLbBmsE018(const twai_message_t& msg) {
-    TelemetryData parsed{};
-    if (!CanParse::parseLbBmsE018(msg, parsed)) return;
-    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        ESP_LOGE(TAG, "s_mutex timeout!");
-        return;
-    }
-    for (int i=12;i<16;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
-    CAN_lastCellVoltageTick = xTaskGetTickCount();
-    CAN_hasSeen_CellVoltage = true;
-    CAN_cellVoltageSeenMask |= (1<<3);
-    if (CAN_cellVoltageSeenMask == 0x3F) s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
-    xSemaphoreGive(s_mutex);
-}
-void CanManager::handleLbBmsE019(const twai_message_t& msg) {
-    TelemetryData parsed{};
-    if (!CanParse::parseLbBmsE019(msg, parsed)) return;
-    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        ESP_LOGE(TAG, "s_mutex timeout!");
-        return;
-    }
-    for (int i=16;i<20;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
-    CAN_lastCellVoltageTick = xTaskGetTickCount();
-    CAN_hasSeen_CellVoltage = true;
-    CAN_cellVoltageSeenMask |= (1<<4);
-    if (CAN_cellVoltageSeenMask == 0x3F) s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
-    xSemaphoreGive(s_mutex);
-}
-void CanManager::handleLbBmsE020(const twai_message_t& msg) {
-    TelemetryData parsed{};
-    if (!CanParse::parseLbBmsE020(msg, parsed)) return;
-    // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
-    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
-        ESP_LOGE(TAG, "s_mutex timeout!");
-        return;
-    }
-    for (int i=20;i<24;i++) s_telemetryData.TEL_bmsCellVoltages[i] = parsed.TEL_bmsCellVoltages[i];
-    CAN_lastCellVoltageTick = xTaskGetTickCount();
-    CAN_hasSeen_CellVoltage = true;
-    CAN_cellVoltageSeenMask |= (1<<5);
-    if (CAN_cellVoltageSeenMask == 0x3F) s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
+    CAN_cellVoltageSeenMask |= (1 << blockIndex);
+    if (CAN_cellVoltageSeenMask == 0x3F)
+        s_telemetryData.TEL_cellVoltageDataValid = CAN_cellVoltageComplete = true;
     xSemaphoreGive(s_mutex);
 }
 

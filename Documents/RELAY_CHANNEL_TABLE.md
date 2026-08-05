@@ -70,7 +70,7 @@ When the hardware team wires one of `RELAY_CH_SPARE_3` / `_6` / `_8` / `_9`:
 | `RELAY_CH_S2_DRIVE` (`RELAY_CH_POS_4`) | 4 | **S2 — drive-line contactor** | 8.2.a.vii: closed in drive; 8.2.a.iii: open while charging; 8.2.a.vi: open on safety problem | TBD during harness validation |
 | `RELAY_CH_FLASHER` (`RELAY_CH_POS_5`) | 5 | **Temperature warning flasher** (audible+visual). Driven by `VcuLogic` from the verified BMS max temperature: ON at ≥55 °C, OFF below 53 °C (`FLASHER_HYSTERESIS_C=2`). **Outside** the contactor bank mask — `allOff()` never extinguishes it, so it stays on through FAULT/E-STOP while the temperature holds. | 6.e.ii / 6.e.iii | TBD during harness validation |
 | `RELAY_CH_SPARE_6` (`RELAY_CH_POS_6`) | 6 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
-| `RELAY_CH_FAN` (`RELAY_CH_POS_7`) | 7 | **Cooling fan** — driven by `VcuLogic` from the verified BMS max temperature: ON at ≥40 °C (`FAN_ON_TEMP_C`), OFF at ≤35 °C (`FAN_OFF_TEMP_C`). **Outside** the bank mask — stays on through FAULT/E-STOP so a hot pack keeps cooling. Stale/timed-out BMS data leaves it untouched. ⚠️ **NC-wired** — see the polarity note below. | B3 7.a-b | **NC (normally-closed) terminal, confirmed 2026-07-29** |
+| `RELAY_CH_FAN` (`RELAY_CH_POS_7`) | 7 | **Cooling fan** — driven by `VcuLogic` from the verified BMS max temperature: ON at ≥40 °C (`FAN_ON_TEMP_C`), OFF at ≤35 °C (`FAN_OFF_TEMP_C`). **Outside** the bank mask — stays on through FAULT/E-STOP so a hot pack keeps cooling. Stale/timed-out BMS data leaves it untouched. Fan is wired to the **NO (normally-open) terminal** (updated in commit 865f8f6; `RELAY_CH_FAN_NC_WIRED=0`); no polarity inversion is needed. | B3 7.a-b | **NO (normally-open) terminal, updated 2026-07-29** |
 | `RELAY_CH_SPARE_8` (`RELAY_CH_POS_8`) | 8 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
 | `RELAY_CH_SPARE_9` (`RELAY_CH_POS_9`) | 9 | empty / spare — **not wired**. Contactor bank only, same as ch3. | — | Boş/yedek |
 
@@ -101,7 +101,7 @@ inverted for that one channel.
 Upper layers (`VcuLogic`, HMI, tests, `getRelayState()`) always speak in terms of
 the **load**, never the coil; the wiring difference is closed in this one mask.
 
-- Enabled by `RELAY_CH_FAN_NC_WIRED` (default `1`) → `RELAY_INVERT_MASK = 1 << RELAY_CH_FAN`.
+- Enabled by `RELAY_CH_FAN_NC_WIRED` (default `0` — fan is wired to the NO terminal, commit 865f8f6) → `RELAY_INVERT_MASK = 0u` (no channel is inverted).
 - A `static_assert` **forbids** putting any contactor-bank channel in the mask —
   inverting a contactor would make `allOff()` *close* it (the opposite of 8.2.a.vi).
 - `begin()` no longer writes a hard-coded `0xFF`; it writes `hwFromLogical(0)` so

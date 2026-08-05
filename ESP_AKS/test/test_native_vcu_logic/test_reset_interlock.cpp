@@ -131,7 +131,7 @@ void test_reset_interlock_rpm_high_blocks(void) {
 
 void test_reset_interlock_rpm_noise_passes(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_motorRpm = -30; // |30| < 50
+    d.TEL_motorRpm = 30; // 30 < 50 (gürültü bandı eşiği altında)
     d.TEL_motorDataValid = true;
     d.TEL_motorTimeoutActive = false;
     TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));

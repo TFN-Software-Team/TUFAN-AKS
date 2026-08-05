@@ -69,12 +69,9 @@ class CanManager {
     // Lithium Balance c-BMS handler'ları
     void handleLbBmsE000(const twai_message_t& msg);        // packV, akım, SoC — DOĞRULANDI
     void handleLbBmsE001(const twai_message_t& msg);        // Sıcaklıklar — DOĞRULANDI
-    void handleLbBmsE015(const twai_message_t& msg);
-    void handleLbBmsE016(const twai_message_t& msg);
-    void handleLbBmsE017(const twai_message_t& msg);
-    void handleLbBmsE018(const twai_message_t& msg);
-    void handleLbBmsE019(const twai_message_t& msg);
-    void handleLbBmsE020(const twai_message_t& msg);
+    // DÜŞÜK-3 FIX: Eski 6 ayrı handler (E015..E020) tek parametreli yardımcıya
+    // indirildi. blockIndex: 0=E015 … 5=E020 (her blok 4 hücre).
+    void handleCellVoltageBlock(const twai_message_t& msg, uint8_t blockIndex);
     void handleCharger1806E5F4(const twai_message_t& msg);  // setpoint'ler — DOĞRULANDI (AKS yalnızca dinler)
     void handleLbBmsStub(const twai_message_t& msg, uint32_t canId);  // diğer ID'ler — DOĞRULANMADI
 

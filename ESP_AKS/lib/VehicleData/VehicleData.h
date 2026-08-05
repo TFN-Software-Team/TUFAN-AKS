@@ -14,7 +14,13 @@
 // hız hesabı bağımlılığı YOKTUR. Hız/tur hesabı (VehicleParams'a ihtiyaç duyan
 // tek yer) LoRa tarafında Telemetry.h'de kalır. Alan adları DEĞİŞMEDİ.
 struct TelemetryData {
-    int16_t TEL_motorRpm;
+    // DÜŞÜK-2 FIX: int16_t'den uint16_t'ye çevrildi — bu alan HER ZAMAN
+    // mutlak büyüklük olarak saklanır (CanManager.cpp abs() uygular).
+    // Tüm tüketiciler (VcuLogic interlock, HMI, TelemetrySanitize,
+    // rpmToSpeedKmhX10) işaretsiz varsayar; eski int16_t tipiyle RPM
+    // 32767'yi aşarsa alan negatife dönüp reset interlock'u sessizce
+    // geçebilirdi. Wire formatı ETKİLENMEZ (sanitize zaten işler).
+    uint16_t TEL_motorRpm;
     uint16_t TEL_motorVoltageDeciV;
     uint8_t TEL_motorErrorFlags;
     bool TEL_motorDataValid;
