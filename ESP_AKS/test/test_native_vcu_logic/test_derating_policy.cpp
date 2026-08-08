@@ -84,23 +84,23 @@ void test_derating_charge_current_at_approach_boundary_is_approaching_tier(void)
     TEST_ASSERT_EQUAL_UINT8(20, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
-// --- Desarj akimi (negatif): WARN=900, CRIT=1500, span=600, approachAt =
-// 900+(600*90)/100 = 900+540 = 1440 (magnitude) -----------------------------
+// --- Desarj akimi (negatif): WARN=16000, CRIT=20000, span=4000, approachAt =
+// 16000+(4000*90)/100 = 16000+3600 = 19600 (magnitude) -----------------------------
 void test_derating_discharge_current_below_warn_is_nominal(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsCurrentCentiA = -890;
+    d.TEL_bmsCurrentCentiA = -15990;
     TEST_ASSERT_EQUAL_UINT8(100, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
 void test_derating_discharge_current_at_warn_is_warning_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsCurrentCentiA = -900;
+    d.TEL_bmsCurrentCentiA = -16000;
     TEST_ASSERT_EQUAL_UINT8(50, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
 void test_derating_discharge_current_at_approach_boundary_is_approaching_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsCurrentCentiA = -1440;
+    d.TEL_bmsCurrentCentiA = -19600;
     TEST_ASSERT_EQUAL_UINT8(20, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 

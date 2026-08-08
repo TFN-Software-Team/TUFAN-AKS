@@ -32,22 +32,22 @@ void test_isCurrentCritical_zero_is_safe(void) {
 }
 
 // ---------------------------------------------------------------------------
-// isCurrentCritical — deşarj tarafı (eşik: -1500 centi-A = -15.0 A)
+// isCurrentCritical — deşarj tarafı (eşik: -20000 centi-A = -200.0 A)
 // ---------------------------------------------------------------------------
 void test_isCurrentCritical_discharge_below_threshold(void) {
-    TEST_ASSERT_FALSE(isCurrentCritical(-1490));  // 14.9 A — altında
+    TEST_ASSERT_FALSE(isCurrentCritical(-19990));  // 199.9 A — altında
 }
 
 void test_isCurrentCritical_discharge_at_threshold(void) {
-    TEST_ASSERT_TRUE(isCurrentCritical(-1500));   // 15.0 A — eşikte
+    TEST_ASSERT_TRUE(isCurrentCritical(-20000));   // 200.0 A — eşikte
 }
 
 void test_isCurrentCritical_discharge_above_threshold(void) {
-    TEST_ASSERT_TRUE(isCurrentCritical(-2000));   // 20.0 A — üstünde
+    TEST_ASSERT_TRUE(isCurrentCritical(-22000));   // 220.0 A — üstünde
 }
 
 // ---------------------------------------------------------------------------
-// isCurrentWarning — şarj / deşarj (eşikler: 1100 / -900 centi-A = 11.0 A / -9.0 A)
+// isCurrentWarning — şarj / deşarj (eşikler: 1100 / -16000 centi-A = 11.0 A / -160.0 A)
 // ---------------------------------------------------------------------------
 void test_isCurrentWarning_charge_below_threshold(void) {
     TEST_ASSERT_FALSE(isCurrentWarning(1090)); // 10.9 A
@@ -58,11 +58,11 @@ void test_isCurrentWarning_charge_at_threshold(void) {
 }
 
 void test_isCurrentWarning_discharge_below_threshold(void) {
-    TEST_ASSERT_FALSE(isCurrentWarning(-890)); // 8.9 A
+    TEST_ASSERT_FALSE(isCurrentWarning(-15990)); // 159.9 A
 }
 
 void test_isCurrentWarning_discharge_at_threshold(void) {
-    TEST_ASSERT_TRUE(isCurrentWarning(-900));  // 9.0 A — eşikte
+    TEST_ASSERT_TRUE(isCurrentWarning(-16000));  // 160.0 A — eşikte
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ void test_charge_current_at_crit_is_critical(void) {
 
 void test_discharge_current_at_crit_is_critical(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsCurrentCentiA = -2000;  // 20 A deşarj — CRIT (15 A) üstünde
+    d.TEL_bmsCurrentCentiA = -22000;  // 220 A deşarj — CRIT (200 A) üstünde
     TEST_ASSERT_TRUE(hasWarningCondition(d));
     TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
 }

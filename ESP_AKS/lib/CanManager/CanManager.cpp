@@ -436,13 +436,14 @@ MotorStatus CanManager::getMotorStatus() const {
     if (s_mutex == nullptr)
         return s_motorStatus;
 
-    MotorStatus CAN_statusCopy = {};
     // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         ESP_LOGE(TAG, "s_mutex timeout!");
-        return CAN_statusCopy;
+        // DÜZELTME: sıfır yapı yerine son bilinen veriyi döndür — sıfır veri
+        // sahte fault tetikleyebilir (ör. RPM=0 → reset interlock geçer).
+        return s_motorStatus;
     }
-    CAN_statusCopy = s_motorStatus;
+    MotorStatus CAN_statusCopy = s_motorStatus;
     xSemaphoreGive(s_mutex);
     return CAN_statusCopy;
 }
@@ -451,13 +452,16 @@ TelemetryData CanManager::getTelemetryData() const {
     if (s_mutex == nullptr)
         return s_telemetryData;
 
-    TelemetryData CAN_telemetryCopy = {};
     // Bu mutex bugun tek task tarafindan kullaniliyor; gercek task-arasi veri yolu queue + std::atomic'tir. portMAX_DELAY, watchdog panigi kapaliyken kurtarilamaz kilitlenme kaynagidir. (AKS-21)
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(50)) != pdTRUE) {
         ESP_LOGE(TAG, "s_mutex timeout!");
-        return CAN_telemetryCopy;
+        // DÜZELTME: sıfır yapı yerine son bilinen veriyi döndür — sıfır yapı
+        // packV=0 → ekranda 0.0V + sahte UNDERVOLTAGE FAULT tetiklerdi.
+        // Bayat veri sıfırdan çok daha güvenlidir; TEL_bmsDataValid bayatlık
+        // kontrolünden zaten ayrıca geçiyor (updateBmsValidity).
+        return s_telemetryData;
     }
-    CAN_telemetryCopy = s_telemetryData;
+    TelemetryData CAN_telemetryCopy = s_telemetryData;
     // Şarj durumu → ekrandaki "ŞARJ OLUYOR" göstergesi + READY girişi kilidi.
     // Wire formatına serialize edilmez (bkz. VehicleData.h TEL_chargerActive).
     //

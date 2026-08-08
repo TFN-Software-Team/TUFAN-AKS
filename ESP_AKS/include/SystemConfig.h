@@ -871,8 +871,8 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 // yanlış FAULT, yüksek kalırsa gerçek aşırı akımda geç kalma anlamına gelir.
 #define BMS_WARN_MAX_CHARGE_CURRENT_CENTI_A       1100  // 11.0 A
 #define BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A   1300  // 13.0 A
-#define BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A    900   // 9.0 A
-#define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A 1500 // 15.0 A
+#define BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A    16000 // 160.0 A
+#define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A 20000 // 200.0 A
 // Yukarıdaki dört eşik saha kalibrasyonu + ekip onayından geçince 1 yap.
 // 0 iken boot'ta tek satırlık "teyitsiz CONFIG" özet WARN'ında listelenir.
 #define BMS_CURRENT_THRESHOLDS_CONFIRMED 0

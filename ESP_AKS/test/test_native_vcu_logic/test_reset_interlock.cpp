@@ -65,7 +65,7 @@ void test_reset_interlock_warning_temp_does_not_block(void) {
 // reset'i bloklamaz.
 void test_reset_interlock_critical_current_blocks(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsCurrentCentiA = -2000;  // 20 A deşarj — kritik, reset reddedilir
+    d.TEL_bmsCurrentCentiA = -22000;  // 220 A deşarj — kritik (200 A üstü), reset reddedilir
     TEST_ASSERT_FALSE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }
 
