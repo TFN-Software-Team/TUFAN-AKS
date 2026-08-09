@@ -21,6 +21,7 @@ DisplayHMI::DisplayHMI()
       m_lastRxTimeMs(0),
       m_aliveWarnLoggedOnce(false),
       m_lastAliveWarnTick(0),
+      m_lastSendmeTick(0),
       HMI_lastResyncTick(0),
       HMI_nextResyncField(0),
       HMI_lastPackvSendTick(0),
@@ -141,6 +142,13 @@ void DisplayHMI::HMI_handleNextionReset() {
 
 void DisplayHMI::updateScreen(const HMI_DisplayData& HMI_data) {
     if (!HMI_isInitialized) return;
+
+    uint32_t nowMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    if (nowMs - m_lastSendmeTick >= 1000) {
+        m_lastSendmeTick = nowMs;
+        const char cmd[9] = {'s','e','n','d','m','e', (char)0xFF, (char)0xFF, (char)0xFF};
+        uart_write_bytes(HMI_UART_NUM, cmd, 9);
+    }
 
     const bool HMI_forceRefresh = !HMI_hasCachedScreen;
 
