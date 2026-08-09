@@ -55,7 +55,6 @@ class DisplayHMI {
     uint32_t m_lastRxTimeMs;
     bool m_aliveWarnLoggedOnce;
     uint32_t m_lastAliveWarnTick;
-    uint32_t m_lastSendmeTick;
     // Round-robin resync durumu (bkz. ResyncPolicy.h — Startup event'i RX
     // hattında kaybolursa devreye giren periyodik emniyet katmanı).
     uint32_t HMI_lastResyncTick;
