@@ -60,10 +60,11 @@ class DisplayHMI {
     // hattında kaybolursa devreye giren periyodik emniyet katmanı).
     uint32_t HMI_lastResyncTick;
     uint8_t HMI_nextResyncField;
-    // packv gösterim tavanı (bkz. UpdateThrottle.h): en son GERÇEKTEN packv
+    // packv/packa gösterim tavanı (bkz. UpdateThrottle.h): en son GERÇEKTEN
     // gönderilen tick. Tavan aşılmadıysa alan atlanır ve HMI_lastScreenData'daki
-    // packv girdisi ESKİ değerde bırakılır — bekleyen değişiklik kaybolmaz.
+    // ilgili girdi ESKİ değerde bırakılır — bekleyen değişiklik kaybolmaz.
     uint32_t HMI_lastPackvSendTick;
+    uint32_t HMI_lastPackaSendTick;
     HMI_DisplayData HMI_lastScreenData;
     HMI_NextionResetDetect HMI_resetDetect;
     HMI_TouchParserState HMI_touchParserState;

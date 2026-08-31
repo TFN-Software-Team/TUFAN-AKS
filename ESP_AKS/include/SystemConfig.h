@@ -184,6 +184,17 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // Emniyet katmanlarını (forceFullRefresh, round-robin resync) BAĞLAMAZ.
 #define HMI_PACKV_MIN_UPDATE_INTERVAL_MS 1000U
 
+// --- packa minimum güncelleme aralığı (GÖSTERİM tavanı) ---
+// SORUN: akım ölçümü (centiA çözünürlük) elektrik gürültüsü ve sürüş/şarj
+// dalgalanmaları nedeniyle her 100 ms tikte değişir. Nextion ekran bu kadar
+// yüksek frekanslı xfloat komutlarını işlerken dahili seri alım ve çizim
+// kuyruğunda birikme yaparak ekranda 1-3 saniyelik GÖRSEL GECİKME (lag) üretir.
+//
+// ÇÖZÜM: packa gönderim sıklığı tavanlanır (örn. 200 ms = 5 Hz).
+// 200 ms, sürüşte anlık akım tepkisini korurken Nextion seri kuyruk şişmesini
+// önler ve ekrandaki gecikmeyi tamamen çözer. 0 tavanı kapatır.
+#define HMI_PACKA_MIN_UPDATE_INTERVAL_MS 200U
+
 // --- BMS Panel Round-Robin Resync (24 hücre + özet alanlar) ---
 // Skalar resync katmanının 24 hücrelik panele uzantısı: her bu aralıkta bir
 // SIRADAKİ TEK slot'un (27 slot: 24 hücre üçlüsü cell/j/bal + cellmax +

@@ -76,3 +76,10 @@ void test_packv_interval_config_is_sane(void) {
         (uint32_t)HMI_RESYNC_FIELD_COUNT * HMI_RESYNC_INTERVAL_MS,
         HMI_PACKV_MIN_UPDATE_INTERVAL_MS);
 }
+
+void test_packa_interval_config_is_sane(void) {
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(
+        (uint32_t)HMI_RESYNC_FIELD_COUNT * HMI_RESYNC_INTERVAL_MS,
+        HMI_PACKA_MIN_UPDATE_INTERVAL_MS);
+}
+
