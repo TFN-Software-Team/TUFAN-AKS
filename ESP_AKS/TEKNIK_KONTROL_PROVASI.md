@@ -67,8 +67,16 @@ Kalan açık iş: hücre fiziksel sıralaması sahada teyit edilecek. Sonuç:
   karar mantığına BAĞLI — 55 °C ve üzeri UYARI, 70 °C ve üzeri FAULT. Akım
   eşikleri de `isCurrentWarning`/`isCurrentCritical` üzerinden BAĞLI — saha
   gözlemiyle (şarjda +9.9 A) kalibre edildi: şarj WARN 11 A / CRITICAL 13 A,
-  deşarj WARN 9 A / CRITICAL 15 A. Nihai değerler BMS/şarj cihazı spec'iyle
+  deşarj WARN 160 A / CRITICAL 200 A. Nihai değerler BMS/şarj cihazı spec'iyle
   ekip onayı bekliyor (CONFIG).
+- Şarj yönü aşırı akımda **10 sn kesintisiz** şartı var
+  (`BMS_CHARGE_OVERCURRENT_HOLD_MS`, `lib/VcuLogic/ChargeOvercurrentHold.h`).
+  **Jüriye söylenecek:** "Gaz kesildiğinde motor bir an jeneratöre dönüyor ve
+  bataryaya anlık +20-40 A basıyor. Bu geçici tepeyi aşırı şarj akımı sanıp
+  aracı arızaya düşürmemek için, şarj yönündeki aşırı akımın 10 saniye
+  kesintisiz sürmesini şart koştuk — gerçek bir şarj akımı süreklidir, rejen
+  tepesi değildir. Aşırı **deşarj** akımı ve diğer tüm kritik koşullar (voltaj,
+  sıcaklık, hücre gerilimi, veri tazeliği) hâlâ **anında** arıza üretiyor."
 
 Boot logunda `ESP_LOGI(TAG, "BMS: sysState = akimdan turetilen calisma modu ...")`
 satırı bu kararı görünür kılar. Teknik kontrol sırasında 24 hücre voltajı

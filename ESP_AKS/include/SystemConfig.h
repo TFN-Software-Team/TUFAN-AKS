@@ -884,6 +884,25 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 #define BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A   1300  // 13.0 A
 #define BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A    16000 // 160.0 A
 #define BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A 20000 // 200.0 A
+
+// --- ŞARJ YÖNÜ AŞIRI AKIM: KESİNTİSİZ SÜRE KAPISI (saha, sürüş denemesi) ---
+// SORUN: gaz pedalı köklenip ANİDEN bırakıldığında motor bir an jeneratöre
+// döner (rejen / geri-EMK) ve batarya akımı POZİTİF yönde +20/+30/+40 A'e ANLIK
+// fırlar. BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A (13.0 A) TEK ÖRNEKTE aşılıyor,
+// araç kendini "şarjda / aşırı şarj akımı" sanıp READY/DRIVE'dan anında FAULT'a
+// geçip kontaktörleri açıyordu.
+// ÇÖZÜM: şarj yönündeki aşırı akım artık ZAMAN ile nitelenir — akım bu süre
+// boyunca KESİNTİSİZ eşiğin üstünde kalmalıdır; seri bir kez kırılırsa (eşik
+// altına iner / sıfıra / deşarj yönüne geçer) sayaç SIFIRDAN başlar. Gerçek bir
+// şarj akımı süreklidir ve 10 sn'yi rahatlıkla doldurur; rejen tepesi (<1 sn)
+// asla dolduramaz. Saf mantık: lib/VcuLogic/ChargeOvercurrentHold.h.
+// KAPSAM: yalnız POZİTİF (şarj) yön gecikir. DEŞARJ tarafı
+// (BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A) ve diğer tüm kritik koşullar
+// (pack voltajı, sıcaklık, hücre voltajı, freshness) ANINDA FAULT üretmeye
+// devam eder. Kapı yalnızca FAULT'a GİRİŞİ geciktirir; FAULT'tan ÇIKIŞ (reset
+// interlock) ve READY girişi ANLIK kontrolü kullanmayı sürdürür.
+// VCU tik periyodu 20 ms (main.cpp, 50 Hz) → 10000 ms ≈ 500 ardışık tik.
+#define BMS_CHARGE_OVERCURRENT_HOLD_MS 10000  // 10 sn
 // Yukarıdaki dört eşik saha kalibrasyonu + ekip onayından geçince 1 yap.
 // 0 iken boot'ta tek satırlık "teyitsiz CONFIG" özet WARN'ında listelenir.
 #define BMS_CURRENT_THRESHOLDS_CONFIRMED 0

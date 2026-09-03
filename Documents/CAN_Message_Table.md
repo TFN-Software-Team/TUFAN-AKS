@@ -348,7 +348,7 @@ Oturum 3'te görülmedi. Önceki oturumlarda tüm payload sıfır. Firmware tara
 | 0x200 byte[0:1] RPM | ✅ DOĞRULANDI | ✅ parseMotorStatus | ✅ TEL_motorRpm | ⚠️ yalnız RESET interlock'unda (`VCU_RESET_MAX_RPM`, hareket halinde reset yasağı) ve yalnız `TEL_motorDataValid` iken — FAULT/kontaktör kararı DEĞİL |
 | 0x200 byte[7] Error/Running | ⚠️ HİPOTEZ (yalnız mock'a karşı) | ✅ parseMotorStatus (+debounce) | ✅ TEL_motorErrorFlags | ❌ `MOTOR_DRIVER_PRESENT=0` iken karar mantığından ÇIKARILDI (`#if MOTOR_DRIVER_PRESENT`); bayrak 1'de geri gelir |
 | 0x200 freshness (1500 ms) | ✅ DOĞRULANDI | ✅ updateMotorStatusValidity | ✅ TEL_motorTimeoutActive / TEL_motorDataValid | ❌ `MOTOR_DRIVER_PRESENT=0` iken FAULT üretmez ve reset'i bloklamaz; bayrak 1'de IDLE dışında kritik |
-| 0xE000 byte[0:1] Current | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsCurrentCentiA | ✅ isCurrentWarning/Critical ← hasWarning/CriticalCondition (şarj 11/13 A, deşarj 9/15 A — CONFIG, ekip onayı bekliyor) |
+| 0xE000 byte[0:1] Current | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsCurrentCentiA | ✅ isCurrentWarning/Critical ← hasWarning/CriticalCondition (şarj 11/13 A — CRITICAL'i FAULT için 10 sn KESİNTİSİZ şartlı, bkz. ChargeOvercurrentHold.h; deşarj 160/200 A anında — CONFIG, ekip onayı bekliyor) |
 | 0xE000 byte[2:3] Voltage | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsPackVoltageDeciV | ✅ checkPackVoltageFault + VcuLogic |
 | 0xE000 byte[4:5] SoC 1 | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsSocHundredths | ❌ (gösterim, karar dışı) |
 | 0xE000 byte[6:7] SoC 2 | ✅ DOĞRULANDI | ✅ parseLbBmsE000 | ✅ TEL_bmsSoc2Hundredths | ❌ (gösterim/araştırma, karar dışı) |

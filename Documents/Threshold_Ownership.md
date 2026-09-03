@@ -44,9 +44,10 @@ Kaynak: `include/SystemConfig.h`, "Phase 2 Safety Thresholds" bölümü (satır 
 | `BMS_WARN_MAX_TEMP_C` | 309 | 55 | °C | `VcuLogic::isTempWarning` ← `hasWarningCondition` (>= semantiği; READY girişini de bloklar) | `TEL_bmsTempHighestC` | ✅ DOĞRULANDI (0xE001 byte[6:7], max(temp1,temp2)) | ✅ CANLI |
 | `BMS_CRITICAL_MAX_TEMP_C` | 310 | 70 | °C | `VcuLogic::isTempCritical` ← `hasCriticalCondition` (>= semantiği; READY/DRIVE'da otomatik FAULT, reset interlock'unu ve READY girişini bloklar) | `TEL_bmsTempHighestC` | ✅ DOĞRULANDI (0xE001 byte[6:7]) | ✅ CANLI |
 | `BMS_WARN_MAX_CHARGE_CURRENT_CENTI_A` | 328 | 1100 (11.0 A) — CONFIG, ekip onayı bekliyor | centi-A | `VcuLogic::isCurrentWarning` ← `hasWarningCondition` | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI (0xE000 byte[0:1] + saha gözlemi: şarjda +9.9 A) | ✅ CANLI |
-| `BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A` | 329 | 1300 (13.0 A) — CONFIG, ekip onayı bekliyor | centi-A | `VcuLogic::isCurrentCritical` ← `hasCriticalCondition` (READY girişini ve reset'i de bloklar) | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI | ✅ CANLI |
-| `BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A` | 330 | 900 (9.0 A) | centi-A | `VcuLogic::isCurrentWarning` ← `hasWarningCondition` | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI (deşarjda −0.1…−1.5 A gözlendi) | ✅ CANLI |
-| `BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A` | 331 | 1500 (15.0 A) | centi-A | `VcuLogic::isCurrentCritical` ← `hasCriticalCondition` | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI | ✅ CANLI |
+| `BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A` | 884 | 1300 (13.0 A) — CONFIG, ekip onayı bekliyor | centi-A | `VcuLogic::isChargeCurrentCritical` ← `hasCriticalCondition` (**FAULT'a giriş için 10 sn KESİNTİSİZ şartı var** — aşağıdaki nota bkz.; READY girişini ve reset'i ANLIK bloklar) | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI | ✅ CANLI |
+| `BMS_CHARGE_OVERCURRENT_HOLD_MS` | 888 | 10000 (10 sn) — saha düzeltmesi (rejen tepesi) | ms | `ChargeOvercurrentHold::update` (VcuLogic.cpp::run, her tick) → `hasCriticalCondition(..., chargeOvercurrentHeld)` | `TEL_bmsCurrentCentiA` + `TEL_bmsDataValid` | ✅ DOĞRULANDI | ✅ CANLI (yalnız FAULT'a GİRİŞ yolunda) |
+| `BMS_WARN_MAX_DISCHARGE_CURRENT_CENTI_A` | 885 | 16000 (160.0 A) | centi-A | `VcuLogic::isCurrentWarning` ← `hasWarningCondition` | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI (deşarjda −0.1…−1.5 A gözlendi) | ✅ CANLI |
+| `BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A` | 886 | 20000 (200.0 A) | centi-A | `VcuLogic::isDischargeCurrentCritical` ← `hasCriticalCondition` (**ANINDA** — süre kapısından muaf) | `TEL_bmsCurrentCentiA` | ✅ DOĞRULANDI | ✅ CANLI |
 | `FAN_ON_TEMP_C` | — | 40 — **CONFIG**, hücre datasheet + ekip onayı bekliyor (şartname B3 7.a-b) | °C | `VcuLogic::fanDesiredState` (yalnız `RELAY_ROLES_ASSIGNED=1`; >= semantiği → soğutma fanı OUT7 relay'i) | `TEL_bmsTempHighestC` | ✅ DOĞRULANDI (0xE001 byte[6:7]) | ⚙️ AKTÜATÖR (fan) — FAULT/kontaktör DEĞİL |
 | `FAN_OFF_TEMP_C` | — | 35 — **CONFIG**, hücre datasheet + ekip onayı bekliyor (şartname B3 7.a-b) | °C | `VcuLogic::fanDesiredState` (<= semantiği → fanı kapatır; histerezis) | `TEL_bmsTempHighestC` | ✅ DOĞRULANDI | ⚙️ AKTÜATÖR (fan) — FAULT/kontaktör DEĞİL |
 > **FAN EŞİKLERİ (şartname B3 7.a-b):** `FAN_ON_TEMP_C=40` / `FAN_OFF_TEMP_C=35`
@@ -92,6 +93,27 @@ Kaynak: `include/SystemConfig.h`, "Phase 2 Safety Thresholds" bölümü (satır 
 > göre 11/13 A'e kalibre edildi (eski 0.9/1.0 A gerçek şarj akımının çok
 > altındaydı ve her şarjda yanlış FAULT üretirdi). Nihai değerler BMS/şarj
 > cihazı spec'iyle **ekip onayı bekliyor** (CONFIG).
+
+> **ŞARJ YÖNÜ AŞIRI AKIMDA SÜRE KAPISI (saha, sürüş denemesi):** gaz pedalı
+> köklenip **aniden bırakıldığında** motor bir an jeneratöre döner (rejen /
+> geri-EMK) ve batarya akımı **anlık** olarak +20/+30/+40 A'e fırlıyordu. Eski
+> davranışta bu **tek örnek** 13.0 A eşiğini aşıp `hasCriticalCondition`'ı true
+> yapıyor, araç kendini "aşırı şarj akımı / şarjda" sanıp READY/DRIVE'dan
+> **anında FAULT**'a geçerek kontaktörleri açıyordu.
+> Artık şarj yönündeki aşırı akım **zamanla nitelenir**: akım
+> `BMS_CHARGE_OVERCURRENT_HOLD_MS` (10 sn) boyunca **KESİNTİSİZ** eşiğin üstünde
+> kalmalıdır; seri bir kez kırılırsa sayaç **sıfırdan** başlar. Saf mantık:
+> `lib/VcuLogic/ChargeOvercurrentHold.h`, testler:
+> `test/test_native_charge_overcurrent_hold/`.
+> **Kapsam kasıtlı olarak dardır:** (1) yalnız **pozitif/şarj** yön gecikir —
+> deşarj tarafı (200 A) ve diğer tüm kritik koşullar (pack voltajı, sıcaklık,
+> hücre voltajı, freshness) **anındadır**; (2) kapı yalnız **FAULT'a girişi**
+> geciktirir — `isResetInterlockSatisfied` ve `isReadyEntryPermitted` anlık
+> kontrolü kullanmayı sürdürür, yani süre kapısı bir arızadan **çıkmanın** veya
+> HV bus'ı enerjilendirmenin yolu olamaz; (3) `TEL_bmsDataValid=false` iken seri
+> kırılır (bayat/donmuş akım sayacı dolduramaz — EK B güven kuralı).
+> Nominal şarj akımı (+9.9 A) zaten eşiğin altındadır; kapı normal şarjı
+> etkilemez.
 
 Freshness/timeout eşikleri (aynı dosya, "CAN Freshness Thresholds" bölümü, satır 207 vd.)
 da pack/paket seviyesinde VCU kararını besler:
@@ -252,7 +274,9 @@ mantığına bağlandı ve artık CANLI —
   70 °C ve üzeri FAULT.
 - Akım (`BMS_WARN_/CRITICAL_MAX_CHARGE_/DISCHARGE_CURRENT_CENTI_A`):
   `VcuLogic::isCurrentWarning/isCurrentCritical` üzerinden — saha
-  kalibrasyonuyla (şarj 11/13 A, deşarj 9/15 A; ekip onayı bekliyor).
+  kalibrasyonuyla (şarj 11/13 A, deşarj 160/200 A; ekip onayı bekliyor).
+  Şarj yönündeki CRITICAL eşiği FAULT'a giriş için ayrıca
+  `BMS_CHARGE_OVERCURRENT_HOLD_MS` (10 sn kesintisiz) kapısından geçer.
 
 (Bkz. bölüm 2 tablosu.)
 
@@ -265,7 +289,8 @@ CANLI hale gelen bunlardır, `SystemConfig.h`'deki silinen kopya DEĞİL.
 
 **Canlı**: pack voltajı eşikleri (`TEL_bmsPackVoltageDeciV`, DOĞRULANDI),
 sıcaklık eşikleri (`TEL_bmsTempHighestC`, DOĞRULANDI, 55/70 °C), akım
-eşikleri (`TEL_bmsCurrentCentiA`, DOĞRULANDI, şarj 11/13 A / deşarj 9/15 A),
+eşikleri (`TEL_bmsCurrentCentiA`, DOĞRULANDI, şarj 11/13 A — CRITICAL'i 10 sn
+kesintisiz şartlı / deşarj 160/200 A, anında),
 hücre voltaj eşikleri (`TEL_bmsCellVoltageMin/MaxDeciMv`, DOĞRULANDI)
 ve motor/BMS freshness timeout'ları.
 

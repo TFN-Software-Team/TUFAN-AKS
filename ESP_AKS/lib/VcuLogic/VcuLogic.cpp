@@ -2,6 +2,7 @@
 #include <cmath>
 
 #include "VcuLogic.h"
+#include "ChargeOvercurrentHold.h"  // sarj yonu asiri akim: 10 sn kesintisiz kapisi
 #include "DeratingPolicy.h"
 #include "HeadlightSwitch.h"
 #include "IRelayActuator.h"
@@ -61,6 +62,20 @@ static uint32_t s_lastEstopLogMs = 0;
 static uint32_t s_lastFaultLogMs = 0;
 static uint32_t s_autoResetTimer = 0;
 static uint8_t s_autoResetCount = 0;
+
+// ŞARJ YÖNÜ AŞIRI AKIM zaman kapısının durumu (saf mantık:
+// ChargeOvercurrentHold.h). run() her tick günceller; hasCriticalCondition()
+// sarmalayıcısı .confirmed'i saf predicate'e argüman olarak geçirir.
+// GEREKÇE (saha): gaz pedalı köklenip aniden bırakılınca rejen/geri-EMK batarya
+// akımını anlık +20/30/40 A'e fırlatıyor, tek örneklik bu tepe araç READY/
+// DRIVE'dayken FAULT + kontaktör açma tetikliyordu. Artık eşik üstü pozitif
+// akım BMS_CHARGE_OVERCURRENT_HOLD_MS (10 sn) KESİNTİSİZ sürmeden kritik
+// sayılmaz. Zaman tabanı s_uptimeMs'tir (monoton, geçişte SIFIRLANMAZ) —
+// s_stateTimer kullanılamaz: READY→DRIVE gibi bir geçiş onu sıfırlar ve sayacı
+// haksız yere baştan başlatırdı.
+static ChargeOvercurrentHold::State s_chargeOvercurrent =
+    ChargeOvercurrentHold::makeState();
+static bool s_chargeOvercurrentLogged = false;
 
 // ---------------------------------------------------------------------------
 // P3 GÜVENLİ KAPANIŞ SIRASI — sıfır-tork ile kontaktör açma arasındaki gecikme
@@ -231,6 +246,32 @@ void run() {
 
     s_stateTimer += delta;
     s_uptimeMs += delta;
+
+    // ŞARJ YÖNÜ AŞIRI AKIM ZAMAN KAPISI — run()'ın EN BAŞINDA, tüm erken
+    // return'lardan ÖNCE: sayaç FAULT/E-STOP dahil HER tick işlemelidir, aksi
+    // halde kesintisizlik ölçümü durum geçişlerinde delik açardı.
+    // Kararın kendisi saf ChargeOvercurrentHold::update'tedir (10 sn kesintisiz
+    // eşik-üstü pozitif akım); sonuç hasCriticalCondition()'a beslenir.
+    {
+        const TelemetryData VCU_curSnap = getTelemetrySnapshot();
+        const bool held = ChargeOvercurrentHold::update(
+            s_chargeOvercurrent, VCU_curSnap.TEL_bmsCurrentCentiA,
+            VCU_curSnap.TEL_bmsDataValid, s_uptimeMs);
+        if (held != s_chargeOvercurrentLogged) {
+            if (held) {
+                ESP_LOGE(TAG,
+                         "Sarj yonu asiri akim %u ms KESINTISIZ surdu "
+                         "(akim=%+d centi-A, esik=%+d) — KRITIK",
+                         (unsigned)BMS_CHARGE_OVERCURRENT_HOLD_MS,
+                         (int)VCU_curSnap.TEL_bmsCurrentCentiA,
+                         (int)BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A);
+            } else {
+                ESP_LOGI(TAG, "Sarj yonu asiri akim serisi kirildi (akim=%+d centi-A)",
+                         (int)VCU_curSnap.TEL_bmsCurrentCentiA);
+            }
+            s_chargeOvercurrentLogged = held;
+        }
+    }
 
 #if RELAY_ROLES_ASSIGNED
     // Flaşör (şartname 6.e.ii): sıcaklık uyarısına bağlı sesli+ışıklı ikaz.
@@ -935,8 +976,14 @@ static bool hasWarningCondition() {
     return hasWarningCondition(getTelemetrySnapshot());
 }
 
+// FAULT'a GİRİŞ kararının kullandığı sarmalayıcı: şarj yönü aşırı akımı zaman
+// kapısının (10 sn kesintisiz) sonucuyla niteler. isResetInterlockSatisfied
+// BİLEREK bu sarmalayıcıyı kullanmaz — saf hasCriticalCondition'ı varsayılan
+// (anlık) argümanla çağırır; zaman kapısı FAULT'tan ÇIKMANIN yolu olamaz.
 static bool hasCriticalCondition() {
-    return hasCriticalCondition(getTelemetrySnapshot(), s_state.load(std::memory_order_relaxed));
+    return hasCriticalCondition(getTelemetrySnapshot(),
+                                s_state.load(std::memory_order_relaxed),
+                                s_chargeOvercurrent.confirmed);
 }
 
 // isReadyEntryPermitted() reddettiğinde hangi koşulun sağlanmadığını döndürür.
@@ -989,6 +1036,8 @@ void resetForTest() {
     s_lastEstopLogMs = 0;
     s_lastFaultLogMs = 0;
     s_autoResetTimer = 0;
+    s_chargeOvercurrent = ChargeOvercurrentHold::makeState();
+    s_chargeOvercurrentLogged = false;
     s_lastReadyRejectReason = nullptr;
     s_lastReadyRejectLogMs = 0;
     s_torqueSink = nullptr;

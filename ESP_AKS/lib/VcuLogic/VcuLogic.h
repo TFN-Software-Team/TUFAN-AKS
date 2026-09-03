@@ -102,9 +102,23 @@ enum class VcuEvent : uint8_t {
 // hasWarningCondition/hasCriticalCondition'a BAĞLIDIR (yalnız
 // TEL_bmsDataValid iken değerlendirilir). Eşikler CONFIG — bkz.
 // SystemConfig.h (şarj 11/13 A saha kalibrasyonu, ekip onayı bekliyor).
+// ŞARJ (pozitif) ve DEŞARJ (negatif) dalları AYRI yardımcılardır: şarj tarafı
+// artık ZAMANLA nitelenir (10 sn kesintisiz — bkz. ChargeOvercurrentHold.h ve
+// hasCriticalCondition'ın chargeOvercurrentHeld argümanı), deşarj tarafı ANINDA
+// FAULT üretmeye devam eder. isCurrentCritical ikisinin OR'u olarak KALIR:
+// "bu akım değeri kritik bandda mı" sorusunun anlık/eşik cevabıdır (parse
+// testleri, telemetri, reset interlock ve READY girişi bunu kullanır).
+inline bool isChargeCurrentCritical(int32_t bmsCurrentCentiA) {
+    return bmsCurrentCentiA >= BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A;
+}
+
+inline bool isDischargeCurrentCritical(int32_t bmsCurrentCentiA) {
+    return bmsCurrentCentiA <= -BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A;
+}
+
 inline bool isCurrentCritical(int32_t bmsCurrentCentiA) {
-    return bmsCurrentCentiA >= BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A ||
-           bmsCurrentCentiA <= -BMS_CRITICAL_MAX_DISCHARGE_CURRENT_CENTI_A;
+    return isChargeCurrentCritical(bmsCurrentCentiA) ||
+           isDischargeCurrentCritical(bmsCurrentCentiA);
 }
 
 inline bool isCurrentWarning(int32_t bmsCurrentCentiA) {
@@ -205,8 +219,22 @@ inline bool hasWarningCondition(const TelemetryData& VCU_data) {
            isCurrentWarning(VCU_data.TEL_bmsCurrentCentiA);
 }
 
+// chargeOvercurrentHeld — ŞARJ YÖNÜ AŞIRI AKIM ZAMAN KAPISI (saha düzeltmesi):
+// akım >= BMS_CRITICAL_MAX_CHARGE_CURRENT_CENTI_A koşulunun
+// BMS_CHARGE_OVERCURRENT_HOLD_MS (10 sn) boyunca KESİNTİSİZ sürüp sürmediği.
+// Durumlu karar VcuLogic.cpp'de tutulur (ChargeOvercurrentHold::update, her
+// tick); bu fonksiyon SAF kalır ve hazır cevabı tüketir.
+//   * false → pozitif akım eşiği aşsa bile KRİTİK SAYILMAZ (gaz kesmedeki rejen
+//     tepesi artık FAULT üretmez — SORUN: +20/30/40 A anlık sıçrama).
+//   * true  → şarj tarafı bugüne kadarki gibi kritiktir.
+// VARSAYILAN true = ESKİ (anlık) DAVRANIŞ ve GÜVENLİ TARAF. Argümanı yalnızca
+// FAULT'a GİRİŞ kararı (VcuLogic::run) besler; isResetInterlockSatisfied ve
+// isReadyEntryPermitted varsayılanı kullanır — yani zaman kapısı bir arızadan
+// ÇIKMANIN veya HV bus'ı enerjilendirmenin yolu OLAMAZ. Deşarj tarafı ve diğer
+// tüm kritik koşullar bu argümandan ETKİLENMEZ (anında).
 inline bool hasCriticalCondition(const TelemetryData& VCU_data,
-                                 VcuState currentState) {
+                                 VcuState currentState,
+                                 bool chargeOvercurrentHeld = true) {
 #if MOTOR_DRIVER_PRESENT
     // MOTOR_DRIVER_PRESENT=0 iken 0x200'ü hall-effect hız sensörü ünitesi
     // üretiyor (motor sürücüsü DEĞİL — bkz. Documents/CAN_Message_Table.md
@@ -262,12 +290,19 @@ inline bool hasCriticalCondition(const TelemetryData& VCU_data,
         if (VCU_data.TEL_bmsCellVoltageMaxDeciMv > BMS_CELL_OVERVOLT_CRIT_DECI_MV) return true;
     }
 
+    // AKIM: deşarj dalı ANINDA (aşırı yük / kısa devre 10 sn bekleyemez); şarj
+    // dalı YALNIZCA zaman kapısı onayladıysa (rejen tepesi ≠ aşırı şarj akımı).
+    if (isDischargeCurrentCritical(VCU_data.TEL_bmsCurrentCentiA))
+        return true;
+    if (chargeOvercurrentHeld &&
+        isChargeCurrentCritical(VCU_data.TEL_bmsCurrentCentiA))
+        return true;
+
     return VCU_data.TEL_bmsPackVoltageDeciV <=
                BMS_CRITICAL_MIN_PACK_VOLTAGE_DECI_V ||
            VCU_data.TEL_bmsPackVoltageDeciV >=
                BMS_CRITICAL_MAX_PACK_VOLTAGE_DECI_V ||
-           isTempCritical(VCU_data.TEL_bmsTempHighestC) ||
-           isCurrentCritical(VCU_data.TEL_bmsCurrentCentiA);
+           isTempCritical(VCU_data.TEL_bmsTempHighestC);
 }
 
 inline bool isResetInterlockSatisfied(const TelemetryData& VCU_data,
