@@ -12,7 +12,7 @@ namespace {
 // Hücre[0]'ı hedef değere, diğer 23 hücreyi güvenli nominal (3200 mV) bandına
 // sabitler; böylece hücre[0] açıkça min VEYA max olur ve diğer taraftan
 // (undervolt/overvolt) yanlışlıkla tetiklenme riski olmaz. Paket sıcaklığı
-// nominal (25°C), WARN(55)/CRIT(70) eşiklerinin altında.
+// nominal (25°C), WARN(40)/CRIT(55) eşiklerinin altında.
 BmsPackData makePackWithCell0At(uint16_t cell0Mv) {
     BmsPackData d{};
     d.isValid = true;
@@ -89,25 +89,25 @@ void test_undervolt_below_warn_threshold_is_warning(void) {
     TEST_ASSERT_EQUAL_UINT8(BMS_WARN_WARNING, c.warningLevel);
 }
 
-// --- Sıcaklık (>= semantiği): BMS_TEMP_OVERTEMP_WARN_C = 55,
-// --- BMS_TEMP_OVERTEMP_CRIT_C = 70 — VCU 55/70 politikasıyla eş anlı ---
+// --- Sıcaklık (>= semantiği): BMS_TEMP_OVERTEMP_WARN_C = 40,
+// --- BMS_TEMP_OVERTEMP_CRIT_C = 55 — VCU 40/55 politikasıyla eş anlı ---
 
 void test_overtemp_below_warn_threshold_is_ok(void) {
-    BmsComputed c = computePack(makePackWithTemp0At(54));
+    BmsComputed c = computePack(makePackWithTemp0At(39));
     TEST_ASSERT_EQUAL_UINT8(BMS_WARN_OK, c.warningLevel);
 }
 
 void test_overtemp_at_warn_threshold_is_warning(void) {
-    BmsComputed c = computePack(makePackWithTemp0At(55));
+    BmsComputed c = computePack(makePackWithTemp0At(40));
     TEST_ASSERT_EQUAL_UINT8(BMS_WARN_WARNING, c.warningLevel);
 }
 
 void test_overtemp_below_crit_threshold_is_warning(void) {
-    BmsComputed c = computePack(makePackWithTemp0At(69));
+    BmsComputed c = computePack(makePackWithTemp0At(54));
     TEST_ASSERT_EQUAL_UINT8(BMS_WARN_WARNING, c.warningLevel);
 }
 
 void test_overtemp_at_crit_threshold_is_critical(void) {
-    BmsComputed c = computePack(makePackWithTemp0At(70));
+    BmsComputed c = computePack(makePackWithTemp0At(55));
     TEST_ASSERT_EQUAL_UINT8(BMS_WARN_CRITICAL, c.warningLevel);
 }

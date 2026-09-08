@@ -45,18 +45,18 @@ void test_reset_interlock_unverified_bms_system_state_does_not_block(void) {
     TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }
 
-// Sıcaklık artık karar mantığına BAĞLI (≥70 °C kritik): kritik sıcaklık
-// sürerken reset REDDEDİLMELİ; yalnız WARN bandındaki (55–69 °C) sıcaklık
+// Sıcaklık artık karar mantığına BAĞLI (≥55 °C kritik): kritik sıcaklık
+// sürerken reset REDDEDİLMELİ; yalnız WARN bandındaki (40–54 °C) sıcaklık
 // kritik olmadığı için reset'i bloklamaz.
 void test_reset_interlock_critical_temp_blocks(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 75;  // ≥70 °C — kritik, FAULT'tan çıkışı engeller
+    d.TEL_bmsTempHighestC = 60;  // ≥55 °C — kritik, FAULT'tan çıkışı engeller
     TEST_ASSERT_FALSE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }
 
 void test_reset_interlock_warning_temp_does_not_block(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 60;  // WARN bandı — kritik değil, reset serbest
+    d.TEL_bmsTempHighestC = 45;  // WARN bandı — kritik değil, reset serbest
     TEST_ASSERT_TRUE(isResetInterlockSatisfied(d, VcuState::FAULT));
 }
 

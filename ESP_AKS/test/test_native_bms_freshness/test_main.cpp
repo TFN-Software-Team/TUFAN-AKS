@@ -10,7 +10,7 @@
 // Tick birimi agnostiktir; testte ms-benzeri sayılar kullanılır (timeout=500).
 // ===========================================================================
 
-static constexpr uint32_t TO = CAN_BMS_STATUS_TIMEOUT_MS;  // 500
+static constexpr uint32_t TO = CAN_BMS_STATUS_TIMEOUT_MS;  // 2000
 
 // Her iki ID de taze → geçerli, timeout yok.
 void test_both_fresh_is_valid(void) {

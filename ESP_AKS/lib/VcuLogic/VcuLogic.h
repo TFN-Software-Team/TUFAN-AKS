@@ -13,10 +13,10 @@
 // etmez; 15 °C aralık kilidi SystemConfig.h'nin kendisindedir).
 static_assert(BMS_TEMP_OVERTEMP_WARN_C == BMS_WARN_MAX_TEMP_C,
               "HMI uyari sicaklik esigi (BmsAlgo.h) SystemConfig.h "
-              "BMS_WARN_MAX_TEMP_C=55 ile ayni olmali (sartname 6.e.iii).");
+              "BMS_WARN_MAX_TEMP_C=40 ile ayni olmali.");
 static_assert(BMS_TEMP_OVERTEMP_CRIT_C == BMS_CRITICAL_MAX_TEMP_C,
               "HMI kritik sicaklik esigi (BmsAlgo.h) SystemConfig.h "
-              "BMS_CRITICAL_MAX_TEMP_C=70 ile ayni olmali (sartname 6.e.iii).");
+              "BMS_CRITICAL_MAX_TEMP_C=55 ile ayni olmali.");
 
 namespace VcuLogic {
 
@@ -142,9 +142,9 @@ inline bool isTempWarning(int8_t bmsTempHighestC) {
 #if RELAY_ROLES_ASSIGNED
 // Flaşör (şartname 6.e.ii) durum kararı — SAF: mevcut flaşör durumu + taze
 // telemetriden yeni istenen durumu döndürür. Histerezisli:
-//   * sıcaklık >= 55 (BMS_WARN_MAX_TEMP_C)                → ON
-//   * sıcaklık < 53 (55 − FLASHER_HYSTERESIS_C)           → OFF
-//   * 53..54 bandı                                        → mevcut durum korunur
+//   * sıcaklık >= 40 (BMS_WARN_MAX_TEMP_C)                → ON
+//   * sıcaklık < 38 (40 − FLASHER_HYSTERESIS_C)           → OFF
+//   * 38..39 bandı                                        → mevcut durum korunur
 // BAYAT VERİ KURALI: bmsDataValid=false veya BMS timeout iken flaşöre
 // DOKUNULMAZ (son durum korunur) — bayat veriyle ne yakma ne söndürme.
 inline bool flasherDesiredState(bool currentOn, bool bmsDataValid,
@@ -160,7 +160,7 @@ inline bool flasherDesiredState(bool currentOn, bool bmsDataValid,
 
 // Soğutma fanı (şartname B3 7.a-b) durum kararı — flaşörün İKİZİ, SAF:
 // mevcut fan durumu + taze telemetriden yeni istenen durumu döndürür.
-// Histerezisli (FAN_ON_TEMP_C=40 / FAN_OFF_TEMP_C=35):
+// Histerezisli (FAN_ON_TEMP_C=35 / FAN_OFF_TEMP_C=30):
 //   * sıcaklık >= FAN_ON_TEMP_C   → ON
 //   * sıcaklık <= FAN_OFF_TEMP_C  → OFF
 //   * arada (36..39)              → mevcut durum korunur

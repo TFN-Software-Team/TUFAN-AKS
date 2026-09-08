@@ -10,7 +10,7 @@
 // ===========================================================================
 // RELAY_ROLES_ASSIGNED=1 suite'i ([env:native_roles]) — şartname Bölüm 3:
 //   6.e.ii  : sıcaklık uyarısı flaşörü (sesli+ışıklı), histerezisli
-//   6.e.iii : 55 uyarı / 70 kapanma, 15 °C sabit aralık
+//   6.e.iii : 40 uyarı / 55 kapanma, 15 °C sabit aralık
 //   8.2.a   : S1 (şarj hattı, kanal 8) / S2 (sürüş hattı, kanal 0) ayrımı
 // Varsayılan (bayrak=0) davranış regresyonları test_native_vcu_logic'te
 // kalır; bu dosya YALNIZ bayrak=1 iken derlenen mantığı doğrular.
@@ -77,66 +77,66 @@ void primeReadyFrom(/*already primed IDLE*/) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// (a) Sıcaklık sınırları bayrak=1 iken de aynen korunur: 54 → koşul yok,
-// 55 → WARN, 69 → WARN, 70 → KRİTİK (FAULT). Saf predicate'ler üzerinden.
+// (a) Sıcaklık sınırları bayrak=1 iken de aynen korunur: 39 → koşul yok,
+// 40 → WARN, 54 → WARN, 55 → KRİTİK (FAULT). Saf predicate'ler üzerinden.
 // ---------------------------------------------------------------------------
 void test_roles_temp_54_no_condition(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 54;
+    d.TEL_bmsTempHighestC = 39;
     TEST_ASSERT_FALSE(VcuLogic::hasWarningCondition(d));
     TEST_ASSERT_FALSE(VcuLogic::hasCriticalCondition(d, VcuState::IDLE));
 }
 
 void test_roles_temp_55_is_warning(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 55;
+    d.TEL_bmsTempHighestC = 40;
     TEST_ASSERT_TRUE(VcuLogic::hasWarningCondition(d));
     TEST_ASSERT_FALSE(VcuLogic::hasCriticalCondition(d, VcuState::IDLE));
 }
 
 void test_roles_temp_69_is_warning_only(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 69;
+    d.TEL_bmsTempHighestC = 54;
     TEST_ASSERT_TRUE(VcuLogic::hasWarningCondition(d));
     TEST_ASSERT_FALSE(VcuLogic::hasCriticalCondition(d, VcuState::IDLE));
 }
 
 void test_roles_temp_70_is_critical(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 70;
+    d.TEL_bmsTempHighestC = 55;
     TEST_ASSERT_TRUE(VcuLogic::hasCriticalCondition(d, VcuState::IDLE));
 }
 
 // ---------------------------------------------------------------------------
-// (b) Flaşör: 55'te ON — şartname 6.e.ii.
+// (b) Flaşör: 40'ta ON.
 // ---------------------------------------------------------------------------
 void test_roles_flasher_on_at_55(void) {
     primeIdle();
-    setTemp(55);
+    setTemp(40);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 }
 
-// 54'te HÂLÂ ON (histerezis bandı: 53..54 durumu korur).
+// 39'da HÂLÂ ON (histerezis bandı: 38..39 durumu korur).
 void test_roles_flasher_stays_on_at_54(void) {
     primeIdle();
-    setTemp(55);
+    setTemp(40);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 
-    setTemp(54);
+    setTemp(39);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 }
 
-// 52'de OFF (55 − FLASHER_HYSTERESIS_C = 53'ün altı).
+// 37'de OFF (40 − FLASHER_HYSTERESIS_C = 38'in altı).
 void test_roles_flasher_off_at_52(void) {
     primeIdle();
-    setTemp(55);
+    setTemp(40);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 
-    setTemp(52);
+    setTemp(37);
     VcuLogic::run();
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 }
@@ -144,7 +144,7 @@ void test_roles_flasher_off_at_52(void) {
 // bmsDataValid=false iken duruma DOKUNULMAZ (bayat veriyle söndürme yok).
 void test_roles_flasher_unchanged_when_bms_invalid(void) {
     primeIdle();
-    setTemp(55);
+    setTemp(40);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 
@@ -167,13 +167,13 @@ void test_roles_flasher_unchanged_on_bms_timeout(void) {
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FLASHER]);
 }
 
-// FAULT'ta bank açıkken flaşör ON kalır: 70 °C → FAULT → allOff bank
+// FAULT'ta bank açıkken flaşör ON kalır: 55 °C → FAULT → allOff bank
 // maskesini açar (S1+S2+bank), flaşör kanalı maske dışı olduğundan YANIK
 // kalır (şartname 6.e.ii + 8.2.a.vi birlikte).
 void test_roles_flasher_stays_on_in_fault_with_bank_open(void) {
     primeIdle();
     primeReadyFrom();  // kritik eşik yalnız READY/DRIVE'da FAULT üretir
-    setTemp(70);
+    setTemp(55);
     VcuLogic::run();  // flaşör ON + kritik → FAULT'a geçiş
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
                           static_cast<int>(VcuLogic::getState()));
@@ -338,7 +338,7 @@ void test_roles_allOff_does_not_touch_flasher_channel(void) {
 }
 
 // ---------------------------------------------------------------------------
-// (e) Soğutma fanı — şartname B3 7.a-b (flaşörün ikizi, FAN_ON=40 / FAN_OFF=35).
+// (e) Soğutma fanı — şartname B3 7.a-b (flaşörün ikizi, FAN_ON=35 / FAN_OFF=30).
 // ---------------------------------------------------------------------------
 // SORUN 2 regresyonu (saha, 2026-07-29): ekranda 32 °C okunurken fan DÖNÜYORDU.
 // Bu test yazılım tarafını kilitler — 32 °C'de fan kanalı, kaç tick geçerse
@@ -361,42 +361,42 @@ void test_roles_fan_off_at_32_regression(void) {
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FAN]);
 }
 
-// 39 °C: boot OFF durumu korunur (ON eşiği 40'ın altı, OFF eşiği 35'in üstü).
+// 34 °C: boot OFF durumu korunur (ON eşiği 35'in altı, OFF eşiği 30'un üstü).
 void test_roles_fan_stays_off_at_39(void) {
     primeIdle();
-    setTemp(39);
+    setTemp(34);
     VcuLogic::run();
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FAN]);
 }
 
-// 40 °C: fan ON.
+// 35 °C: fan ON.
 void test_roles_fan_on_at_40(void) {
     primeIdle();
-    setTemp(40);
+    setTemp(35);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FAN]);
 }
 
-// 40 → ON, 38 → HÂLÂ ON (histerezis bandı 36..39 durumu korur).
+// 35 → ON, 33 → HÂLÂ ON (histerezis bandı 31..34 durumu korur).
 void test_roles_fan_stays_on_at_38(void) {
     primeIdle();
-    setTemp(40);
+    setTemp(35);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FAN]);
 
-    setTemp(38);
+    setTemp(33);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FAN]);
 }
 
-// 40 → ON, 35 → OFF (FAN_OFF_TEMP_C, <= semantiği).
+// 35 → ON, 30 → OFF (FAN_OFF_TEMP_C, <= semantiği).
 void test_roles_fan_off_at_35(void) {
     primeIdle();
-    setTemp(40);
+    setTemp(35);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FAN]);
 
-    setTemp(35);
+    setTemp(30);
     VcuLogic::run();
     TEST_ASSERT_FALSE(g_fake_relay_channelState[RELAY_CH_FAN]);
 }
@@ -404,7 +404,7 @@ void test_roles_fan_off_at_35(void) {
 // bmsDataValid=false iken fan durumuna DOKUNULMAZ (bayat veriyle durdurma yok).
 void test_roles_fan_unchanged_when_bms_invalid(void) {
     primeIdle();
-    setTemp(40);
+    setTemp(35);
     VcuLogic::run();
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FAN]);
 
@@ -416,13 +416,13 @@ void test_roles_fan_unchanged_when_bms_invalid(void) {
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_FAN]);
 }
 
-// FAULT'ta fan + flaşör birlikte ON kalır: 70 °C → ikisi de yanar → kritik →
+// FAULT'ta fan + flaşör birlikte ON kalır: 55 °C → ikisi de yanar → kritik →
 // FAULT → allOff bank maskesini açar ama fan+flaşör (bank dışı) yanık kalır
 // (sıcak batarya soğutması + uyarı kesilmez).
 void test_roles_fan_and_flasher_on_in_fault(void) {
     primeIdle();
     primeReadyFrom();  // kritik eşik yalnız READY/DRIVE'da FAULT üretir
-    setTemp(70);
+    setTemp(55);
     VcuLogic::run();  // fan+flaşör ON + kritik → FAULT'a geçiş
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),
                           static_cast<int>(VcuLogic::getState()));
@@ -544,7 +544,7 @@ void test_roles_headlight_preserved_in_fault(void) {
     TEST_ASSERT_TRUE(g_fake_relay_channelState[RELAY_CH_HEADLIGHT]);
 
     primeReadyFrom();  // kritik eşik yalnız READY/DRIVE'da FAULT üretir
-    setTemp(70);
+    setTemp(55);
     VcuLogic::run();  // → FAULT
     VcuLogic::run();  // t=20 → allOff (bank)
     TEST_ASSERT_EQUAL_INT(static_cast<int>(VcuState::FAULT),

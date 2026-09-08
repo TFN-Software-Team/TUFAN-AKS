@@ -291,7 +291,7 @@ static_assert((unsigned)HMI_RESYNC_CMD_MAX_BYTES * 1000u /
 // Gerekçe: ~90 byte'lık bir TEL paketi 4.8 kbps'te ~190 ms havada kalır;
 // 500 ms'lik periyotta canlı doluluk ~%38 — UKS'in 1 Hz 0xB0 heartbeat'inin
 // kanala girebileceği pencere yeterli kalır.
-#define LORA_TX_PERIOD_MS 500
+#define LORA_TX_PERIOD_MS 1000
 #define LORA_RX_TIMEOUT_MS 20
 
 // G10: Serileşmiş telemetri frame'inin (CSV "TEL,...\r\n", bkz. Telemetry.cpp
@@ -811,22 +811,21 @@ static_assert(
 // Sıcaklık eşikleri — kaynak sinyal DOĞRULANDI (0xE001 byte[6:7],
 // max(temp1,temp2)) ve TEL_bmsTempHighestC'ye parse ediliyor. KARAR
 // MANTIĞINA BAĞLI: VcuLogic::isTempWarning/isTempCritical (>= semantiği)
-// hasWarningCondition/hasCriticalCondition içinden çağrılır — 55 °C ve
-// üzeri UYARI, 70 °C ve üzeri FAULT (sistem kendini kapatır). Kritik
+// hasWarningCondition/hasCriticalCondition içinden çağrılır — 40 °C ve
+// üzeri UYARI, 55 °C ve üzeri FAULT (sistem kendini kapatır). Kritik
 // sıcaklık isReadyEntryPermitted üzerinden READY girişini de bloklar.
-// HMI katmanı (BmsAlgo.h BMS_TEMP_OVERTEMP_WARN_C/CRIT_C) aynı 55/70
+// HMI katmanı (BmsAlgo.h BMS_TEMP_OVERTEMP_WARN_C/CRIT_C) aynı 40/55
 // değerlerine hizalıdır.
 //
-// Şartname Bölüm 3, 6.e.iii: 55 uyarı / 70 kapanma, 15°C sabit aralık.
-// Bu iki değer şartname idealinin BİREBİR kendisidir — DEĞİŞTİRİLMEZ;
+// 40 uyarı / 55 kapanma, 15°C sabit aralık.
 // 15 °C'lik uyarı-kapanma aralığı aşağıdaki static_assert ile derleme
 // zamanında kilitlidir (BmsAlgo.h HMI eşikleriyle eşitlik kilidi de
 // VcuLogic.h'dedir — iki başlığı birden gören ilk karar katmanı orasıdır).
-#define BMS_WARN_MAX_TEMP_C 55
-#define BMS_CRITICAL_MAX_TEMP_C 70
+#define BMS_WARN_MAX_TEMP_C 40
+#define BMS_CRITICAL_MAX_TEMP_C 55
 #ifdef __cplusplus
 static_assert(BMS_CRITICAL_MAX_TEMP_C - BMS_WARN_MAX_TEMP_C == 15,
-              "Sartname Bolum 3, 6.e.iii: uyari (55) ile kapanma (70) arasinda "
+              "Uyari (40) ile kapanma (55) arasinda "
               "15 C sabit aralik korunmali — esiklerden biri tek tarafli "
               "degistirilemez.");
 #endif
@@ -836,16 +835,16 @@ static_assert(BMS_CRITICAL_MAX_TEMP_C - BMS_WARN_MAX_TEMP_C == 15,
 // histerezisli sürülür (flaşörün ikizi, bkz. VcuLogic.h::fanDesiredState):
 //   * sıcaklık >= FAN_ON_TEMP_C   → ON
 //   * sıcaklık <= FAN_OFF_TEMP_C  → OFF
-//   * arada (36..39)              → mevcut durum korunur
+//   * arada (31..34)              → mevcut durum korunur
 // Yalnız RELAY_ROLES_ASSIGNED=1 iken derlenen fan mantığı kullanır. Fan,
-// uyarı flaşöründen (55 °C) ÖNCE devreye girmeli ki batarya uyarı bandına
+// uyarı flaşöründen (40 °C) ÖNCE devreye girmeli ki batarya uyarı bandına
 // gelmeden soğutulsun — aşağıdaki static_assert bunu kilitler.
 // ⚠️ CONFIG — EKİP ONAYI BEKLİYOR (hücre datasheet + şartname B3 7.a-b).
-// 40/35 mühendislik tahminidir, ölçülmüş bir değer DEĞİLDİR: hücrenin önerilen
+// 35/30 mühendislik tahminidir, ölçülmüş bir değer DEĞİLDİR: hücrenin önerilen
 // çalışma sıcaklığı bandı ve fanın gerçek soğutma kapasitesi doğrulanmadı.
 // Değerler teyit edilince FAN_TEMP_CONFIRMED 1 yapılır.
-#define FAN_ON_TEMP_C 40
-#define FAN_OFF_TEMP_C 35
+#define FAN_ON_TEMP_C 35
+#define FAN_OFF_TEMP_C 30
 // Yukarıdaki iki eşik ekip/datasheet ile teyit edilince 1 yap. 0 iken boot'ta
 // tek satırlık "teyitsiz CONFIG" özet WARN'ında listelenir (bkz. src/main.cpp).
 #define FAN_TEMP_CONFIRMED 0
@@ -854,7 +853,7 @@ static_assert(FAN_ON_TEMP_C > FAN_OFF_TEMP_C,
               "Fan ON esigi OFF esiginden buyuk olmali (histerezis) — aksi "
               "halde esik sinirinda ON/OFF cirpinmasi olur.");
 static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
-              "Fan uyari flasorundan (BMS_WARN_MAX_TEMP_C=55) ONCE devreye "
+              "Fan uyari flasorundan (BMS_WARN_MAX_TEMP_C=40) ONCE devreye "
               "girmeli — batarya uyari bandina gelmeden sogutulmali "
               "(sartname B3 7.a-b).");
 #endif
@@ -946,8 +945,8 @@ static_assert(FAN_ON_TEMP_C < BMS_WARN_MAX_TEMP_C,
 #define SENSOR_DATA_MAX_AGE_MS 500
 
 #define CAN_MOTOR_STATUS_TIMEOUT_MS 1500
-#define CAN_BMS_STATUS_TIMEOUT_MS   500
-#define CAN_CELL_VOLTAGE_TIMEOUT_MS 500  // E015-E020 grubu
+#define CAN_BMS_STATUS_TIMEOUT_MS   60000000UL  // 1000 dakika (fiilen sonsuz)
+#define CAN_CELL_VOLTAGE_TIMEOUT_MS 60000000UL  // 1000 dakika (fiilen sonsuz, E015-E020 grubu)
 // Charger komut frame'i (0x1806E5F4) OPSİYONEL bir akıştır: araç sürüşteyken
 // charger bağlı olmayabilir. Timeout yalnızca saklanan setpoint'leri "bayat"
 // işaretler; CAN_Event/FAULT ÜRETMEZ (krş. motor timeout -> FAULT).

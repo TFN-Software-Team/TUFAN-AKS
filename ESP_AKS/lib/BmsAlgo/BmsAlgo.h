@@ -67,16 +67,16 @@ static constexpr uint16_t BMS_SOC_FULL_MV = 3650;   // %100 referans hücre geri
 // × 24 = pack_eşiği (bkz. yukarıdaki SoC notu — aynı 2500/3650 mV değerleri).
 static constexpr uint16_t BMS_CELL_UNDERVOLT_CRIT_MV = 2500;  // < => CRITICAL — LiFePO4 spec min (2.50 V)
 static constexpr uint16_t BMS_CELL_OVERVOLT_CRIT_MV = 3650;   // > => CRITICAL — LiFePO4 spec maks (3.65 V)
-// Sıcaklık: sistem politikası 55/70 °C (SystemConfig.h BMS_WARN_MAX_TEMP_C /
+// Sıcaklık: sistem politikası 40/55 °C (SystemConfig.h BMS_WARN_MAX_TEMP_C /
 // BMS_CRITICAL_MAX_TEMP_C) ile hem değer hem semantik olarak hizalı — sıcaklık
 // karşılaştırması >= kullanır (eşik değerinin KENDİSİ tetikler; hücre voltajı
-// eşiklerinin strictly semantiğinden farklı). Böylece tam 70 °C'de VCU FAULT'a
+// eşiklerinin strictly semantiğinden farklı). Böylece tam 55 °C'de VCU FAULT'a
 // geçerken ekran da aynı anda CRITICAL gösterir.
-// Şartname Bölüm 3, 6.e.iii: 55 uyarı / 70 kapanma, 15°C sabit aralık.
+// 40 uyarı / 55 kapanma, 15°C sabit aralık.
 // Bu başlık saf kalsın diye SystemConfig.h buradan include EDİLMEZ;
 // SystemConfig değerleriyle eşitlik kilidi (static_assert) iki başlığı
 // birden gören VcuLogic.h'dedir.
-static constexpr int16_t BMS_TEMP_OVERTEMP_CRIT_C = 70;       // >= => CRITICAL
+static constexpr int16_t BMS_TEMP_OVERTEMP_CRIT_C = 55;       // >= => CRITICAL
 
 // WARNING koşulları: eşiğe yaklaşıldı; henüz kritik değil ama izlenmeli.
 // Aynı semantik (strictly < / >). WARN marjı bu katmana özgüdür — SystemConfig.h
@@ -85,9 +85,9 @@ static constexpr int16_t BMS_TEMP_OVERTEMP_CRIT_C = 70;       // >= => CRITICAL
 // WARN bandını bağımsız seçebilir.
 static constexpr uint16_t BMS_CELL_UNDERVOLT_WARN_MV = 2800;  // < => WARNING — CRIT'e (2500) 300 mV marj
 static constexpr uint16_t BMS_CELL_OVERVOLT_WARN_MV = 3550;   // > => WARNING — CRIT'e (3650) 100 mV marj
-// Şartname Bölüm 3, 6.e.iii: 55 uyarı / 70 kapanma, 15°C sabit aralık
+// 40 uyarı / 55 kapanma, 15°C sabit aralık
 // (eşitlik kilidi VcuLogic.h'de — bkz. yukarıdaki CRIT_C notu).
-static constexpr int16_t BMS_TEMP_OVERTEMP_WARN_C = 55;       // >= => WARNING — SystemConfig.h BMS_WARN_MAX_TEMP_C ile hizalı
+static constexpr int16_t BMS_TEMP_OVERTEMP_WARN_C = 40;       // >= => WARNING — SystemConfig.h BMS_WARN_MAX_TEMP_C ile hizalı
 
 // ===========================================================================
 // deci-mV ESDEĞERLERİ (VcuLogic.h / DeratingPolicy.h İÇİN)

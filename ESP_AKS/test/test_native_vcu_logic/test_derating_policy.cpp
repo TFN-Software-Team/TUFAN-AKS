@@ -30,29 +30,29 @@ void test_derating_nominal_when_all_signals_clean(void) {
 // --- Sicaklik: WARN esiginin 1 altinda -> hala 100 -------------------------
 void test_derating_temp_just_below_warn_is_nominal(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 54;  // WARN=55'in 1 altinda
+    d.TEL_bmsTempHighestC = 39;  // WARN=40'in 1 altinda
     TEST_ASSERT_EQUAL_UINT8(100, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
 // --- Sicaklik: TAM WARN esiginde -> 50 -------------------------------------
 void test_derating_temp_at_warn_threshold_is_warning_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 55;  // BMS_WARN_MAX_TEMP_C
+    d.TEL_bmsTempHighestC = 40;  // BMS_WARN_MAX_TEMP_C
     TEST_ASSERT_EQUAL_UINT8(50, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
 // --- Sicaklik: %90-CRITICAL sinirinin 1 altinda -> hala 50 -----------------
-// WARN=55, CRIT=70, span=15, approachAt = 55 + (15*90)/100 = 55+13 = 68.
+// WARN=40, CRIT=55, span=15, approachAt = 40 + (15*90)/100 = 40+13 = 53.
 void test_derating_temp_just_below_approach_boundary_is_warning_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 67;  // approachAt(68)'in 1 altinda
+    d.TEL_bmsTempHighestC = 52;  // approachAt(53)'in 1 altinda
     TEST_ASSERT_EQUAL_UINT8(50, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
 // --- Sicaklik: TAM %90-CRITICAL sinirinda -> 20 ----------------------------
 void test_derating_temp_at_approach_boundary_is_approaching_critical_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 68;  // approachAt
+    d.TEL_bmsTempHighestC = 53;  // approachAt
     TEST_ASSERT_EQUAL_UINT8(20, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
@@ -61,7 +61,7 @@ void test_derating_temp_at_approach_boundary_is_approaching_critical_tier(void) 
 // CRITICAL iken hic ulasmaz cunku FAULT kontrolu daha once return eder) ----
 void test_derating_temp_at_critical_threshold_is_still_approaching_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 70;  // BMS_CRITICAL_MAX_TEMP_C
+    d.TEL_bmsTempHighestC = 55;  // BMS_CRITICAL_MAX_TEMP_C
     TEST_ASSERT_EQUAL_UINT8(20, DeratingPolicy::computeTorqueAllowPercent(d));
 }
 
@@ -204,7 +204,7 @@ void test_derating_cell_voltage_realistic_nominal_is_nominal(void) {
 // --- Coklu-WARN kombinasyonu: en kisitlayici (en dusuk yuzde) kazanir ------
 void test_derating_multiple_warnings_worst_case_wins(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 55;          // WARNING tier (50)
+    d.TEL_bmsTempHighestC = 40;          // WARNING tier (50)
     d.TEL_bmsCurrentCentiA = 1280;       // APPROACHING_CRITICAL tier (20)
     // Pack voltaji ve hucre voltaji temiz kalir.
 
@@ -213,7 +213,7 @@ void test_derating_multiple_warnings_worst_case_wins(void) {
 
 void test_derating_two_warning_tier_signals_stay_at_warning_tier(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 55;     // WARNING tier (50)
+    d.TEL_bmsTempHighestC = 40;     // WARNING tier (50)
     d.TEL_bmsCurrentCentiA = 1100;  // WARNING tier (50)
 
     TEST_ASSERT_EQUAL_UINT8(50, DeratingPolicy::computeTorqueAllowPercent(d));

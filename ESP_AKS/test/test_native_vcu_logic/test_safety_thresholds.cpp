@@ -66,34 +66,34 @@ void test_isCurrentWarning_discharge_at_threshold(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Sıcaklık eşikleri (politika: ≥55 °C UYARI, ≥70 °C FAULT; >= semantiği).
+// Sıcaklık eşikleri (politika: ≥40 °C UYARI, ≥55 °C FAULT; >= semantiği).
 // Kaynak sinyal DOĞRULANDI (0xE001 → TEL_bmsTempHighestC) ve
 // hasWarning/hasCriticalCondition'a BAĞLI — sınır değerleri kilitle.
 // ---------------------------------------------------------------------------
 void test_temp_below_warn_is_clean(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 54;  // WARN eşiğinin 1 °C altı — temiz
+    d.TEL_bmsTempHighestC = 39;  // WARN eşiğinin 1 °C altı — temiz
     TEST_ASSERT_FALSE(hasWarningCondition(d));
     TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
 void test_temp_at_warn_threshold_is_warning(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 55;  // eşikte — WARN tetikler (>=), kritik değil
+    d.TEL_bmsTempHighestC = 40;  // eşikte — WARN tetikler (>=), kritik değil
     TEST_ASSERT_TRUE(hasWarningCondition(d));
     TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
 void test_temp_below_crit_is_warning_only(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 69;  // CRIT eşiğinin 1 °C altı — hâlâ yalnız WARN
+    d.TEL_bmsTempHighestC = 54;  // CRIT eşiğinin 1 °C altı — hâlâ yalnız WARN
     TEST_ASSERT_TRUE(hasWarningCondition(d));
     TEST_ASSERT_FALSE(hasCriticalCondition(d, VcuState::READY));
 }
 
 void test_temp_at_crit_threshold_is_critical(void) {
     TelemetryData d = makeTelemetryDataValid();
-    d.TEL_bmsTempHighestC = 70;  // eşikte — FAULT tetikler (>=)
+    d.TEL_bmsTempHighestC = 55;  // eşikte — FAULT tetikler (>=)
     TEST_ASSERT_TRUE(hasWarningCondition(d));
     TEST_ASSERT_TRUE(hasCriticalCondition(d, VcuState::READY));
 }

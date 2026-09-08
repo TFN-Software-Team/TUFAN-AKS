@@ -66,7 +66,7 @@ On the air side, at the `4.8 kbps` E22 air data rate (`REG0 = 0x63`, bit[2:0] = 
 Important distinction:
 
 - The ESP32 <-> E22-400T30D-V2 UART link is configured for `9600 baud`.
-- The radio air data rate of the E22 module (currently `4.8 kbps`, `REG0 = 0x63` bit[2:0] = `011`, see `E22Regs.h`) is lower than the UART baud.
+- The radio air data rate of the E22 module (currently `1.2 kbps`, `REG0 = 0x61` bit[2:0] = `001`, see `E22Regs.h`) is lower than the UART baud.
 - Therefore, final field testing must confirm that the selected E22 radio configuration can drain the UART input fast enough at the chosen packet rate.
 
 ## Current Reliability Policy
